@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
-import { RegistryError } from "@dungle-scrubs/model-registry";
+import { loadRegistry, RegistryError } from "@dungle-scrubs/model-registry";
 import { Command, CommanderError } from "commander";
+import { loadConfig } from "./config.js";
 import { RouterError } from "./error.js";
 import { listTasks, rank } from "./rank.js";
 import type { RouterErrorCode } from "./types.js";
@@ -67,6 +68,34 @@ function routerExitCode(code: RouterErrorCode): number {
   return code === "query-invalid" ? EXIT_QUERY_INVALID : EXIT_REGISTRY_FAILURE;
 }
 
+function resolveConfigOption(configValues: readonly string[]): string | undefined {
+  if (configValues.length > 1) {
+    throw queryInvalid(
+      "config",
+      "the --config option was given more than once.",
+      "Give model-router exactly one --config path.",
+    );
+  }
+  const explicit = configValues[0];
+  if (explicit === "") {
+    throw queryInvalid(
+      "config",
+      "the --config option was given an empty path.",
+      "Give --config a non-empty path to a config file.",
+    );
+  }
+  return explicit;
+}
+
+function addConfigOption(command: Command): Command {
+  return command.option(
+    "--config <path>",
+    "path to the config.json file",
+    (value: string, previous: string[]) => [...previous, value],
+    [],
+  );
+}
+
 function queryInvalid(field: string, message: string, fix: string): RouterError {
   return new RouterError({ code: "query-invalid", field, fix, message, problems: [] });
 }
@@ -99,6 +128,14 @@ function addRegistryOption(command: Command): Command {
   );
 }
 
+/** Resolve the registry the way the CLI does: an explicit `--registry`
+ * path uses the file the caller chose, an absent path uses the loader's path
+ * order. The check command needs both the digest and the resolved path,
+ * so it calls the loader directly with the right options. */
+function loadRegistryOption(explicit: string): ReturnType<typeof loadRegistry> {
+  return explicit === "" ? loadRegistry() : loadRegistry({ path: explicit });
+}
+
 export function runCli(argv: readonly string[], io: Partial<CliIo> = {}): number {
   const stdout = io.stdout ?? process.stdout;
   const stderr = io.stderr ?? process.stderr;
@@ -122,9 +159,12 @@ export function runCli(argv: readonly string[], io: Partial<CliIo> = {}): number
   });
 
   addRegistryOption(program);
+  addConfigOption(program);
 
   const tasksCommand = addRegistryOption(
-    new Command("tasks").description("Print the registry's task list as one JSON line."),
+    addConfigOption(
+      new Command("tasks").description("Print the registry's task list as one JSON line."),
+    ),
   );
   // Commander 15 does not inherit the root's exitOverride or output sinks
   // through addCommand: configure the child the same way, so its parser
@@ -144,6 +184,50 @@ export function runCli(argv: readonly string[], io: Partial<CliIo> = {}): number
     answerExit = EXIT_SUCCESS;
   });
   program.addCommand(tasksCommand);
+
+  const checkCommand = addRegistryOption(
+    addConfigOption(
+      new Command("check").description(
+        "Load the registry and config, then print their paths and the registry digest.",
+      ),
+    ),
+  );
+  // Commander 15 does not inherit the root's exitOverride or output sinks
+  // through addCommand: configure the child the same way, so its parser
+  // errors throw back to the shared catch instead of calling process.exit,
+  // and its help reaches stdout through the same sink.
+  checkCommand.exitOverride().configureOutput({
+    writeOut: (text) => {
+      stdout.write(text);
+    },
+    writeErr: () => {},
+  });
+  checkCommand.action(function (this: Command) {
+    const options = this.optsWithGlobals() as {
+      registry?: string[];
+      config?: string[];
+    };
+    const explicitRegistry = resolveRegistryOption(options.registry ?? []);
+    const explicitConfig = resolveConfigOption(options.config ?? []);
+    // The check command runs no availability source and makes no Jev call:
+    // it loads the registry (path resolution and digest), then loads the
+    // config. A loader error is exit 4.
+    const loaded = loadRegistryOption(explicitRegistry);
+    const config = loadConfig(
+      explicitConfig === undefined
+        ? { env: process.env as Record<string, string | undefined> }
+        : { explicitPath: explicitConfig },
+    );
+    stdout.write(
+      `${JSON.stringify({
+        configPath: config.configPath,
+        registryDigest: loaded.digest,
+        registryPath: loaded.path,
+      })}\n`,
+    );
+    answerExit = EXIT_SUCCESS;
+  });
+  program.addCommand(checkCommand);
 
   program.argument("[query]", "the query as a JSON object, or - to read it from stdin");
   program.action((query: string | undefined, options: { registry?: string[] }) => {

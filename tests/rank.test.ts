@@ -43,6 +43,7 @@ describe("rank with inline minimums", () => {
       routes: [
         {
           availability: "unmetered",
+          effort: "medium",
           family: "family-b",
           floor: "clears",
           harness: "harness-x",
@@ -55,6 +56,7 @@ describe("rank with inline minimums", () => {
         },
         {
           availability: "unknown",
+          effort: "medium",
           family: "family-a",
           floor: "clears",
           harness: "harness-x",
@@ -68,6 +70,7 @@ describe("rank with inline minimums", () => {
         },
         {
           availability: "unmetered",
+          effort: "medium",
           family: "family-a",
           floor: "clears",
           harness: "harness-y",
@@ -81,6 +84,7 @@ describe("rank with inline minimums", () => {
         },
         {
           availability: "unmetered",
+          effort: "medium",
           family: "family-b",
           floor: "clears",
           harness: "harness-z",
@@ -93,6 +97,7 @@ describe("rank with inline minimums", () => {
         },
         {
           availability: "unmetered",
+          effort: "medium",
           family: "family-a",
           floor: "clears",
           harness: "harness-x",
@@ -105,6 +110,7 @@ describe("rank with inline minimums", () => {
         },
         {
           availability: "unmetered",
+          effort: "medium",
           family: "family-a",
           floor: "below",
           harness: "harness-w",
@@ -534,8 +540,8 @@ describe("rank hard limits", () => {
   });
 });
 
-describe("rank warnings for fields this slice does not apply", () => {
-  test("a query naming effort, pin and settled spec warns for each, in order", () => {
+describe("rank warnings for fields this slice applies", () => {
+  test("a query naming effort, pin and settled spec still warns only for policy-none", () => {
     const loaded = full();
     const answer = rank(
       {
@@ -547,28 +553,15 @@ describe("rank warnings for fields this slice does not apply", () => {
       { registry: loaded },
     );
     expectValidAnswer(answer);
-    expect(answer.warnings).toEqual([
-      {
-        code: "effort-unapplied",
-        message:
-          'the query effort "high" was not applied; this release does not resolve effort levels',
-        fix: "Remove effort from the query; effort resolution arrives in a later release.",
-      },
-      {
-        code: "pin-unapplied",
-        message: 'the pin "model-a@harness-x" was not used; this release does not place pins',
-        fix: "Remove pin from the query; pins arrive in a later release.",
-      },
-      {
-        code: "policy-none",
-        message: 'the spec "settled" matched no policy; normal ranking was used',
-        fix: "Remove spec from the query, or add a policy matching the task, stakes and spec.",
-      },
-    ]);
-    expect(answer.pin).toBeNull();
+    expect(answer.warnings.map((warning) => warning.code)).toEqual(["policy-none"]);
+    expect(answer.pin).toEqual({ label: "model-a@harness-x", reason: "", used: true });
     expect(answer.query.effort).toBe("high");
     expect(answer.query.pin).toBe("model-a@harness-x");
     expect(answer.query.spec).toBe("settled");
+    // Effort is applied: the pinned route carries the requested effort.
+    const pinned = answer.routes[0];
+    expect(pinned?.effort).toBe("high");
+    expect(pinned?.placedBy).toBe("pin");
   });
 
   test("a minimum naming an undeclared rating warns and makes every route below", () => {
