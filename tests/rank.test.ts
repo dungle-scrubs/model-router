@@ -143,10 +143,12 @@ describe("rank with inline minimums", () => {
   test("a minimum exactly at the floor clears it, without a floor reason", () => {
     const loaded = full();
     const answer = rank({ minimums: { coding: 5 } }, { registry: loaded });
+    expectValidAnswer(answer);
     const boundary = answer.routes.find((route) => route.label === "model-b@harness-x");
     expect(boundary?.floor).toBe("clears");
     expect(boundary?.reasons).toEqual([]);
     const aboveFloor = rank({ minimums: { coding: 7 } }, { registry: loaded });
+    expectValidAnswer(aboveFloor);
     const justClears = aboveFloor.routes.find((route) => route.label === "model-a@harness-x");
     expect(justClears?.floor).toBe("clears");
     expect(justClears?.reasons).toEqual([]);
@@ -176,6 +178,7 @@ describe("rank with inline minimums", () => {
   test("a model with no value for a floor rating counts as below that floor", () => {
     const loaded = full();
     const answer = rank({ minimums: { taste: 1 } }, { registry: loaded });
+    expectValidAnswer(answer);
     const noTaste = answer.routes.find((route) => route.label === "model-d@harness-z");
     expect(noTaste?.floor).toBe("below");
     expect(noTaste?.reasons[0]?.message).toBe(
@@ -264,6 +267,22 @@ describe("rank under prefer: speed", () => {
     expectValidAnswer(answer);
     expect(labels(answer)).toEqual([
       "fast@harness-x",
+      "tied-speed@harness-x",
+      "medium@harness-x",
+      "slow@harness-x",
+      "no-speed@harness-x",
+    ]);
+  });
+
+  test("an equal response time is decided by cost, against file order", () => {
+    const loaded = loadRegistry({ path: SPEED });
+    const answer = rank({ minimums: { coding: 5 }, prefer: "speed" }, { registry: loaded });
+    expectValidAnswer(answer);
+    const order = labels(answer);
+    expect(order.indexOf("tied-speed@harness-x")).toBeLessThan(order.indexOf("medium@harness-x"));
+    expect(order).toEqual([
+      "fast@harness-x",
+      "tied-speed@harness-x",
       "medium@harness-x",
       "slow@harness-x",
       "no-speed@harness-x",
@@ -273,14 +292,17 @@ describe("rank under prefer: speed", () => {
   test("a route with no responseSeconds sorts below every route that has one", () => {
     const loaded = loadRegistry({ path: SPEED });
     const answer = rank({ minimums: { coding: 5 }, prefer: "speed" }, { registry: loaded });
+    expectValidAnswer(answer);
     expect(labels(answer).at(-1)).toBe("no-speed@harness-x");
   });
 
   test("under prefer: cost the response times are ignored and cost decides", () => {
     const loaded = loadRegistry({ path: SPEED });
     const answer = rank({ minimums: { coding: 5 }, prefer: "cost" }, { registry: loaded });
+    expectValidAnswer(answer);
     expect(labels(answer)).toEqual([
       "slow@harness-x",
+      "tied-speed@harness-x",
       "fast@harness-x",
       "medium@harness-x",
       "no-speed@harness-x",
@@ -303,12 +325,13 @@ describe("rank under prefer: speed", () => {
 });
 
 describe("rank tie-breaking on the ties fixture", () => {
-  test("rank ties fall through to cost, and missing values sort below", () => {
+  test("the second rank rating, then cost, decide ties against file order", () => {
     const loaded = loadRegistry({ path: fixturePath("ties.json") });
     const answer = rank({ task: "ghost" }, { registry: loaded });
     expectValidAnswer(answer);
     expect(answer.warnings.map((warning) => warning.code)).toEqual(["task-unranked"]);
     expect(labels(answer)).toEqual([
+      "model-u@harness-u",
       "model-q@harness-q",
       "model-s@harness-s",
       "model-r@harness-r",
@@ -554,6 +577,7 @@ describe("rank warnings for fields this slice does not apply", () => {
   test("a task alongside minimums still warns that the task was not ranked", () => {
     const loaded = full();
     const answer = rank({ task: "implement", minimums: { coding: 5 } }, { registry: loaded });
+    expectValidAnswer(answer);
     expect(answer.warnings).toEqual([
       {
         code: "task-unranked",
@@ -561,14 +585,15 @@ describe("rank warnings for fields this slice does not apply", () => {
         fix: "State minimums for inline floors; ranking by task arrives in a later release.",
       },
     ]);
-    expect(labels(answer)).toEqual(
-      rank({ minimums: { coding: 5 } }, { registry: loaded }).routes.map((route) => route.label),
-    );
+    const inline = rank({ minimums: { coding: 5 } }, { registry: loaded });
+    expectValidAnswer(inline);
+    expect(labels(answer)).toEqual(inline.routes.map((route) => route.label));
   });
 
   test("every removal reason carries its full coded shape", () => {
     const loaded = full();
     const privacy = rank({ minimums: { coding: 5 }, privacy: "secret" }, { registry: loaded });
+    expectValidAnswer(privacy);
     expect(privacy.removed[0]).toEqual({
       label: "model-a@harness-y/provider-1",
       reason: {
@@ -582,6 +607,7 @@ describe("rank warnings for fields this slice does not apply", () => {
       { minimums: { coding: 5 }, excludeFamilies: ["family-a"] },
       { registry: loaded },
     );
+    expectValidAnswer(family);
     expect(family.removed[0]).toEqual({
       label: "model-a@harness-x",
       reason: {
@@ -593,6 +619,7 @@ describe("rank warnings for fields this slice does not apply", () => {
     });
 
     const needs = rank({ minimums: { coding: 5 }, needs: ["repo-access"] }, { registry: loaded });
+    expectValidAnswer(needs);
     expect(needs.removed[0]).toEqual({
       label: "model-a@harness-x",
       reason: {
@@ -614,6 +641,7 @@ describe("rank warnings for fields this slice does not apply", () => {
       },
       { registry: loaded },
     );
+    expectValidAnswer(answer);
     expect(answer.warnings).toEqual([
       {
         code: "capability-unknown",
@@ -634,6 +662,7 @@ describe("rank warnings for fields this slice does not apply", () => {
   test("the rating-unknown warning carries its fix and field", () => {
     const loaded = full();
     const answer = rank({ minimums: { vibes: 5 } }, { registry: loaded });
+    expectValidAnswer(answer);
     expect(answer.warnings).toEqual([
       {
         code: "rating-unknown",
@@ -656,6 +685,7 @@ describe("rank warnings for fields this slice does not apply", () => {
       },
       { registry: loaded },
     );
+    expectValidAnswer(answer);
     expect(answer.query).toEqual({
       excludeFamilies: ["family-b"],
       minimums: { coding: 5 },
@@ -679,12 +709,14 @@ describe("rank registry input", () => {
   test("a loaded registry is used as-is, so the digest is the loader's", () => {
     const loaded = full();
     const answer = rank({ minimums: { coding: 5 } }, { registry: loaded });
+    expectValidAnswer(answer);
     expect(answer.registryDigest).toBe(loaded.digest);
   });
 
   test("without an option the loader's path order applies", async () => {
     await withEnv({ MODEL_REGISTRY_FILE: FULL }, () => {
       const answer = rank({ minimums: { coding: 5 } });
+      expectValidAnswer(answer);
       expect(answer.registryDigest).toBe(`sha256:${sha256Hex(readFileSync(FULL))}`);
     });
   });
@@ -727,7 +759,9 @@ describe("rank registry input", () => {
   test("the same registry and query rank identically twice", () => {
     const loaded = full();
     const first = rank({ minimums: { coding: 5 }, prefer: "speed" }, { registry: loaded });
+    expectValidAnswer(first);
     const second = rank({ minimums: { coding: 5 }, prefer: "speed" }, { registry: loaded });
+    expectValidAnswer(second);
     expect(second).toEqual(first);
   });
 

@@ -57,7 +57,8 @@ describe("the ranking call", () => {
 
   test("the answer carries the sha256 of the registry file", () => {
     const result = run(['{"minimums":{"coding":5}}', "--registry", FULL]);
-    const answer = JSON.parse(result.stdout()) as { registryDigest: string };
+    const answer = JSON.parse(result.stdout());
+    expectValidAnswer(answer);
     expect(answer.registryDigest).toBe(
       `sha256:${createHash("sha256").update(readFileSync(FULL)).digest("hex")}`,
     );

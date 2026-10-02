@@ -65,6 +65,21 @@
           "cost": 5
         }
       ]
+    },
+    "tied-speed": {
+      "family": "family-tied",
+      "ratings": {
+        "coding": 5
+      },
+      "routes": [
+        {
+          "harness": "harness-x",
+          "modelId": "tied-speed-1",
+          "hosted": true,
+          "cost": 8,
+          "responseSeconds": 3
+        }
+      ]
     }
   },
   "router": {

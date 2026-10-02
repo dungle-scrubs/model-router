@@ -51,6 +51,21 @@
           "cost": 1
         }
       ]
+    },
+    "model-u": {
+      "family": "family-u",
+      "ratings": {
+        "coding": 6,
+        "intelligence": 9
+      },
+      "routes": [
+        {
+          "harness": "harness-u",
+          "modelId": "model-id-u",
+          "hosted": true,
+          "cost": 3
+        }
+      ]
     }
   }
 }
