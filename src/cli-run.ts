@@ -126,6 +126,16 @@ export function runCli(argv: readonly string[], io: Partial<CliIo> = {}): number
   const tasksCommand = addRegistryOption(
     new Command("tasks").description("Print the registry's task list as one JSON line."),
   );
+  // Commander 15 does not inherit the root's exitOverride or output sinks
+  // through addCommand: configure the child the same way, so its parser
+  // errors throw back to the shared catch instead of calling process.exit,
+  // and its help reaches stdout through the same sink.
+  tasksCommand.exitOverride().configureOutput({
+    writeOut: (text) => {
+      stdout.write(text);
+    },
+    writeErr: () => {},
+  });
   tasksCommand.action(function (this: Command) {
     const options = this.optsWithGlobals() as { registry?: string[] };
     const explicit = resolveRegistryOption(options.registry ?? []);

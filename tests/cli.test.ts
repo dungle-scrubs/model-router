@@ -356,6 +356,21 @@ describe("the tasks subcommand", () => {
     expect(result.exitCode).toBe(4);
     expect(errorEnvelope(result.stderr).error.code).toBe("registry-sections-invalid");
   });
+
+  test("a tasks subcommand parser failure returns 2 with the envelope instead of exiting", () => {
+    // runCli must return, not process.exit: an embedding process keeps
+    // control when the child command rejects an option.
+    const result = run(["tasks", "--matrix"]);
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout()).toBe("");
+    expect(errorEnvelope(result.stderr).error).toEqual({
+      code: "query-invalid",
+      field: "query",
+      fix: "Run model-router --help for the ranking call and its options.",
+      message: "unknown option '--matrix'",
+      problems: [],
+    });
+  });
 });
 
 describe("the built CLI", () => {
@@ -394,5 +409,25 @@ describe("the built CLI", () => {
     });
     expect(result.exitCode).toBe(0);
     expectValidAnswer(JSON.parse(result.stdout));
+  });
+
+  test("a tasks subcommand parser failure exits 2 with the query-invalid envelope", () => {
+    const result = runBuiltCli(["tasks", "--matrix", "--registry", TASKS]);
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout).toBe("");
+    const error = JSON.parse(result.stderr).error;
+    expect(error.code).toBe("query-invalid");
+    expect(error.field).toBe("query");
+    expect(error.fix).toBe("Run model-router --help for the ranking call and its options.");
+    expect(error.message).toContain("--matrix");
+    expect(error.problems).toEqual([]);
+  });
+
+  test("tasks --help exits 0 and prints its help on stdout", () => {
+    const result = runBuiltCli(["tasks", "--help"]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("tasks");
+    expect(result.stdout).toContain("--registry");
+    expect(result.stderr).toBe("");
   });
 });
