@@ -4,7 +4,7 @@ Rank model routes for a structured query against the shared model registry.
 
 A route is one model reached through one harness. The caller states what the work needs; the router orders the registry's routes into one ranked list, contract version 1. This package is the router half of the design in the model-registry RFC; the loader and validator half is [`@dungle-scrubs/model-registry`](https://github.com/dungle-scrubs/model-registry). Development release: the package is private and unpublished.
 
-This release implements issue #28: tasks and policies. Inline `minimums`, pins, effort levels, `config.json`, availability and the describe step arrive in later issues.
+This release implements issue #28: tasks and policies. Pins, effort levels, `config.json`, availability and the describe step arrive in later issues.
 
 ## CLI
 
@@ -63,7 +63,7 @@ The order list is the task's `rank`. A misspelled task in the registry falls thr
 
 At most one policy applies to a query. A policy is a candidate when its `task` is the query's task, its `stakes` include the query's, and its `spec` condition holds: a policy without `spec` applies whatever the query's `spec` is, and a policy with `spec: "settled"` applies only to a `spec: "settled"` query. A policy's `spec` accepts only `settled`. When a specless policy and a settled policy are both candidates for a settled query, the settled one wins. Two policies that could match the same query at the same level - the same task, an overlapping stakes level, the same spec condition (both specless, or both settled) - make the file invalid (`policy-tie`).
 
-The policy's routes follow the rank in written order, with `placedBy: "policy"` and `floor: "skipped"`. No route appears twice. A policy route that a hard limit removed stays in `removed` with its hard-limit reason, and a `policy-route-removed` warning names the policy.
+The policy's routes come before the ranked routes, in written order, with `placedBy: "policy"`, `policy` naming the policy and `floor: "skipped"`. No route appears twice. A policy route that a hard limit removed stays in `removed` with its hard-limit reason, and a `policy-route-removed` warning names the policy.
 
 ## The ranking
 

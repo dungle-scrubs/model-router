@@ -15,4 +15,10 @@ describe("README problem codes", () => {
       expect(readme, `${code} is missing from README.md`).toContain(code);
     }
   });
+
+  test("states shipped features and policy-route placement accurately", () => {
+    const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
+    expect(readme).not.toMatch(/Inline `minimums`[^.]*arrive in later issues/);
+    expect(readme).toContain("The policy's routes come before the ranked routes");
+  });
 });
