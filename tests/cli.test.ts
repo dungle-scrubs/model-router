@@ -14,6 +14,9 @@ import {
 
 const FULL = fixturePath("full.json");
 const MINIMAL = fixturePath("minimal.json");
+const TASKS = fixturePath("tasks.json");
+const EMPTY = fixturePath("empty-models.json");
+const POLICY_BROKEN = fixturePath("policy-broken.json");
 
 interface RunResult {
   exitCode: number;
@@ -312,6 +315,46 @@ describe("help, version and environment", () => {
         message: "stdin exploded",
       },
     });
+  });
+});
+
+describe("the tasks subcommand", () => {
+  test("prints the task list as one JSON line on stdout and exits 0", () => {
+    const result = run(["tasks", "--registry", TASKS]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr()).toBe("");
+    const lines = result.stdout().split("\n");
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toBe("");
+    const tasks = JSON.parse(lines[0] ?? "");
+    expect(tasks).toEqual([
+      { name: "task-a", description: "Write or change code to a stated spec." },
+      { name: "task-b", description: "Browse the web and gather references." },
+    ]);
+  });
+
+  test("prints [] when the registry has no tasks section", () => {
+    const result = run(["tasks", "--registry", EMPTY]);
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout())).toEqual([]);
+  });
+
+  test("exits 4 with registry-sections-invalid on the same problems as rank", () => {
+    const result = run(["tasks", "--registry", POLICY_BROKEN]);
+    expect(result.exitCode).toBe(4);
+    expect(result.stdout()).toBe("");
+    const error = errorEnvelope(result.stderr).error;
+    expect(error.code).toBe("registry-sections-invalid");
+    const codes = (error.problems as { code: string }[]).map((problem) => problem.code);
+    expect(codes).toContain("policy-tie");
+    expect(codes).toContain("policy-route-effort-above-max");
+    expect(codes).toContain("policy-route-label-unknown");
+  });
+
+  test("exits 4 with registry-sections-invalid when router is missing", () => {
+    const result = run(["tasks", "--registry", fixturePath("no-router.json")]);
+    expect(result.exitCode).toBe(4);
+    expect(errorEnvelope(result.stderr).error.code).toBe("registry-sections-invalid");
   });
 });
 

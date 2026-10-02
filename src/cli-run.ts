@@ -126,7 +126,8 @@ export function runCli(argv: readonly string[], io: Partial<CliIo> = {}): number
   const tasksCommand = addRegistryOption(
     new Command("tasks").description("Print the registry's task list as one JSON line."),
   );
-  tasksCommand.action((options: { registry?: string[] }) => {
+  tasksCommand.action(function (this: Command) {
+    const options = this.optsWithGlobals() as { registry?: string[] };
     const explicit = resolveRegistryOption(options.registry ?? []);
     const tasks = listTasks(explicit === "" ? {} : { registry: explicit });
     stdout.write(`${JSON.stringify(tasks)}\n`);
