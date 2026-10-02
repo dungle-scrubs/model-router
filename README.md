@@ -117,7 +117,8 @@ The RFC names the error codes; these warning and reason codes are this package's
 | `rating-unknown` | warnings | a minimum names a rating the registry does not declare |
 | `capability-unknown` | warnings | a need names a capability the registry does not declare |
 | `family-unknown` | warnings | an excluded family is not in the registry |
-| `effort-off-ladder` | warnings | the query's `effort` is not on the ladder; the configured default applies |
+| `effort-off-ladder` | warnings | the query's `effort` is not on the ladder; the actual fallback source (task effort or `effort.default`) applies |
+| `effort-fixed-lowering` | warnings | the requested level was lowered by the model's `fixedEffort` |
 | `effort-above-max` | warnings | the requested level was lowered by the model's `maxEffort` |
 | `effort-ceiling` | warnings | the requested level was lowered by `effort.ceiling` in `config.json` |
 | `pin-unknown` | warnings | the query's pin is not in the registry |

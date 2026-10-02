@@ -348,7 +348,9 @@ interface RequestedEffort {
  * effort is ignored with a warning; the task's effort is already validated
  * against the ladder in `sections`, so it is always on the ladder. The
  * config default is always on the ladder (config validation rejects a
- * default above the ceiling). */
+ * default above the ceiling). The warning names the actual fallback
+ * source so the caller can tell whether the task effort or the
+ * configured default supplied the request. */
 function resolveRequestedEffort(
   applied: ReturnType<typeof applyQueryDefaults>,
   resolvedTask: TaskResolution | undefined,
@@ -366,12 +368,26 @@ function resolveRequestedEffort(
     if ((EFFORT_LADDER as readonly string[]).includes(applied.effort)) {
       return { requested: applied.effort as EffortLevel };
     }
+    // The fallback that follows the warning may be either the task's
+    // effort (when one is named and on the ladder) or the configured
+    // default. Resolve the fallback first, then describe it accurately
+    // in the diagnostic.
+    const taskEffort = resolvedTask?.task?.effort;
+    const fallbackLevel: EffortLevel =
+      taskEffort !== undefined && (EFFORT_LADDER as readonly string[]).includes(taskEffort)
+        ? (taskEffort as EffortLevel)
+        : config.effort.default;
+    const fallbackSource =
+      taskEffort !== undefined && (EFFORT_LADDER as readonly string[]).includes(taskEffort)
+        ? `the task effort "${fallbackLevel}"`
+        : `the configured default "${fallbackLevel}"`;
     warnings.push({
       code: "effort-off-ladder",
       field: "$.effort",
-      fix: `Set "effort" to one of ${EFFORT_LADDER.join(", ")}; the configured default was used.`,
-      message: `the query effort "${applied.effort}" is not on the ladder; the configured default was used`,
+      fix: `Set "effort" to one of ${EFFORT_LADDER.join(", ")}; ${fallbackSource} was used.`,
+      message: `the query effort "${applied.effort}" is not on the ladder; ${fallbackSource} was used`,
     });
+    return { requested: fallbackLevel };
   }
   if (resolvedTask?.task?.effort !== undefined) {
     return { requested: resolvedTask.task.effort as EffortLevel };
@@ -399,7 +415,18 @@ function resolveRouteEffort(
   let loweredWarn: { field: string; message: string } | undefined;
   const prefix = ownerLabel ?? "model";
   if (model.fixedEffort !== undefined && model.fixedEffort !== current) {
-    current = model.fixedEffort;
+    const next = model.fixedEffort;
+    if (exceedsLadderIndex(current, next)) {
+      // fixedEffort lowered the request: warn. Raising or matching does not.
+      warnings.push({
+        code: "effort-fixed-lowering",
+        field: `$.fixedEffort[${JSON.stringify(next)}]`,
+        fix: `Lower the request to "${next}" or below, or raise the model's fixedEffort.`,
+        message: `the ${prefix} effort was lowered from "${current}" to "${next}" by the model's fixedEffort`,
+      });
+      loweredWarn = { field: "fixedEffort", message: "model fixedEffort" };
+    }
+    current = next;
   }
   if (model.maxEffort !== undefined && exceedsLadderIndex(current, model.maxEffort)) {
     const next = model.maxEffort;
@@ -672,6 +699,20 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
   // fallback ranking with pin.used=false and a reason.
   const pinReport = resolvePin(applied.pin, flatByLabel, removed, warnings);
 
+  // The pin's effort, when the pin label is also a matching policy route,
+  // comes from the policy route entry: per RFC, the policy route's
+  // effort sits first in the effort precedence. Build the lookup up
+  // front so the pin placement can apply it without re-walking the
+  // policy's written order.
+  const policyRouteEffortByLabel = new Map<string, EffortLevel>();
+  if (policyMatch !== undefined) {
+    for (const policyRoute of policyMatch.routes) {
+      if (typeof policyRoute.effort === "string") {
+        policyRouteEffortByLabel.set(policyRoute.route, policyRoute.effort as EffortLevel);
+      }
+    }
+  }
+
   const policyPlaced: AnswerRoute[] = [];
   const placedLabels = new Set<string>();
   if (pinReport?.used === true) {
@@ -776,13 +817,13 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
   if (pinReport?.used === true) {
     const pinEntry = flatByLabel.get(pinReport.label);
     if (pinEntry !== undefined) {
-      const resolved = resolveRouteEffort(
-        requestedEffort.requested,
-        pinEntry.model,
-        config,
-        warnings,
-        null,
-      );
+      // The pin's effort comes from the policy route's effort when one
+      // names the pin label: the policy route effort sits first in the RFC's
+      // precedence, even for the route the pin places. When no policy names
+      // the label, the shared request applies.
+      const pinRequested =
+        policyRouteEffortByLabel.get(pinEntry.label) ?? requestedEffort.requested;
+      const resolved = resolveRouteEffort(pinRequested, pinEntry.model, config, warnings, null);
       routes.push(buildAnswerRoute(pinEntry, "skipped", [], "pin", resolved.level));
     }
   }
