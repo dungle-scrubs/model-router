@@ -7,7 +7,7 @@ import {
   type JevQuestion,
   type JevResponse,
 } from "./jev.js";
-import { parsePartialQuery } from "./query.js";
+import { parsePartialQuery, QUERY_FIELDS } from "./query.js";
 import { resolveConfig, resolveRegistry } from "./rank.js";
 import { validateRouterSections } from "./sections.js";
 import type {
@@ -125,18 +125,25 @@ function candidatesOf(probabilities: Readonly<Record<string, number>>): Describe
   return candidates;
 }
 
-/** Copy the caller's query fields, replacing task and needs with the filled
- * values. Every other field is the caller's, and an absent field stays
- * absent: no own key holding undefined reaches the filled query, neither
- * from the caller's object nor from this copy. */
+/** Fill the query: `task` and `needs` take the filled values; every other
+ * contract field is read from the partial by property access, the same
+ * read the gate and the schema made, so a field the caller stated through
+ * the prototype is carried too. A field whose value is `undefined` stays
+ * absent, and the keys follow the contract's field order. */
 function filledQuery(partial: Query, task: string | undefined, needs: readonly string[]): Query {
-  const query: Record<string, unknown> = { needs };
-  if (task !== undefined) {
-    query.task = task;
-  }
-  for (const [field, value] of Object.entries(partial)) {
-    if (field !== "needs" && value !== undefined) {
-      query[field] = value;
+  const query: Record<string, unknown> = {};
+  for (const field of QUERY_FIELDS) {
+    if (field === "task") {
+      if (task !== undefined) {
+        query.task = task;
+      }
+    } else if (field === "needs") {
+      query.needs = needs;
+    } else {
+      const value = (partial as Record<string, unknown>)[field];
+      if (value !== undefined) {
+        query[field] = value;
+      }
     }
   }
   return query as unknown as Query;

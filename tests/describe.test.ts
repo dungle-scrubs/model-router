@@ -934,6 +934,57 @@ describe("boundary and passthrough behavior", () => {
       spy.mockRestore();
     }));
 
+  test("the filled query's keys follow the contract's field order", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const { spy } = stubFetch(happyBody);
+      const result = await describeStep(
+        "some work",
+        { privacy: "normal", stakes: "high", needs: [], prefer: "speed" },
+        { registry: FIXTURE },
+      );
+      expect(Object.keys(result.query)).toEqual(["task", "needs", "stakes", "prefer", "privacy"]);
+      spy.mockRestore();
+    }));
+
+  test("a query whose fields the gate reads through the prototype keeps them in the filled query", async () =>
+    withEnv({ TYPESAFE_API_KEY: undefined }, async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
+      const partial = Object.create({ minimums: { reasoning: 1 }, stakes: "high" });
+      partial.privacy = "normal";
+      const result = await describeStep("some work", partial, { registry: NO_QUESTIONS });
+      expect(result.query).toEqual({
+        minimums: { reasoning: 1 },
+        needs: [],
+        stakes: "high",
+        privacy: "normal",
+      });
+      expect(rank(result.query, { registry: NO_QUESTIONS })).toEqual(
+        rank(partial, { registry: NO_QUESTIONS }),
+      );
+      expect(fetchSpy).not.toHaveBeenCalled();
+      fetchSpy.mockRestore();
+    }));
+
+  test("prototype fields survive the unasked-capabilities path the same way", async () =>
+    withEnv({ TYPESAFE_API_KEY: undefined }, async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
+      const partial = Object.create({ minimums: { reasoning: 1 }, stakes: "high" });
+      partial.privacy = "normal";
+      const result = await describeStep("some work", partial, { registry: FIXTURE });
+      expect(result.query).toEqual({
+        minimums: { reasoning: 1 },
+        needs: [],
+        stakes: "high",
+        privacy: "normal",
+      });
+      expect(result.warnings.map((warning) => warning.code)).toEqual(["capabilities-unasked"]);
+      expect(rank(result.query, { registry: FIXTURE })).toEqual(
+        rank(partial, { registry: FIXTURE }),
+      );
+      expect(fetchSpy).not.toHaveBeenCalled();
+      fetchSpy.mockRestore();
+    }));
+
   test("the task question carries its instruction text", async () =>
     withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
       const { seen, spy } = stubFetch(happyBody);

@@ -6,8 +6,17 @@ import type { AppliedQuery, Prefer, Privacy, Query, Spec, Stakes } from "./types
 
 const AJV_OPTIONS = { allErrors: true, strictNumbers: true } as const;
 
+/** The query contract's field names, in the schema's order. The field
+ * list and the describe step's filled query both walk it, so neither can
+ * drift from the schema. Exported from this module only, not from the
+ * package entry. */
+export const QUERY_FIELDS: readonly string[] = Object.keys(querySchema.properties);
+
+const lastQueryField = QUERY_FIELDS.at(-1);
 const QUERY_FIELD_LIST =
-  "task, minimums, needs, effort, pin, stakes, prefer, privacy, excludeFamilies and spec";
+  lastQueryField === undefined
+    ? ""
+    : `${QUERY_FIELDS.slice(0, -1).join(", ")} and ${lastQueryField}`;
 
 const validateQueryShape = new Ajv2020(AJV_OPTIONS).compile(querySchema);
 
