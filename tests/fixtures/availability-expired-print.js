@@ -2,12 +2,10 @@
 // A small availability-document writer used by tests that need a command
 // source whose single entry has already expired. The CLI is supposed to
 // drop this entry before the engine sees it, so the metered route stays
-// in place. The generatedAt is set 60 seconds before print time so the
-// document is fresh by the parent's clock: the parent reads `now`
-// before the child runs, so the child must write a date strictly before
-// the parent's `now` to avoid the "in the future" check.
+// in place. The document is stamped at print time; the CLI reads its
+// clock after the command returns.
 
-const generatedAt = new Date(Date.now() - 60_000).toISOString();
+const generatedAt = new Date().toISOString();
 process.stdout.write(
   JSON.stringify({
     format: 1,

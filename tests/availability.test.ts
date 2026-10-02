@@ -689,11 +689,7 @@ describe("loadAvailabilityForCli", () => {
       command: true,
       config: {
         command: ["node", fixturePath("availability-expired-print.js")],
-        // A generous staleness bound so the document is always fresh:
-        // the child's generatedAt may tick a few hundredths of a second
-        // after the parent's clock was read, and the "in the future"
-        // check fires when ageMs is negative.
-        maxAgeSeconds: 3600,
+        maxAgeSeconds: 300,
         timeoutSeconds: 10,
       },
       file: undefined,
@@ -1390,9 +1386,11 @@ describe("CLI availability flags", () => {
       expect(result.exitCode).toBe(0);
       const answer = JSON.parse(result.stdout);
       expectValidAnswer(answer);
+      expect(answer.availabilityNote).toBeNull();
       expect(
-        answer.routes.find((r: { label: string }) => r.label === "model-a@harness-x"),
-      ).toBeDefined();
+        answer.routes.find((r: { label: string }) => r.label === "model-a@harness-x")?.availability,
+      ).toBe("ok");
+      expect(answer.warnings.map((w) => w.code)).not.toContain("meter-no-reading");
     });
   });
 

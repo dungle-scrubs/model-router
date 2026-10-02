@@ -221,7 +221,7 @@ function entryInvalid(index: number, message: string, fix: string): Coded {
 
 export function readAvailabilityFile(
   path: string,
-  options: { readonly maxAgeSeconds: number; readonly now?: Date },
+  options: { readonly maxAgeSeconds: number; readonly now?: Date; readonly clock?: () => Date },
 ): AvailabilityLoad {
   let text: string;
   try {
@@ -265,7 +265,10 @@ export function readAvailabilityFile(
       warnings: [],
     };
   }
-  return parseAvailabilityDocument(raw, options);
+  return parseAvailabilityDocument(raw, {
+    maxAgeSeconds: options.maxAgeSeconds,
+    now: options.now ?? options.clock?.() ?? new Date(),
+  });
 }
 
 export function runAvailabilityCommand(
@@ -275,6 +278,7 @@ export function runAvailabilityCommand(
     readonly timeoutSeconds: number;
     readonly maxBuffer?: number;
     readonly now?: Date;
+    readonly clock?: () => Date;
   },
 ): AvailabilityLoad {
   if (command.length === 0) {
@@ -399,7 +403,10 @@ export function runAvailabilityCommand(
       warnings: [],
     };
   }
-  return parseAvailabilityDocument(raw, options);
+  return parseAvailabilityDocument(raw, {
+    maxAgeSeconds: options.maxAgeSeconds,
+    now: options.now ?? options.clock?.() ?? new Date(),
+  });
 }
 
 export interface AvailabilityCliSource {
@@ -411,7 +418,10 @@ export interface AvailabilityCliSource {
 export function loadAvailabilityForCli(source: AvailabilityCliSource): AvailabilityLoad {
   const maxAgeSeconds = source.config?.maxAgeSeconds ?? 300;
   const timeoutSeconds = source.config?.timeoutSeconds ?? 10;
-  const now = new Date();
+  // The readers call this only after the source returns. Reuse that
+  // reading for expiry so staleness and resetsAt share one instant.
+  let now: Date | undefined;
+  const clock = (): Date => (now ??= new Date());
   if (source.command) {
     if (source.config?.command === undefined) {
       return {
@@ -427,13 +437,13 @@ export function loadAvailabilityForCli(source: AvailabilityCliSource): Availabil
     const load = runAvailabilityCommand(source.config.command, {
       maxAgeSeconds,
       timeoutSeconds,
-      now,
+      clock,
     });
-    return dropExpiredLoad(load, now);
+    return dropExpiredLoad(load, clock());
   }
   if (source.file !== undefined) {
-    const load = readAvailabilityFile(source.file, { maxAgeSeconds, now });
-    return dropExpiredLoad(load, now);
+    const load = readAvailabilityFile(source.file, { maxAgeSeconds, clock });
+    return dropExpiredLoad(load, clock());
   }
   return { entries: [], note: null, warnings: [] };
 }
