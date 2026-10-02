@@ -85,7 +85,7 @@ export function validateRouterSections(loaded: LoadedRegistry): RouterSections {
       });
       return;
     }
-    if (!(entry in declaredRatings)) {
+    if (!Object.hasOwn(declaredRatings, entry)) {
       problems.push({
         code: "router-rank-unknown",
         field,
@@ -109,7 +109,7 @@ export function validateRouterSections(loaded: LoadedRegistry): RouterSections {
     } else {
       const declaredCapabilities = loaded.registry.capabilities ?? {};
       for (const [capability, question] of Object.entries(questions)) {
-        if (!(capability in declaredCapabilities)) {
+        if (!Object.hasOwn(declaredCapabilities, capability)) {
           problems.push({
             code: "router-question-capability-unknown",
             field: pathJoin(pathJoin('$["router"]', "questions"), capability),

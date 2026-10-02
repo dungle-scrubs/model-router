@@ -308,6 +308,33 @@ describe("validateRouterSections", () => {
     });
   });
 
+  test("inherited property names are not declared ratings or capabilities", async () => {
+    await withTempDir(async (dir) => {
+      const loaded = loadRegistry({
+        path: writeJson(dir, "registry.json", {
+          format: 1,
+          ratings: { coding: "Writes and changes code to a spec." },
+          capabilities: { browser: "Can drive a web browser." },
+          router: {
+            rank: ["coding", "toString"],
+            questions: { toString: "Is this question inherited?" },
+          },
+          models: {
+            "model-a": {
+              family: "family-a",
+              routes: [{ harness: "harness-x", modelId: "model-id-a", hosted: true }],
+            },
+          },
+        }),
+      });
+      const error = catchSectionsError(() => validateRouterSections(loaded));
+      expect(error.problems.map((problem) => problem.code)).toEqual([
+        "router-rank-unknown",
+        "router-question-capability-unknown",
+      ]);
+    });
+  });
+
   test("several problems are collected into one error", async () => {
     await withTempDir(async (dir) => {
       const loaded = loadRegistry({

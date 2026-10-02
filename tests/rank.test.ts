@@ -352,6 +352,35 @@ describe("rank tie-breaking on the model's route order", () => {
   });
 });
 
+describe("rank reads only the model's own rating entries", () => {
+  const OWN_PROPS = fixturePath("own-props.json");
+
+  test("a declared rating named constructor, missing from a model, counts as below its floor", () => {
+    const loaded = loadRegistry({ path: OWN_PROPS });
+    const answer = rank({ minimums: { constructor: 5 } }, { registry: loaded });
+    expectValidAnswer(answer);
+    const below = answer.routes.find((route) => route.label === "model-n@harness-x");
+    expect(below?.floor).toBe("below");
+    expect(below?.reasons).toEqual([
+      {
+        code: "floor-not-met",
+        field: '$.minimums["constructor"]',
+        message: 'the model has no value for rating "constructor" (floor 5)',
+      },
+    ]);
+    const clears = answer.routes.find((route) => route.label === "model-o@harness-x");
+    expect(clears?.floor).toBe("clears");
+    expect(clears?.reasons).toEqual([]);
+  });
+
+  test("a rank rating named constructor, missing from a model, sorts that model below", () => {
+    const loaded = loadRegistry({ path: OWN_PROPS });
+    const answer = rank({ task: "ghost" }, { registry: loaded });
+    expectValidAnswer(answer);
+    expect(labels(answer)).toEqual(["model-o@harness-x", "model-m@harness-x", "model-n@harness-x"]);
+  });
+});
+
 describe("rank hard limits", () => {
   test("privacy: secret keeps only privacyEligible routes", () => {
     const loaded = full();

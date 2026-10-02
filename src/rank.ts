@@ -112,6 +112,14 @@ function rejectByHardLimit(
   return null;
 }
 
+/** An own-property rating lookup: inherited names such as "constructor" are absent. */
+function ratingValue(
+  ratings: Readonly<Record<string, number>>,
+  rating: string,
+): number | undefined {
+  return Object.hasOwn(ratings, rating) ? ratings[rating] : undefined;
+}
+
 function floorOf(
   ratings: Readonly<Record<string, number>>,
   floors: readonly Floor[],
@@ -119,7 +127,7 @@ function floorOf(
 ): "clears" | "below" {
   if (everyRouteBelow) return "below";
   for (const { rating, minimum } of floors) {
-    const value = ratings[rating];
+    const value = ratingValue(ratings, rating);
     if (value === undefined || value < minimum) {
       return "below";
     }
@@ -133,7 +141,7 @@ function belowReasons(
 ): readonly Coded[] {
   const reasons: Coded[] = [];
   for (const { rating, minimum } of floors) {
-    const value = ratings[rating];
+    const value = ratingValue(ratings, rating);
     if (value === undefined || value < minimum) {
       reasons.push(floorReason(rating, minimum, value));
     }
@@ -143,8 +151,8 @@ function belowReasons(
 
 function byRankRatings(a: FlatRoute, b: FlatRoute, rank: readonly string[]): number {
   for (const rating of rank) {
-    const aValue = a.ratings[rating];
-    const bValue = b.ratings[rating];
+    const aValue = ratingValue(a.ratings, rating);
+    const bValue = ratingValue(b.ratings, rating);
     if (aValue === undefined && bValue === undefined) continue;
     if (aValue === undefined) return 1;
     if (bValue === undefined) return -1;
