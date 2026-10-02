@@ -189,6 +189,10 @@ export interface RouterConfig {
 }
 
 function configError(first: ConfigProblem, rest: readonly ConfigProblem[]): RouterError {
+  // Every problem is reported: the first names the field and fix for the
+  // envelope's top level, and every problem lives in the `problems` array
+  // so the caller can walk the file's findings in order.
+  const all = [first, ...rest];
   return new RouterError({
     code: "config-invalid",
     field: first.field,
@@ -196,8 +200,8 @@ function configError(first: ConfigProblem, rest: readonly ConfigProblem[]): Rout
       rest.length === 0
         ? first.fix
         : "Fix each problem listed in problems, then run model-router again.",
-    message: rest.length === 0 ? first.message : `the config file has ${rest.length + 1} problems`,
-    problems: rest.map(toRouterProblem),
+    message: rest.length === 0 ? first.message : `the config file has ${all.length} problems`,
+    problems: all.map(toRouterProblem),
   });
 }
 

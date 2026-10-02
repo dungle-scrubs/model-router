@@ -381,6 +381,78 @@ describe("the tasks subcommand", () => {
   });
 });
 
+describe("the check subcommand", () => {
+  test("prints configPath, registryPath and registryDigest, exits 0", () => {
+    const result = run(["check", "--registry", FULL]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr()).toBe("");
+    const lines = result.stdout().split("\n");
+    expect(lines).toHaveLength(2);
+    const payload = JSON.parse(lines[0] ?? "");
+    expect(payload.registryDigest).toBe(
+      `sha256:${createHash("sha256").update(readFileSync(FULL)).digest("hex")}`,
+    );
+    expect(payload.registryPath).toBe(FULL);
+    expect(payload.configPath).toBeNull();
+  });
+
+  test("prints configPath: null when defaults apply and makes no Jev call", () => {
+    // The check subcommand must not call Jev or run any command: a Jev
+    // call would error or set up the wrong type. The absence of a
+    // TYPESAFE_API_KEY does not fail the check, so the absence of the
+    // key is the proof: check returns 0 without the env.
+    const savedKey = process.env.TYPESAFE_API_KEY;
+    delete process.env.TYPESAFE_API_KEY;
+    try {
+      const result = run(["check", "--registry", FULL]);
+      expect(result.exitCode).toBe(0);
+      const payload = JSON.parse(result.stdout());
+      expect(payload.configPath).toBeNull();
+    } finally {
+      if (savedKey !== undefined) process.env.TYPESAFE_API_KEY = savedKey;
+    }
+  });
+
+  test("an explicit --config path that exists prints it", async () => {
+    await withTempDir(async (dir) => {
+      const path = writeJson(dir, "config.json", { effort: { default: "low" } });
+      const result = run(["check", "--registry", FULL, "--config", path]);
+      expect(result.exitCode).toBe(0);
+      const payload = JSON.parse(result.stdout());
+      expect(payload.configPath).toBe(path);
+    });
+  });
+
+  test("an explicit --config path that does not exist exits 4 with config-invalid", () => {
+    const result = run(["check", "--registry", FULL, "--config", "./nope.json"]);
+    expect(result.exitCode).toBe(4);
+    expect(result.stdout()).toBe("");
+    expect(errorEnvelope(result.stderr).error.code).toBe("config-invalid");
+  });
+
+  test("a malformed registry exits 4 with the loader's envelope", () => {
+    const result = run(["check", "--registry", fixturePath("not-json.json")]);
+    expect(result.exitCode).toBe(4);
+    expect(errorEnvelope(result.stderr).error.code).toBe("registry-unreadable");
+  });
+
+  test("a check parser failure exits 2 with the envelope instead of exiting", () => {
+    const result = run(["check", "--matrix"]);
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout()).toBe("");
+    expect(errorEnvelope(result.stderr).error.code).toBe("query-invalid");
+  });
+
+  test("check --help exits 0 and prints the check help", () => {
+    const result = run(["check", "--help"]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout()).toContain("check");
+    expect(result.stdout()).toContain("--registry");
+    expect(result.stdout()).toContain("--config");
+    expect(result.stderr()).toBe("");
+  });
+});
+
 describe("the built CLI", () => {
   test("a malformed policy route label exits 4 with both section problems", async () => {
     // The malformed label must surface as registry-sections-invalid, not

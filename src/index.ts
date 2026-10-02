@@ -1,3 +1,4 @@
+export { defaultConfig, loadConfig, validateConfigObjectInput } from "./config.js";
 export { RouterError } from "./error.js";
 export { listTasks, rank } from "./rank.js";
 export type {
