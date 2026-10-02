@@ -603,17 +603,22 @@ describe("runAvailabilityCommand", () => {
     expect(result.note?.message).toContain("killed after 2 seconds");
   });
 
-  test("a signal-killed child is reported as killed by signal", () => {
-    // Windows cannot deliver signals to a child Node process: the runtime
-    // exits cleanly via the SIGTERM kill instead. Skip on win32.
-    if (process.platform === "win32") return;
-    const result = runAvailabilityCommand(["node", "-e", "process.kill(process.pid, 'SIGKILL')"], {
-      maxAgeSeconds: 300,
-      timeoutSeconds: 5,
-    });
-    expect(result.note?.code).toBe("availability-command-failed");
-    expect(result.note?.message).toContain("killed by signal SIGKILL");
-  });
+  test.skipIf(process.platform === "win32")(
+    "a signal-killed child is reported as killed by signal",
+    () => {
+      // Windows cannot deliver signals to a child Node process: the
+      // runtime exits cleanly via the SIGTERM kill instead. Skip on win32.
+      const result = runAvailabilityCommand(
+        ["node", "-e", "process.kill(process.pid, 'SIGKILL')"],
+        {
+          maxAgeSeconds: 300,
+          timeoutSeconds: 5,
+        },
+      );
+      expect(result.note?.code).toBe("availability-command-failed");
+      expect(result.note?.message).toContain("killed by signal SIGKILL");
+    },
+  );
 
   test("anENOBUFS from the spawn buffer reports output exceeded 8 MiB", async () => {
     await withTempDir(async (dir) => {
@@ -997,7 +1002,7 @@ describe("rank with the availability option", () => {
     });
   });
 
-  test("an exhausted pin that applyAvailability removes reports pad.used false and adds pin-unused", () => {
+  test("an exhausted pin that applyAvailability removes reports pin.used false and adds pin-unused", () => {
     const answer = rank(
       { minimums: { coding: 5 }, pin: "model-a@harness-x" },
       {
@@ -1020,7 +1025,7 @@ describe("rank with the availability option", () => {
     expect(answer.removed.some((r) => r.label === "model-a@harness-x")).toBe(true);
   });
 
-  test("a projected meter-a entry on a pin route thatstays used leaves the pin in place", () => {
+  test("a projected meter-a entry on a pin route that stays used leaves the pin in place", () => {
     const answer = rank(
       { minimums: { coding: 5 }, pin: "model-a@harness-x" },
       {
@@ -1555,7 +1560,7 @@ describe("availability flags on subcommands", () => {
 });
 
 describe("availability.schema.json", () => {
-  test("he RFC example passes the schema", async () => {
+  test("the RFC example passes the schema", async () => {
     const { Ajv2020 } = await import("ajv/dist/2020.js");
     const schema = (await import("../availability.schema.json")).default;
     const validate = new Ajv2020({ allErrors: true, strictNumbers: true }).compile(schema);
