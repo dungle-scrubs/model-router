@@ -9,6 +9,8 @@ export type {
   Floor,
   PinReport,
   PlacedBy,
+  PolicyEntry,
+  PolicyRoute,
   Prefer,
   Privacy,
   Query,
