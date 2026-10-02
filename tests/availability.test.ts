@@ -9,7 +9,7 @@ import {
   readAvailabilityFile,
   runAvailabilityCommand,
 } from "../src/availability-cli.js";
-import { rank } from "../src/index.js";
+import { type AnswerRoute, rank } from "../src/index.js";
 import {
   expectValidAnswer,
   fixturePath,
@@ -442,7 +442,11 @@ describe("rank with the availability option", () => {
       const a = answer.routes.find((r) => r.label === "model-a@harness-x");
       const b = answer.routes.find((r) => r.label === "model-b@harness-x");
       // model-b (unmetered) precedes model-a (projected).
-      expect(answer.routes.indexOf(a!)).toBeGreaterThan(answer.routes.indexOf(b!));
+      expect(a).toBeDefined();
+      expect(b).toBeDefined();
+      expect(answer.routes.indexOf(a as AnswerRoute)).toBeGreaterThan(
+        answer.routes.indexOf(b as AnswerRoute),
+      );
       expect(a?.availability).toBe("projected");
       expect(a?.reasons.map((r) => r.code)).toContain("meter-projected");
     });
@@ -881,7 +885,7 @@ describe("CLI availability flags", () => {
         "--registry",
         FULL,
         "--availability-file",
-        "/tmp/availability-missing-${Date.now()}.json",
+        `/tmp/availability-missing-${Date.now()}.json`,
       ]);
       expect(result.exitCode).toBe(0);
       const answer = JSON.parse(result.stdout);
