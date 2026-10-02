@@ -31,6 +31,7 @@ describe("rank availability usability", () => {
     Object.assign(Object.create({ status: "ok" }), { meter: "meter-zzz" }),
     { meter: "", status: "ok" },
     { meter: 7, status: "ok" },
+    { meter: ["meter-zzz"], status: "ok" },
   ])("unusable entry %j gives no undeclared warning", (entry) => {
     const answer = rank(
       { minimums: { coding: 5 } },
