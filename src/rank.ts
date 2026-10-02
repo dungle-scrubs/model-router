@@ -336,7 +336,10 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
   }
 
   const floorsPresent = floors.length > 0 || everyRouteBelow;
-  const baseComparator = floorsPresent ? compareCostFirst : compareCapabilityFirst;
+  // An unknown task ranks most capable first, never cheapest first; an
+  // explicitly empty inline floor set is "no floor" and clears by cost.
+  const rankByCapability = applied.task !== undefined && !floorsPresent;
+  const baseComparator = rankByCapability ? compareCapabilityFirst : compareCostFirst;
   const compareClearing = (a: FlatRoute, b: FlatRoute): number => {
     if (applied.prefer === "speed") {
       const bySpeed = byResponseTime(a, b);

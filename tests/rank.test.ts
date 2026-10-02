@@ -198,7 +198,7 @@ describe("rank with inline minimums", () => {
   });
 });
 
-describe("rank with no floors ranks most capable first, never cheapest first", () => {
+describe("rank for a task this release does not rank", () => {
   const capabilityOrder = [
     "model-c@harness-x",
     "model-a@harness-x",
@@ -220,21 +220,39 @@ describe("rank with no floors ranks most capable first, never cheapest first", (
     expect(answer.query.task).toBe("ghost");
   });
 
-  test("an explicitly empty minimums object states no floor and ranks the same way", () => {
+  test("a model with no rank rating sorts below every route that has it", () => {
+    const loaded = full();
+    const answer = rank({ task: "ghost" }, { registry: loaded });
+    expectValidAnswer(answer);
+    expect(labels(answer).at(-1)).toBe("model-e@harness-w");
+  });
+});
+
+describe("rank with an explicitly empty floor set", () => {
+  test("minimums {} states no floor and orders every route by the clearing order, cost first", () => {
     const loaded = full();
     const answer = rank({ minimums: {} }, { registry: loaded });
     expectValidAnswer(answer);
-    expect(labels(answer)).toEqual(capabilityOrder);
+    expect(labels(answer)).toEqual([
+      "model-b@harness-x",
+      "model-a@harness-x",
+      "model-e@harness-w",
+      "model-a@harness-y/provider-1",
+      "model-d@harness-z",
+      "model-c@harness-x",
+    ]);
     expect(answer.warnings).toEqual([]);
     for (const route of answer.routes) {
       expect(route.floor).toBe("clears");
     }
   });
 
-  test("a model with no rank rating sorts below every route that has it", () => {
+  test("a task alongside an empty floor set still ranks most capable first", () => {
     const loaded = full();
-    const answer = rank({ minimums: {} }, { registry: loaded });
-    expect(labels(answer).at(-1)).toBe("model-e@harness-w");
+    const answer = rank({ task: "ghost", minimums: {} }, { registry: loaded });
+    expectValidAnswer(answer);
+    expect(labels(answer)[0]).toBe("model-c@harness-x");
+    expect(answer.warnings.map((warning) => warning.code)).toEqual(["task-unranked"]);
   });
 });
 
@@ -268,7 +286,7 @@ describe("rank under prefer: speed", () => {
     ]);
   });
 
-  test("under prefer: speed with no floors the rank order follows the response time", () => {
+  test("under prefer: speed with no floors, response time leads and missing times fall back to cost", () => {
     const loaded = full();
     const answer = rank({ minimums: {}, prefer: "speed" }, { registry: loaded });
     expectValidAnswer(answer);
@@ -276,9 +294,9 @@ describe("rank under prefer: speed", () => {
       "model-b@harness-x",
       "model-a@harness-x",
       "model-e@harness-w",
-      "model-c@harness-x",
       "model-a@harness-y/provider-1",
       "model-d@harness-z",
+      "model-c@harness-x",
     ]);
   });
 });
@@ -286,8 +304,9 @@ describe("rank under prefer: speed", () => {
 describe("rank tie-breaking on the ties fixture", () => {
   test("rank ties fall through to cost, and missing values sort below", () => {
     const loaded = loadRegistry({ path: fixturePath("ties.json") });
-    const answer = rank({ minimums: {} }, { registry: loaded });
+    const answer = rank({ task: "ghost" }, { registry: loaded });
     expectValidAnswer(answer);
+    expect(answer.warnings.map((warning) => warning.code)).toEqual(["task-unranked"]);
     expect(labels(answer)).toEqual([
       "model-q@harness-q",
       "model-s@harness-s",
