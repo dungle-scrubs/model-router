@@ -112,8 +112,14 @@ function resolveRegistry(option: RankOptions["registry"]): LoadedRegistry {
 }
 
 /** Resolve the rank call's `config` option: a string is a path, a plain
- * object is the library form, an absent option falls through to the
- * documented path order. */
+ * object is the settings form, an absent option falls through to the
+ * documented path order. A `LoadedConfig` is accepted for callers that
+ * already ran the loader. The settings form goes through one validator;
+ * the path form goes through the same loader the CLI uses. */
+function isLoadedConfig(value: unknown): value is LoadedConfig {
+  return typeof value === "object" && value !== null && "config" in value && "configPath" in value;
+}
+
 function resolveConfig(
   option: RankOptions["config"],
   env: NodeJS.ProcessEnv = process.env,
@@ -122,10 +128,12 @@ function resolveConfig(
   if (typeof option === "string") {
     return loadConfigImpl({ explicitPath: resolveConfigPath(option), env });
   }
-  // Anything that is not a string is treated as a parsed object: the
-  // contract is the same shape, so a single validator applies.
-  if (typeof option === "object" && option !== null && "config" in option) {
-    return option as LoadedConfig;
+  // A pre-loaded config: the caller already produced a `LoadedConfig`, so
+  // the loader has run and the validator on top of it already owns it.
+  // Anything else goes through the settings validator, including a
+  // wrapper with a `config` field, where an unknown top-level key fails.
+  if (isLoadedConfig(option)) {
+    return option;
   }
   const config = validateConfigObjectInput(option);
   return { config, configPath: null };

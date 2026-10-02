@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import {
@@ -166,8 +166,13 @@ describe("loadConfig path order", () => {
       await withTempDir(async (dir) => {
         const envConfig = writeJson(dir, "env.json", { effort: { default: "low" } });
         const xdgHome = join(dir, "xdg");
-        mkdirSync(xdgHome, { recursive: true });
-        const xdgConfig = writeJson(xdgHome, "config.json", {
+        const xdgConfigDir = join(xdgHome, "model-router");
+        mkdirSync(xdgConfigDir, { recursive: true });
+        // A competing XDG file at the proper path, not at <xdg>/config.json.
+        // The earlier-slice test wrote to <xdg>/config.json, which is not
+        // the path the loader looks at, so this version proves the env var
+        // wins against a real XDG candidate.
+        const xdgConfig = writeJson(xdgConfigDir, "config.json", {
           effort: { default: "high" },
         });
         const envLoad = loadConfig({
@@ -228,17 +233,109 @@ describe("loadConfig path order", () => {
   });
 });
 
-describe("rank accepts a config object or path", () => {
-  test("a config object validates the same way as a file", () => {
-    const loaded = full();
-    const objectAnswer = rank(
-      { minimums: { coding: 5 } },
-      { registry: loaded, config: { effort: { ceiling: "high", default: "low" } } },
-    );
-    expectValidAnswer(objectAnswer);
-    for (const route of objectAnswer.routes) {
-      expect(route.effort).toBe("low");
+describe("validateConfigObjectInput own-property reads", () => {
+  test("inherited ceiling and default values are not read from the prototype", () => {
+    // The { effort: Object.create(...) } object has own keys effort but no
+    // own ceiling/default. Configuration walks the own keys; inherited ones
+    // do not count, and the relationship check uses the defaults (xhigh and
+    // medium). If the validator read inherited values, it would set the
+    // ceiling to "low" and the default to "high" and emit
+    // config-effort-default-above-ceiling.
+    const proto = { ceiling: "low", default: "high" };
+    const inherited = validateConfigObjectInput({ effort: Object.create(proto) });
+    expect(inherited).toEqual(defaultConfig());
+  });
+
+  test("an inherited ceiling mismatch does not surface as config-effort-ceiling-invalid", () => {
+    // Same shape: the inherited ceiling is "low" but the validator reads
+    // the own ceiling as absent. The validator accepts the inherited
+    // values as absent, not as invalid ladder levels.
+    const proto = { ceiling: "warp-nine", default: "warp-nine" };
+    expect(() => validateConfigObjectInput({ effort: Object.create(proto) })).not.toThrow();
+  });
+
+  test("an inherited unknown top-level key is not reported", () => {
+    const proto = { mystery: true };
+    expect(() => validateConfigObjectInput(Object.create(proto) as object)).not.toThrow();
+  });
+});
+
+describe("validateConfigObjectInput collect-every-problem", () => {
+  test("default-above-ceiling is reported beside an unrelated unknown key", () => {
+    try {
+      validateConfigObjectInput({
+        mystery: true,
+        effort: { ceiling: "low", default: "high" },
+      });
+      throw new Error("expected validateConfigObjectInput to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RouterError);
+      const problems = (error as RouterError).problems.map((problem) => problem.code);
+      expect(problems).toContain("config-effort-default-above-ceiling");
+      expect(problems).toContain("config-key-unknown");
     }
+  });
+
+  test("default-above-ceiling is not reported when the default is off-ladder", () => {
+    // The relationship check uses the parsed levels: when the default is
+    // an off-ladder string, the level is unknown, so no relationship check
+    // runs. The default-above-ceiling code only fires when both values are
+    // valid ladder entries.
+    try {
+      validateConfigObjectInput({
+        effort: { ceiling: "low", default: "warp-nine" },
+      });
+      throw new Error("expected validateConfigObjectInput to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RouterError);
+      const problems = (error as RouterError).problems.map((problem) => problem.code);
+      expect(problems).toContain("config-effort-default-invalid");
+      expect(problems).not.toContain("config-effort-default-above-ceiling");
+    }
+  });
+});
+
+describe("loadConfigFromPath reads config-invalid for filesystem failures", () => {
+  test("a directory at the path fails config-invalid, not internal-error", () => {
+    // The existence check passes for a directory; the read fails with
+    // EISDIR. The router must surface the failure as config-invalid so
+    // the CLI's exit is 4, not 1.
+    expect(() => loadConfigFromPath("tests/fixtures")).toThrowError(
+      expect.objectContaining({ code: "config-invalid" }),
+    );
+  });
+
+  test("a file removed between the existence check and the read fails config-invalid", async () => {
+    // Race the existence check against the read: the existence check sees
+    // the file, the read runs after the file is gone. The cleanest way to
+    // exercise this is to remove the parent directory entirely: the
+    // existence check has already returned true on the original path, but
+    // the subsequent read sees an ENOENT, which the loader must convert
+    // to config-invalid.
+    let filePath = "";
+    await withTempDir(async (dir) => {
+      filePath = writeJson(dir, "config.json", {});
+      rmSync(dir, { recursive: true, force: true });
+    });
+    expect(() => loadConfigFromPath(filePath)).toThrowError(
+      expect.objectContaining({ code: "config-invalid" }),
+    );
+  });
+});
+
+describe("rank accepts a config object or path", () => {
+  test("a config object validates the same way as a file", async () => {
+    const loaded = full();
+    await withTempDir(async (dir) => {
+      const path = writeJson(dir, "config.json", {
+        effort: { ceiling: "high", default: "low" },
+      });
+      const pathAnswer = rank({ minimums: { coding: 5 } }, { registry: loaded, config: path });
+      expectValidAnswer(pathAnswer);
+      for (const route of pathAnswer.routes) {
+        expect(route.effort).toBe("low");
+      }
+    });
   });
 
   test("a config path and an object both lower a ceiling request", async () => {
@@ -284,5 +381,32 @@ describe("rank accepts a config object or path", () => {
     expect(() =>
       rank({ minimums: { coding: 5 } }, { registry: loaded, config: "./nope.json" }),
     ).toThrowError(expect.objectContaining({ code: "config-invalid" }));
+  });
+
+  test("an object with a 'config' key is not a bypass for validation", () => {
+    // The router's `config` option is a path or a plain settings object;
+    // it is not a wrapper that holds the validated object. Passing a
+    // {"config": {...}} object must run the same validator as the inline
+    // form, so an off-ladder ceiling inside it is config-invalid.
+    const loaded = full();
+    const wrapper = { config: { effort: { ceiling: "warp-nine" } } };
+    expect(() =>
+      rank({ minimums: { coding: 5 } }, { registry: loaded, config: wrapper as never }),
+    ).toThrowError(expect.objectContaining({ code: "config-invalid" }));
+  });
+
+  test("a settings object validates the same way as a file with the same bytes", () => {
+    const loaded = full();
+    const objectAnswer = rank(
+      { minimums: { coding: 5 } },
+      {
+        registry: loaded,
+        config: { effort: { ceiling: "high", default: "low" } },
+      },
+    );
+    expectValidAnswer(objectAnswer);
+    for (const route of objectAnswer.routes) {
+      expect(route.effort).toBe("low");
+    }
   });
 });

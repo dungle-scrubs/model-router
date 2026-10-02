@@ -31,6 +31,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function hasOwn(value: object, key: string): boolean {
+  return Object.hasOwn(value, key);
+}
+
 function pathJoin(parent: string, child: string): string {
   return `${parent}[${JSON.stringify(child)}]`;
 }
@@ -53,10 +57,18 @@ export function defaultConfig(): RouterConfig {
   };
 }
 
-function validateConfigObject(
-  raw: unknown,
-  env: ConfigEnv,
-): {
+/** Validate a parsed config object (the library form). The path order does
+ * not run; the caller already has the JSON text. */
+export function validateConfigObjectInput(raw: unknown): RouterConfig {
+  const { problems, config } = validateConfigObject(raw);
+  if (problems.length > 0) {
+    const [first, ...rest] = problems as [ConfigProblem, ...ConfigProblem[]];
+    throw configError(first, rest);
+  }
+  return config;
+}
+
+function validateConfigObject(raw: unknown): {
   problems: ConfigProblem[];
   config: RouterConfig;
 } {
@@ -75,7 +87,8 @@ function validateConfigObject(
     return { problems, config: defaultConfig() };
   }
   // The closed-schema check: every top-level key beyond effort is a problem,
-  // and $schema is allowed for editor support.
+  // and $schema is allowed for editor support. Own-property reads only:
+  // an inherited name such as "constructor" is not a problem here.
   for (const key of Object.keys(raw)) {
     if (key === "$schema" || KNOWN_KEYS.has(key)) continue;
     problems.push({
@@ -86,11 +99,17 @@ function validateConfigObject(
     });
   }
   const effortRaw = raw.effort;
+  // Track whether the relationship check has all-valid values. Independent
+  // problems with effort (not-object, off-ladder ceiling, off-ladder default)
+  // are reported, but the default-above-ceiling check still fires beside
+  // them: an unrelated unknown key does not hide it.
+  let effortValid = true;
   let ceiling: EffortLevel = DEFAULT_CEILING;
   let defaultLevel: EffortLevel = DEFAULT_EFFORT;
   if (effortRaw === undefined) {
     // No effort section: both defaults apply.
   } else if (!isPlainObject(effortRaw)) {
+    effortValid = false;
     problems.push({
       code: "config-effort-not-object",
       field: pathJoin("$", "effort"),
@@ -98,12 +117,15 @@ function validateConfigObject(
       message: 'the "effort" section must be a JSON object',
     });
   } else {
-    const ceilingRaw = effortRaw.ceiling;
+    // Own-property reads: an inherited ceiling or default is treated as
+    // absent, so the defaults apply and the relationship check uses them.
+    const ceilingRaw = hasOwn(effortRaw, "ceiling") ? effortRaw.ceiling : undefined;
     if (ceilingRaw !== undefined) {
       if (
         typeof ceilingRaw !== "string" ||
         !(EFFORT_LADDER as readonly string[]).includes(ceilingRaw)
       ) {
+        effortValid = false;
         problems.push({
           code: "config-effort-ceiling-invalid",
           field: pathJoin(pathJoin("$", "effort"), "ceiling"),
@@ -114,12 +136,13 @@ function validateConfigObject(
         ceiling = ceilingRaw as EffortLevel;
       }
     }
-    const defaultRaw = effortRaw.default;
+    const defaultRaw = hasOwn(effortRaw, "default") ? effortRaw.default : undefined;
     if (defaultRaw !== undefined) {
       if (
         typeof defaultRaw !== "string" ||
         !(EFFORT_LADDER as readonly string[]).includes(defaultRaw)
       ) {
+        effortValid = false;
         problems.push({
           code: "config-effort-default-invalid",
           field: pathJoin(pathJoin("$", "effort"), "default"),
@@ -141,10 +164,11 @@ function validateConfigObject(
       }
     }
   }
-  // Validate the default-above-ceiling rule regardless of which fields
-  // named the levels: an explicit default on a missing ceiling still has to
-  // clear the default ceiling.
-  if (problems.length === 0 && exceedsLadder(defaultLevel, ceiling)) {
+  // The relationship check fires whenever both parsed levels are valid
+  // ladder entries, regardless of unrelated findings like an unknown key.
+  // An invalid operand (off-ladder) suppresses the check, so the caller
+  // sees the precise reason a level is bad before the relationship.
+  if (effortValid && exceedsLadder(defaultLevel, ceiling)) {
     problems.push({
       code: "config-effort-default-above-ceiling",
       field: pathJoin(pathJoin("$", "effort"), "default"),
@@ -152,24 +176,12 @@ function validateConfigObject(
       message: `"effort"."default" "${defaultLevel}" is above "effort"."ceiling" "${ceiling}"`,
     });
   }
-  void env; // The env is recorded on the loaded path; validation uses only the parsed object.
   return {
     problems,
     config: {
       effort: { ceiling, default: defaultLevel },
     },
   };
-}
-
-/** Validate a parsed config object (the library form). The path order does
- * not run; the caller already has the JSON text. */
-export function validateConfigObjectInput(raw: unknown): RouterConfig {
-  const { problems, config } = validateConfigObject(raw, {});
-  if (problems.length > 0) {
-    const [first, ...rest] = problems as [ConfigProblem, ...ConfigProblem[]];
-    throw configError(first, rest);
-  }
-  return config;
 }
 
 /** A loaded config plus the path it came from. `configPath` is null when
@@ -215,7 +227,24 @@ function toRouterProblem(problem: ConfigProblem): RouterProblem {
 }
 
 function readJsonFromPath(filePath: string): unknown {
-  const text = readFileSync(filePath, "utf8");
+  let text: string;
+  try {
+    text = readFileSync(filePath, "utf8");
+  } catch (error) {
+    // Any filesystem failure between the existence check and the read -
+    // directory at the path, permission denied, the file removed by
+    // another process - is a router failure of the config-invalid class.
+    // The shape code is not permitted here: the caller's envelope is
+    // exit 4, not 1.
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new RouterError({
+      code: "config-invalid",
+      field: "$",
+      fix: `Make the file "${filePath}" readable as a regular file, or pass a different --config path.`,
+      message: `the config file at "${filePath}" could not be read: ${reason}`,
+      problems: [],
+    });
+  }
   try {
     return JSON.parse(text);
   } catch {
@@ -242,7 +271,7 @@ export function loadConfigFromPath(path: string): LoadedConfig {
     });
   }
   const raw = readJsonFromPath(path);
-  const { problems, config } = validateConfigObject(raw, {});
+  const { problems, config } = validateConfigObject(raw);
   if (problems.length > 0) {
     const [first, ...rest] = problems as [ConfigProblem, ...ConfigProblem[]];
     throw configError(first, rest);
