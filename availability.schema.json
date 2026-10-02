@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dungle-scrubs.github.io/model-router/availability.schema.json",
+  "title": "model-router availability document, format version 1",
+  "description": "The document shape accepted by --availability-file. `format` is the contract version; `generatedAt` is checked against `maxAgeSeconds` from config.json. Unknown fields are ignored. A broken top level (not JSON, missing fields, or unknown format) means the CLI ranks without availability and fills `availabilityNote`. A single bad entry is skipped with a warning; the other entries still apply.",
+  "type": "object",
+  "properties": {
+    "format": {
+      "type": "integer",
+      "const": 1
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the document was produced. Older than `maxAgeSeconds` (or unparseable) is stale and the CLI fills `availabilityNote`."
+    },
+    "entries": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/availabilityEntry" }
+    }
+  },
+  "required": ["format", "generatedAt", "entries"],
+  "additionalProperties": true,
+  "$defs": {
+    "availabilityEntry": {
+      "type": "object",
+      "description": "One meter reading. Several entries on one meter combine by worst status, then lowest `percentRemaining`.",
+      "properties": {
+        "meter": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The meter the entry covers. Must be declared in the registry's meters section."
+        },
+        "status": {
+          "enum": ["ok", "projected", "exhausted"],
+          "description": "The worst-case state the reading reports. `ok` keeps the route in place; `projected` moves it below the healthy routes (a `spendToZero` meter keeps its place); `exhausted` removes it."
+        },
+        "resetsAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the limiting window ends. After this, `dropExpired` removes the entry."
+        },
+        "percentRemaining": {
+          "type": "number",
+          "description": "Tie-breaker among same-status entries on one meter; the lowest wins."
+        },
+        "note": {
+          "type": "string",
+          "description": "Free-form context. The CLI keeps it on the entry but does not act on it."
+        }
+      },
+      "required": ["meter", "status"],
+      "additionalProperties": true
+    }
+  }
+}

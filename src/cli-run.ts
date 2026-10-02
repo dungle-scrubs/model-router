@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { loadRegistry, RegistryError } from "@dungle-scrubs/model-registry";
 import { Command, CommanderError } from "commander";
+import { loadAvailabilityForCli } from "./availability-cli.js";
 import { type LoadedConfig, loadConfig } from "./config.js";
 import { RouterError } from "./error.js";
 import { listTasks, rank } from "./rank.js";
@@ -97,6 +98,37 @@ function addConfigOption(command: Command): Command {
   );
 }
 
+interface AvailabilityOptionState {
+  readonly file: string | undefined;
+  readonly fromCommand: boolean;
+}
+
+function addAvailabilityOptions(command: Command): Command {
+  command
+    .option("--availability", "run availability.command from config.json", false)
+    .option("--availability-file <path>", "read an availability document from <path>", "");
+  return command;
+}
+
+function readAvailabilityOptionState(
+  options: { readonly availability?: unknown; readonly availabilityFile?: unknown },
+  field: string,
+): AvailabilityOptionState {
+  const fromCommand = options.availability === true;
+  const file = typeof options.availabilityFile === "string" ? options.availabilityFile : "";
+  if (fromCommand && file !== "") {
+    throw queryInvalid(
+      field,
+      "--availability and --availability-file cannot be used together.",
+      "Pass only one of --availability or --availability-file <path>.",
+    );
+  }
+  if (file === "") {
+    return { file: undefined, fromCommand };
+  }
+  return { file, fromCommand };
+}
+
 function queryInvalid(field: string, message: string, fix: string): RouterError {
   return new RouterError({ code: "query-invalid", field, fix, message, problems: [] });
 }
@@ -173,6 +205,7 @@ export function runCli(argv: readonly string[], io: Partial<CliIo> = {}): number
 
   addRegistryOption(program);
   addConfigOption(program);
+  addAvailabilityOptions(program);
 
   const tasksCommand = addRegistryOption(
     addConfigOption(
@@ -253,9 +286,21 @@ export function runCli(argv: readonly string[], io: Partial<CliIo> = {}): number
 
   program.argument("[query]", "the query as a JSON object, or - to read it from stdin");
   program.action(
-    (query: string | undefined, options: { registry?: string[]; config?: string[] }) => {
+    (
+      query: string | undefined,
+      options: {
+        availability?: unknown;
+        availabilityFile?: unknown;
+        config?: string[];
+        registry?: string[];
+      },
+    ) => {
       const explicitRegistry = resolveRegistryOption(options.registry ?? []);
       const explicitConfig = resolveConfigOption(options.config ?? []);
+      const availabilityState = readAvailabilityOptionState(
+        options as { availability?: unknown; availabilityFile?: unknown },
+        "availability",
+      );
       if (query === undefined) {
         throw queryInvalid("query", "no query argument was given.", NO_QUERY_FIX);
       }
@@ -272,10 +317,23 @@ export function runCli(argv: readonly string[], io: Partial<CliIo> = {}): number
       // through to defaults passes the validated object directly.
       const config = loadConfigOption(explicitConfig);
       const configOption = config.configPath ?? config.config;
+      const availabilityLoad = loadAvailabilityForCli({
+        command: availabilityState.fromCommand,
+        config: config.config.availability,
+        file: availabilityState.file,
+      });
+      const availabilityOption = {
+        entries: availabilityLoad.entries,
+        ...(availabilityLoad.note === null ? {} : { note: availabilityLoad.note }),
+      };
       const rankOptions: Parameters<typeof rank>[1] =
         explicitRegistry === ""
-          ? { config: configOption }
-          : { registry: explicitRegistry, config: configOption };
+          ? { availability: availabilityOption, config: configOption }
+          : {
+              availability: availabilityOption,
+              config: configOption,
+              registry: explicitRegistry,
+            };
       const answer = rank(raw, rankOptions);
       stdout.write(`${JSON.stringify(answer)}\n`);
       answerExit = answer.routes.length === 0 ? EXIT_NO_ROUTE : EXIT_SUCCESS;

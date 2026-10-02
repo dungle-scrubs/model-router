@@ -7,6 +7,7 @@ import {
   type Model,
   type Route,
 } from "@dungle-scrubs/model-registry";
+import { applyAvailability, dropExpired } from "./availability.js";
 import {
   defaultConfig as defaultRouterConfig,
   type LoadedConfig,
@@ -20,6 +21,7 @@ import { validateRouterSections } from "./sections.js";
 import type {
   Answer,
   AnswerRoute,
+  AvailabilityEntry,
   AvailabilityValue,
   Coded,
   PinReport,
@@ -491,6 +493,23 @@ function dedupe(values: readonly string[]): readonly string[] {
   return [...new Set(values)];
 }
 
+/** Walk the registry's meters section and collect the names that the
+ * loader declared as `spendToZero: true`. The names are read with
+ * `Object.hasOwn` so an inherited name such as `constructor` is treated
+ * as absent. The result feeds `applyAvailability`'s `spendToZero`
+ * option: a projected reading on one of these meters keeps the route
+ * in place. */
+function collectSpendToZeroMeters(loaded: LoadedRegistry): readonly string[] {
+  const meters = loaded.registry.meters ?? {};
+  const out: string[] = [];
+  for (const [name, meter] of Object.entries(meters)) {
+    if (Object.hasOwn(meter, "spendToZero") && meter.spendToZero === true) {
+      out.push(name);
+    }
+  }
+  return out;
+}
+
 function resolveFloors(
   applied: ReturnType<typeof applyQueryDefaults>,
   resolvedTask: TaskResolution | undefined,
@@ -820,8 +839,61 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
   }
   routes.push(...policyPlaced, ...clearingRoutes, ...belowRoutes);
 
+  // Apply the availability rule after the pin and the policy have placed
+  // their routes. The function reads only `label` and `meter`, so the
+  // order is preserved for any route whose meter has no covering entry.
+  // Two warnings the engine emits on top of applyAvailability's own
+  // warnings: an entry whose meter the registry does not declare, and a
+  // reading that was applied while a meter the routes use has none.
+  if (options.availability !== undefined) {
+    const entries = options.availability.entries;
+    const filtered: AvailabilityEntry[] = [];
+    const declaredMeters = new Set(Object.keys(loaded.registry.meters ?? {}));
+    const metersUsedByRoutes = new Set<string>();
+    for (const route of routes) {
+      if (route.meter !== undefined) metersUsedByRoutes.add(route.meter);
+    }
+    for (const entry of entries) {
+      if (typeof entry.meter !== "string" || entry.meter.length === 0) continue;
+      if (!declaredMeters.has(entry.meter)) {
+        warnings.push({
+          code: "meter-undeclared",
+          field: `$.entries[${JSON.stringify(entry.meter)}]`,
+          message: `the meter "${entry.meter}" is not declared in the registry's meters section`,
+          fix: `Declare "${entry.meter}" in the registry's meters section, or remove the entry from the availability document.`,
+        });
+        continue;
+      }
+      filtered.push(entry);
+    }
+    const liveEntries = dropExpired(filtered, new Date());
+    if (filtered.length > 0 && metersUsedByRoutes.size > 0) {
+      for (const meter of metersUsedByRoutes) {
+        const covered = filtered.some((entry) => entry.meter === meter);
+        if (!covered) {
+          warnings.push({
+            code: "meter-no-reading",
+            field: `$.entries`,
+            message: `the meter "${meter}" is used by routes but has no availability entry`,
+            fix: `Add an entry for "${meter}" to the availability document, or remove the meter from the routes that use it.`,
+          });
+        }
+      }
+    }
+    const spendToZero = collectSpendToZeroMeters(loaded);
+    const result = applyAvailability(routes, liveEntries, { spendToZero });
+    routes.length = 0;
+    routes.push(...result.routes);
+    for (const removedRoute of result.removed) {
+      removed.push(removedRoute);
+    }
+    for (const warn of result.warnings) {
+      warnings.push(warn);
+    }
+  }
+
   return {
-    availabilityNote: null,
+    availabilityNote: options.availability?.note ?? null,
     contract: 1,
     describe: null,
     pin: pinReport,
