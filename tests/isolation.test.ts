@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadRegistry } from "@dungle-scrubs/model-registry";
@@ -27,26 +27,31 @@ describe("vitest isolation", () => {
 
   test("the operator's MODEL_ROUTER_CONFIG cannot leak into a default test", async () => {
     // Set MODEL_ROUTER_CONFIG to a real-looking config the test would
-    // notice. With proper setup, the path-order test overrides it.
-    let filePath = "";
-    await withEnv({ MODEL_ROUTER_CONFIG: undefined }, async () => {
-      const dir = mkdtempSync(join(tmpdir(), "model-router-leak-"));
-      filePath = join(dir, "leak.json");
-      writeFileSync(filePath, '{"effort":{"default":"low"}}');
-      // outside the withEnv block, the setup file set MODEL_ROUTER_CONFIG
-      // to undefined: the loader falls through to XDG.
-      const insideEnv = loadConfig({
-        env: { MODEL_ROUTER_CONFIG: filePath, XDG_CONFIG_HOME: dir },
+    // notice. With proper setup, the path-order test overrides it. The
+    // temporary directory the test creates is cleaned up at the end so a
+    // second run starts from a clean tmpdir.
+    const dir = mkdtempSync(join(tmpdir(), "model-router-isolation-"));
+    const filePath = join(dir, "leak.json");
+    writeFileSync(filePath, '{"effort":{"default":"low"}}');
+    try {
+      await withEnv({ MODEL_ROUTER_CONFIG: undefined }, async () => {
+        // outside the withEnv block, the setup file set MODEL_ROUTER_CONFIG
+        // to undefined: the loader falls through to XDG.
+        const insideEnv = loadConfig({
+          env: { MODEL_ROUTER_CONFIG: filePath, XDG_CONFIG_HOME: dir },
+        });
+        expect(insideEnv.configPath).toBe(filePath);
+        expect(insideEnv.config.effort.default).toBe("low");
       });
-      expect(insideEnv.configPath).toBe(filePath);
-      expect(insideEnv.config.effort.default).toBe("low");
-    });
-    // After withEnv, the test process reverts to the setup's defaults.
-    expect(filePath).not.toBe("");
-    expect(existsSync(filePath)).toBe(true);
-    const afterWithEnv = loadConfig();
-    expect(afterWithEnv.configPath).toBeNull();
-    expect(afterWithEnv.config.effort.default).toBe(defaultConfig().effort.default);
+      // After withEnv, the test process reverts to the setup's defaults.
+      // The file still does on disk: withEnv restores env, not the fs.
+      expect(existsSync(filePath)).toBe(true);
+      const afterWithEnv = loadConfig();
+      expect(afterWithEnv.configPath).toBeNull();
+      expect(afterWithEnv.config.effort.default).toBe(defaultConfig().effort.default);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("rank uses the isolated default when no config option is given", () => {
