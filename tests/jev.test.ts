@@ -284,6 +284,47 @@ describe("askJev retry and failure handling", () => {
       fetchSpy.mockRestore();
     }));
 
+  test("a stalled endpoint times out with UNREACHABLE naming the limit, after one call", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      let calls = 0;
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) => {
+        calls++;
+        return new Promise<Response>((_resolve, reject) => {
+          (init as RequestInit).signal?.addEventListener("abort", () =>
+            reject(new Error("The operation was aborted due to timeout")),
+          );
+        });
+      });
+      const error = await rejected(askJev("state", QUESTIONS, { timeoutMs: 20, sleep: never }));
+      expect(error.code).toBe("UNREACHABLE");
+      expect(error.message).toContain("20 ms timeout");
+      expect(calls).toBe(1);
+      fetchSpy.mockRestore();
+    }));
+
+  test("a Retry-After above the cap stops the retries at once with RATE_LIMITED naming the wait", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const slept: number[] = [];
+      let calls = 0;
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+        calls++;
+        return fail(429, { "Retry-After": "86400" });
+      });
+      const error = await rejected(
+        askJev("state", QUESTIONS, {
+          sleep: (ms) => {
+            slept.push(ms);
+            return Promise.resolve();
+          },
+        }),
+      );
+      expect(error.code).toBe("RATE_LIMITED");
+      expect(error.message).toContain("86400000");
+      expect(calls).toBe(1);
+      expect(slept).toEqual([]);
+      fetchSpy.mockRestore();
+    }));
+
   test("a 200 without an answers object throws BAD_RESPONSE", async () =>
     withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
       const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(ok({ model: "m" }));

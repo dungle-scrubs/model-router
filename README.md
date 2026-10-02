@@ -124,7 +124,7 @@ The describe block in the answer: `model` (what answered, `null` when Jev failed
 
 ## The Jev client
 
-`askJev(state, questions, options?)` posts one state and a map of typed questions to `https://api.typesafe.ai/v1/systemone` and returns `{ model, answers, usage }`. `JevError` carries a stable `code` and, when one arrived, the HTTP `status`. The client reads `TYPESAFE_API_KEY` from the environment; a missing key throws before any request. It retries `429` and `529` with exponential backoff, honoring `Retry-After`. The key and retry helpers stay private to the package.
+`askJev(state, questions, options?)` posts one state and a map of typed questions to `https://api.typesafe.ai/v1/systemone` and returns `{ model, answers, usage }`. `JevError` carries a stable `code` and, when one arrived, the HTTP `status`. The client reads `TYPESAFE_API_KEY` from the environment; a missing key throws before any request. Every 200 body is validated against the questions that were sent: a body that does not match is `BAD_RESPONSE`. Each attempt is bounded by a 15 s timeout (`timeoutMs`); a timeout is `UNREACHABLE` naming the limit and is not retried. The client retries `429` and `529` with exponential backoff, honoring `Retry-After`; a delay above 30 s, from `Retry-After` or the backoff, stops the retries at once with `RATE_LIMITED` naming the requested wait. The key and retry helpers stay private to the package.
 
 | JevError code | Cause |
 |---|---|

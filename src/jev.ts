@@ -20,6 +20,15 @@ const KEY_VARIABLE = "TYPESAFE_API_KEY";
 /** Status codes the service asks callers to retry. */
 const RETRYABLE = new Set([429, 529]);
 
+/** Bounds each attempt; a timeout is UNREACHABLE naming the limit and is
+ * not retried. */
+const DEFAULT_TIMEOUT_MS = 15000;
+
+/** A retry delay above this, from `Retry-After` or the backoff, stops the
+ * retries at once with RATE_LIMITED: an early retry into the same 429 is
+ * worse than giving up. */
+const RETRY_DELAY_CAP_MS = 30000;
+
 export type JevErrorCode =
   | "MISSING_KEY"
   | "RATE_LIMITED"
@@ -110,6 +119,9 @@ export type AskJevOptions = {
   readonly sleep?: (milliseconds: number) => Promise<void>;
   /** Base for the exponential backoff, in milliseconds. */
   readonly backoffMs?: number;
+  /** Bounds each attempt in milliseconds. A timeout is UNREACHABLE naming
+   * the limit and is not retried. */
+  readonly timeoutMs?: number;
 };
 
 const wait = (milliseconds: number): Promise<void> =>
@@ -292,6 +304,7 @@ export async function askJev(
   const sleep = options.sleep ?? wait;
   const maxAttempts = options.maxAttempts ?? 4;
   const backoffMs = options.backoffMs ?? 500;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const body = JSON.stringify({
     state,
     model: options.model ?? "jev-latest",
@@ -301,13 +314,24 @@ export async function askJev(
   let lastStatus = 0;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     let response: Response;
+    // One signal per attempt: AbortSignal.timeout fires once.
+    const signal = AbortSignal.timeout(timeoutMs);
     try {
       response = await call(ENDPOINT, {
         method: "POST",
         headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
         body,
+        signal,
       });
     } catch (error) {
+      if (signal.aborted) {
+        // A timeout is not retried: the endpoint stalled for the whole
+        // bound, and the message names the limit that fired.
+        throw new JevError(
+          "UNREACHABLE",
+          `could not reach ${ENDPOINT}: the attempt exceeded the ${timeoutMs} ms timeout`,
+        );
+      }
       throw new JevError(
         "UNREACHABLE",
         `could not reach ${ENDPOINT}: ${error instanceof Error ? error.message : String(error)}`,
@@ -349,7 +373,15 @@ export async function askJev(
       );
     }
     if (attempt < maxAttempts - 1) {
-      await sleep(retryDelay(response.headers.get("Retry-After"), attempt, backoffMs));
+      const delay = retryDelay(response.headers.get("Retry-After"), attempt, backoffMs);
+      if (delay > RETRY_DELAY_CAP_MS) {
+        throw new JevError(
+          "RATE_LIMITED",
+          `${ENDPOINT} returned HTTP ${lastStatus} and asked to wait ${delay} ms, above the ${RETRY_DELAY_CAP_MS} ms retry cap. This is a service failure, not a setup problem: the key resolved.`,
+          lastStatus,
+        );
+      }
+      await sleep(delay);
     }
   }
 
