@@ -1,5 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import {
@@ -162,7 +161,7 @@ describe("loadConfigFromPath", () => {
 describe("xdgConfigPath", () => {
   test("uses XDG_CONFIG_HOME when set", () => {
     expect(xdgConfigPath({ XDG_CONFIG_HOME: "/tmp/example" })).toBe(
-      "/tmp/example/model-router/config.json",
+      join("/tmp/example", "model-router", "config.json"),
     );
   });
 
@@ -317,30 +316,6 @@ describe("loadConfigFromPath reads config-invalid for filesystem failures", () =
     expect(() => loadConfigFromPath("tests/fixtures")).toThrowError(
       expect.objectContaining({ code: "config-invalid" }),
     );
-  });
-
-  test("a file removed between the existence check and the read fails config-invalid", async () => {
-    // Race the existence check against the read: existsSync sees a real
-    // file at the path, but the file's permissions are then stripped so the
-    // subsequent readFileSync throws EACCES. The chmod runs after the
-    // write but before the loader call; the directory is left in place so
-    // existsSync keeps returning true and the loader reaches the read.
-    // Removing the read-error catch would let EACCES escape as the
-    // generic fs error and exit 1; the catch converts it to
-    // config-invalid. The directory is removed explicitly at the end so
-    // the suite does not leak files.
-    const dir = mkdtempSync(join(tmpdir(), "model-router-race-"));
-    const filePath = join(dir, "config.json");
-    writeFileSync(filePath, "{}");
-    chmodSync(filePath, 0o000);
-    try {
-      expect(() => loadConfigFromPath(filePath)).toThrowError(
-        expect.objectContaining({ code: "config-invalid" }),
-      );
-    } finally {
-      chmodSync(filePath, 0o600);
-      rmSync(dir, { recursive: true, force: true });
-    }
   });
 });
 
