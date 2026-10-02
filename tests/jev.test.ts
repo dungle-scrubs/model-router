@@ -1,5 +1,11 @@
 import { describe, expect, test, vi } from "vitest";
-import { askJev, JevError, type JevQuestion } from "../src/jev.js";
+import {
+  askJev,
+  type JevChoiceAnswer,
+  JevError,
+  type JevNoulAnswer,
+  type JevQuestion,
+} from "../src/jev.js";
 import { withEnv } from "./helpers.js";
 
 const ENDPOINT = "https://api.typesafe.ai/v1/systemone";
@@ -681,6 +687,325 @@ describe("askJev response validation", () => {
       criteria: ["low", "mid", "high"],
     },
   };
+
+  /** Run one askJev call against a stubbed 200 body and return its error. */
+  async function askBody(questions: Record<string, JevQuestion>, body: unknown): Promise<JevError> {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(ok(body));
+    try {
+      return await rejected(askJev("state", questions, { sleep: never }));
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  }
+
+  /** The same, from raw body text, for values JSON.stringify cannot write
+   * (a 1e999 literal that parses to Infinity). */
+  async function askRawBody(
+    questions: Record<string, JevQuestion>,
+    bodyText: string,
+  ): Promise<JevError> {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(bodyText, { status: 200 }));
+    try {
+      return await rejected(askJev("state", questions, { sleep: never }));
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  }
+
+  test("a noul question answered as a choice is refused on the type alone", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const error = await askBody(QUESTIONS, okBody({ urgent: { type: "choice", noul: 0.9 } }));
+      expect(error.code).toBe("BAD_RESPONSE");
+      expect(error.message).toBe(
+        `${ENDPOINT} returned an unusable answer: the answer for question "urgent" has a "type" that differs from the question's`,
+      );
+    }));
+
+  test("a body that is not a JSON object is refused", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const error = await askBody(QUESTIONS, [1, 2]);
+      expect(error.code).toBe("BAD_RESPONSE");
+      expect(error.message).toBe(
+        `${ENDPOINT} returned an unusable answer: the body is not a JSON object`,
+      );
+    }));
+
+  test("null for answers is refused, not a TypeError", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const error = await askBody(QUESTIONS, okBody(null));
+      expect(error.code).toBe("BAD_RESPONSE");
+      expect(error.message).toBe(
+        `${ENDPOINT} returned an unusable answer: there is no answers object`,
+      );
+    }));
+
+  test("an array for answers is refused the same way", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const error = await askBody(QUESTIONS, okBody([]));
+      expect(error.code).toBe("BAD_RESPONSE");
+      expect(error.message).toBe(
+        `${ENDPOINT} returned an unusable answer: there is no answers object`,
+      );
+    }));
+
+  test("null for one answer is refused, not a TypeError", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const error = await askBody(QUESTIONS, okBody({ urgent: null }));
+      expect(error.code).toBe("BAD_RESPONSE");
+      expect(error.message).toBe(
+        `${ENDPOINT} returned an unusable answer: the answer for question "urgent" is not a JSON object`,
+      );
+    }));
+
+  test("null for usage is refused, not a TypeError", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const error = await askBody(QUESTIONS, {
+        model: "m",
+        answers: { urgent: { type: "noul", noul: 0.5 } },
+        usage: null,
+      });
+      expect(error.code).toBe("BAD_RESPONSE");
+      expect(error.message).toBe(
+        `${ENDPOINT} returned an unusable answer: the field "usage" is missing or not token counts`,
+      );
+    }));
+
+  test("null for probabilities is refused, not a TypeError", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const error = await askBody(
+        choiceQuestions,
+        okBody({
+          pick: { type: "choice", choice: "task-a", confidence: 0.8, probabilities: null },
+        }),
+      );
+      expect(error.code).toBe("BAD_RESPONSE");
+      expect(error.message).toBe(
+        `${ENDPOINT} returned an unusable answer: the answer for question "pick" has no "probabilities" object`,
+      );
+    }));
+
+  test("null for legend is refused, not a TypeError", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const error = await askBody(
+        scoreQuestions,
+        okBody({
+          level: {
+            type: "score",
+            score: 1.5,
+            confidence: 0.7,
+            legend: null,
+            probabilities: { "0": 1 },
+          },
+        }),
+      );
+      expect(error.code).toBe("BAD_RESPONSE");
+      expect(error.message).toBe(
+        `${ENDPOINT} returned an unusable answer: the answer for question "level" has no "legend" object`,
+      );
+    }));
+
+  test("a confidence of exactly 0 and exactly 1 is accepted", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      for (const confidence of [0, 1]) {
+        const answer = {
+          type: "choice",
+          choice: "task-a",
+          confidence,
+          probabilities: { "task-a": 1, "task-b": 0 },
+        };
+        const fetchSpy = vi
+          .spyOn(globalThis, "fetch")
+          .mockResolvedValue(ok(okBody({ pick: answer })));
+        const result = await askJev("state", choiceQuestions, { sleep: never });
+        expect((result.answers.pick as JevChoiceAnswer).confidence).toBe(confidence);
+        fetchSpy.mockRestore();
+      }
+    }));
+
+  test("a noul of exactly 0 and exactly 1 is accepted", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      for (const noul of [0, 1]) {
+        const fetchSpy = vi
+          .spyOn(globalThis, "fetch")
+          .mockResolvedValue(ok(okBody({ urgent: { type: "noul", noul } })));
+        const result = await askJev("state", QUESTIONS, { sleep: never });
+        expect((result.answers.urgent as JevNoulAnswer).noul).toBe(noul);
+        fetchSpy.mockRestore();
+      }
+    }));
+
+  test("a confidence below 0 is refused", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const error = await askBody(
+        choiceQuestions,
+        okBody({
+          pick: {
+            type: "choice",
+            choice: "task-a",
+            confidence: -0.01,
+            probabilities: { "task-a": 1 },
+          },
+        }),
+      );
+      expect(error.code).toBe("BAD_RESPONSE");
+      expect(error.message).toBe(
+        `${ENDPOINT} returned an unusable answer: the answer for question "pick" has a "confidence" that is not a probability in [0, 1]`,
+      );
+    }));
+
+  test("a noul below 0 and above 1 is refused", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      for (const noul of [-0.01, 1.01]) {
+        const error = await askBody(QUESTIONS, okBody({ urgent: { type: "noul", noul } }));
+        expect(error.code).toBe("BAD_RESPONSE");
+        expect(error.message).toBe(
+          `${ENDPOINT} returned an unusable answer: the answer for question "urgent" has a "noul" that is not a probability in [0, 1]`,
+        );
+      }
+    }));
+
+  test("a non-finite score is refused", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      // Written as raw text: 1e999 parses to Infinity, which
+      // JSON.stringify cannot express.
+      const error = await askRawBody(
+        scoreQuestions,
+        '{"model":"m","answers":{"level":{"type":"score","score":1e999,"confidence":0.7,"legend":{"0":"low"},"probabilities":{"0":1}}},"usage":{"input_tokens":1,"output_tokens":1}}',
+      );
+      expect(error.code).toBe("BAD_RESPONSE");
+      expect(error.message).toBe(
+        `${ENDPOINT} returned an unusable answer: the answer for question "level" has a "score" that is not a finite number`,
+      );
+    }));
+
+  test("a score answer with a bad confidence is refused", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const error = await askBody(
+        scoreQuestions,
+        okBody({
+          level: {
+            type: "score",
+            score: 1.5,
+            confidence: 1.01,
+            legend: { "0": "low" },
+            probabilities: { "0": 1 },
+          },
+        }),
+      );
+      expect(error.code).toBe("BAD_RESPONSE");
+      expect(error.message).toBe(
+        `${ENDPOINT} returned an unusable answer: the answer for question "level" has a "confidence" that is not a probability in [0, 1]`,
+      );
+    }));
+
+  test("a score answer whose legend holds a non-string is refused with the exact message", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const error = await askBody(
+        scoreQuestions,
+        okBody({
+          level: {
+            type: "score",
+            score: 1.5,
+            confidence: 0.7,
+            legend: { "0": 3 },
+            probabilities: { "0": 1 },
+          },
+        }),
+      );
+      expect(error.code).toBe("BAD_RESPONSE");
+      expect(error.message).toBe(
+        `${ENDPOINT} returned an unusable answer: the answer for question "level" has a "legend" value that is not a string`,
+      );
+    }));
+
+  test("a score answer without probabilities is refused", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const error = await askBody(
+        scoreQuestions,
+        okBody({
+          level: { type: "score", score: 1.5, confidence: 0.7, legend: { "0": "low" } },
+        }),
+      );
+      expect(error.code).toBe("BAD_RESPONSE");
+      expect(error.message).toBe(
+        `${ENDPOINT} returned an unusable answer: the answer for question "level" has no "probabilities" object`,
+      );
+    }));
+
+  test("a score answer with an out-of-range probability is refused", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const error = await askBody(
+        scoreQuestions,
+        okBody({
+          level: {
+            type: "score",
+            score: 1.5,
+            confidence: 0.7,
+            legend: { "0": "low" },
+            probabilities: { "0": 1.5 },
+          },
+        }),
+      );
+      expect(error.code).toBe("BAD_RESPONSE");
+      expect(error.message).toBe(
+        `${ENDPOINT} returned an unusable answer: the answer for question "level" has a "probabilities" entry that is not a probability in [0, 1]`,
+      );
+    }));
+
+  test("an empty model string is refused", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const error = await askBody(QUESTIONS, {
+        model: "",
+        answers: { urgent: { type: "noul", noul: 0.5 } },
+        usage: { input_tokens: 1, output_tokens: 1 },
+      });
+      expect(error.code).toBe("BAD_RESPONSE");
+      expect(error.message).toBe(
+        `${ENDPOINT} returned an unusable answer: the field "model" is missing or not a non-empty string`,
+      );
+    }));
+
+  test("a negative input token count is refused", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const error = await askBody(QUESTIONS, {
+        model: "m",
+        answers: { urgent: { type: "noul", noul: 0.5 } },
+        usage: { input_tokens: -1, output_tokens: 1 },
+      });
+      expect(error.code).toBe("BAD_RESPONSE");
+      expect(error.message).toBe(
+        `${ENDPOINT} returned an unusable answer: the field "usage" is missing or not token counts`,
+      );
+    }));
+
+  test("a fractional input token count is refused", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const error = await askBody(QUESTIONS, {
+        model: "m",
+        answers: { urgent: { type: "noul", noul: 0.5 } },
+        usage: { input_tokens: 1.5, output_tokens: 1 },
+      });
+      expect(error.code).toBe("BAD_RESPONSE");
+      expect(error.message).toBe(
+        `${ENDPOINT} returned an unusable answer: the field "usage" is missing or not token counts`,
+      );
+    }));
+
+  test("a zero input token count is accepted", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        ok({
+          model: "m",
+          answers: { urgent: { type: "noul", noul: 0.5 } },
+          usage: { input_tokens: 0, output_tokens: 0 },
+        }),
+      );
+      const result = await askJev("state", QUESTIONS, { sleep: never });
+      expect(result.usage.input_tokens).toBe(0);
+      fetchSpy.mockRestore();
+    }));
 
   test("a well-formed choice answer for an asked choice question is returned", async () =>
     withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
