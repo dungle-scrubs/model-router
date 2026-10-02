@@ -654,6 +654,31 @@ describe("askJev retry and failure handling", () => {
       fetchSpy.mockRestore();
     }));
 
+  test("a zero backoff base waits zero on every retry, never NaN, through 1030 attempts", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const slept: number[] = [];
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => fail(429));
+      const error = await rejected(
+        askJev("state", QUESTIONS, {
+          backoffMs: 0,
+          maxAttempts: 1030,
+          sleep: (ms) => {
+            slept.push(ms);
+            return Promise.resolve();
+          },
+        }),
+      );
+      expect(fetchSpy).toHaveBeenCalledTimes(1030);
+      expect(slept).toHaveLength(1029);
+      expect(slept).toEqual(Array<number>(1029).fill(0));
+      expect(error.code).toBe("RATE_LIMITED");
+      expect(error.status).toBe(429);
+      expect(error.message).toBe(
+        `${ENDPOINT} returned HTTP 429 on every one of 1030 attempts. This is a service failure, not a setup problem: the key resolved.`,
+      );
+      fetchSpy.mockRestore();
+    }));
+
   test("a non-retryable status throws SERVICE_ERROR on the first response", async () =>
     withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
       let attempt = 0;

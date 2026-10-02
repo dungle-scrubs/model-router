@@ -283,9 +283,11 @@ function validateResponse(
 }
 
 /** `Retry-After` is seconds or an HTTP date. Anything else falls back to the
- * exponential schedule rather than guessing. */
+ * exponential schedule rather than guessing. A base of zero waits zero on
+ * every retry, at any attempt count, so the schedule never overflows to
+ * NaN. */
 function retryDelay(header: string | null, attempt: number, base: number): number {
-  const exponential = base * 2 ** attempt;
+  const exponential = base === 0 ? 0 : base * 2 ** attempt;
   if (!header) return exponential;
   const seconds = Number(header.trim());
   if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
