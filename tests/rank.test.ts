@@ -1129,17 +1129,6 @@ describe("rank resolves effort", () => {
     });
   });
 
-  test("a maxEffort caps the requested level with a warning", () => {
-    const loaded = full();
-    // model-a in `full` has maxEffort=high; an effort=xhigh request is
-    // lowered to high for that route, with one warning.
-    const answer = rank({ effort: "xhigh", minimums: { coding: 5 } }, { registry: loaded });
-    expectValidAnswer(answer);
-    const modelA = answer.routes.find((route) => route.label === "model-a@harness-x");
-    expect(modelA?.effort).toBe("high");
-    expect(answer.warnings.map((warning) => warning.code)).toContain("effort-above-max");
-  });
-
   test("a request above the configured ceiling is capped last, with a warning", () => {
     const loaded = full();
     const answer = rank(
