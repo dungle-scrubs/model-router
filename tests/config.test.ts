@@ -344,6 +344,7 @@ describe("rank accepts a config object or path", () => {
       { effort: "max", minimums: { coding: 5 } },
       { registry: loaded, config: { effort: { ceiling: "high", default: "medium" } } },
     );
+    expectValidAnswer(objectAnswer);
     await withTempDir(async (dir) => {
       const path = writeJson(dir, "config.json", {
         effort: { ceiling: "high", default: "medium" },

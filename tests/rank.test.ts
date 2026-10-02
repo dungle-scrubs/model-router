@@ -826,7 +826,18 @@ describe("rank places the pin first", () => {
     });
     expect(answer.warnings.map((warning) => warning.code)).toEqual(["pin-unknown"]);
     // The fallback ranking is the full registry ranking: every surviving
-    // route appears, none carries placedBy: pin.
+    // route appears, none carries placedBy: pin, and the ordering is the
+    // documented clearing order. Asserting the full label list proves
+    // the fallback is complete and ordered: an empty `routes` array
+    // would vacuously satisfy a placedBy check.
+    expect(answer.routes.map((route) => route.label)).toEqual([
+      "model-b@harness-x",
+      "model-a@harness-x",
+      "model-a@harness-y/provider-1",
+      "model-d@harness-z",
+      "model-c@harness-x",
+      "model-e@harness-w",
+    ]);
     expect(answer.routes.every((route) => route.placedBy !== "pin")).toBe(true);
   });
 
@@ -1188,11 +1199,18 @@ describe("rank resolves effort", () => {
     for (const route of answer.routes) {
       expect(route.effort).toBe("high");
     }
-    // Every route carried a single effort-ceiling warning: no route is
-    // pushed to max under the default ceiling.
+    // model-a has maxEffort: high, so its two routes hit the maxEffort cap
+    // first and never need the ceiling cap. Every other route has no
+    // maxEffort, so it caps against the configured ceiling once each.
+    // No warning is duplicated: ceiling fires once per uncapped route,
+    // effort-above-max fires once per maxEffort-bound route, and the
+    // totals together cover every route exactly once.
     expect(answer.routes).toHaveLength(6);
     const ceilingWarnings = answer.warnings.filter((warning) => warning.code === "effort-ceiling");
-    expect(ceilingWarnings.length).toBeGreaterThan(0);
+    const maxWarnings = answer.warnings.filter((warning) => warning.code === "effort-above-max");
+    expect(ceilingWarnings).toHaveLength(4);
+    expect(maxWarnings).toHaveLength(2);
+    expect(ceilingWarnings.length + maxWarnings.length).toBe(answer.routes.length);
   });
 
   test("the router never emits max under the default ceiling", () => {

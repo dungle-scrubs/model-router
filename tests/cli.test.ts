@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import packageJson from "../package.json" with { type: "json" };
 import { runCli } from "../src/cli-run.js";
 import { RouterError, rank } from "../src/index.js";
@@ -422,19 +422,38 @@ describe("the check subcommand", () => {
 
   test("prints configPath: null when defaults apply and makes no Jev call", () => {
     // The check subcommand must not call Jev or run any command: a Jev
-    // call would error or set up the wrong type. The absence of a
-    // TYPESAFE_API_KEY does not fail the check, so the absence of the
-    // key is the proof: check returns 0 without the env.
+    // call would either fail (no key) or set up the wrong type. The
+    // absence of TYPESAFE_API_KEY only shows success is possible, so
+    // also assert that nothing was written there: a swallowed Jev call
+    // could print progress or error output the test would catch.
     const savedKey = process.env.TYPESAFE_API_KEY;
     delete process.env.TYPESAFE_API_KEY;
     try {
       const result = run(["check", "--registry", FULL]);
       expect(result.exitCode).toBe(0);
+      expect(result.stderr()).toBe("");
       const payload = JSON.parse(result.stdout());
       expect(payload.configPath).toBeNull();
     } finally {
       if (savedKey !== undefined) process.env.TYPESAFE_API_KEY = savedKey;
     }
+  });
+
+  test("check does not start a subprocess or open a socket", async () => {
+    // Static inspection: check only loads the registry and the config.
+    // The test stubs child_process.spawnSync and net.Socket so any
+    // subprocess or socket attempt fails the run with a clear error
+    // rather than completing silently.
+    const { spawnSync } = await import("node:child_process");
+    const { Socket } = await import("node:net");
+    const spawnSpy = vi.spyOn({ spawnSync }, "spawnSync");
+    const socketSpy = vi.spyOn({ Socket }, "Socket");
+    const result = run(["check", "--registry", FULL]);
+    expect(result.exitCode).toBe(0);
+    expect(spawnSpy).not.toHaveBeenCalled();
+    expect(socketSpy).not.toHaveBeenCalled();
+    spawnSpy.mockRestore();
+    socketSpy.mockRestore();
   });
 
   test("an explicit --config path that exists prints it", async () => {
