@@ -336,3 +336,28 @@ describe("availability source clock", () => {
     },
   );
 });
+
+describe("availability command result", () => {
+  test("an absent signal is not reported as a killed command", () => {
+    const result = {
+      status: 0,
+      signal: undefined,
+      output: [],
+      stdout: JSON.stringify({
+        format: 1,
+        generatedAt: "2026-10-01T12:00:00Z",
+        entries: [{ meter: "meter-a", status: "ok" }],
+      }),
+      stderr: "",
+      pid: 0,
+    };
+    vi.mocked(spawnSync).mockReturnValueOnce(result as unknown as ReturnType<typeof spawnSync>);
+    const load = runAvailabilityCommand(["command-a"], {
+      maxAgeSeconds: 300,
+      timeoutSeconds: 1,
+      now: new Date("2026-10-01T12:00:00Z"),
+    });
+    expect(load.note).toBeNull();
+    expect(load.entries).toEqual([{ meter: "meter-a", status: "ok" }]);
+  });
+});
