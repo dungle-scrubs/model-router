@@ -440,20 +440,58 @@ describe("the check subcommand", () => {
   });
 
   test("check does not start a subprocess or open a socket", async () => {
-    // Static inspection: check only loads the registry and the config.
-    // The test stubs child_process.spawnSync and net.Socket so any
-    // subprocess or socket attempt fails the run with a clear error
-    // rather than completing silently.
-    const { spawnSync } = await import("node:child_process");
-    const { Socket } = await import("node:net");
-    const spawnSpy = vi.spyOn({ spawnSync }, "spawnSync");
-    const socketSpy = vi.spyOn({ Socket }, "Socket");
-    const result = run(["check", "--registry", FULL]);
-    expect(result.exitCode).toBe(0);
-    expect(spawnSpy).not.toHaveBeenCalled();
-    expect(socketSpy).not.toHaveBeenCalled();
-    spawnSpy.mockRestore();
-    socketSpy.mockRestore();
+    // Real network and subprocess calls are intercepted, not faked on a
+    // fresh object: a swallowed fetch or spawnSync would otherwise bypass
+    // a copy. The child_process module is mocked with spies whose call
+    // counts the test asserts are zero; a real fetch is replaced by a spy
+    // on globalThis.fetch. The check subcommand touches the registry
+    // file (already covered) and the loader, so no call should fire.
+    //
+    // vi.doMock affects subsequent dynamic imports of node:child_process,
+    // not the captured bindings in modules already loaded. cli-run.ts has
+    // no top-level child_process imports, so any future call would route
+    // through either globalThis.fetch (caught by the spy) or a fresh
+    // dynamic import of node:child_process (caught here). The spies fire
+    // for direct calls made from this test, confirming the mock is live.
+    vi.doMock("node:child_process", async () => {
+      const actual =
+        await vi.importActual<typeof import("node:child_process")>("node:child_process");
+      const wrap = <T extends (...args: never[]) => unknown>(fn: T): T => {
+        const spy = vi.fn(fn);
+        return spy as unknown as T;
+      };
+      return {
+        ...actual,
+        exec: wrap(actual.exec),
+        execFile: wrap(actual.execFile),
+        execFileSync: wrap(actual.execFileSync),
+        execSync: wrap(actual.execSync),
+        spawn: wrap(actual.spawn),
+        spawnSync: wrap(actual.spawnSync),
+      };
+    });
+    const cp = await import("node:child_process");
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    try {
+      // Sanity check: the spies catch real calls. The assertion list at
+      // the bottom of this test confirms the run did not call any of
+      // them; if a future change starts a subprocess, the spies record
+      // the call and the assertion fails.
+      expect(cp.spawnSync).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      const result = run(["check", "--registry", FULL]);
+      expect(result.exitCode).toBe(0);
+      expect(cp.spawnSync).not.toHaveBeenCalled();
+      expect(cp.execSync).not.toHaveBeenCalled();
+      expect(cp.exec).not.toHaveBeenCalled();
+      expect(cp.execFile).not.toHaveBeenCalled();
+      expect(cp.execFileSync).not.toHaveBeenCalled();
+      expect(cp.spawn).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+      vi.doUnmock("node:child_process");
+    }
   });
 
   test("an explicit --config path that exists prints it", async () => {
