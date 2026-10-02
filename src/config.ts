@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { EFFORT_LADDER, type EffortLevel } from "@dungle-scrubs/model-registry";
 import { RouterError } from "./error.js";
+import { DEFAULT_JEV_MODEL } from "./jev.js";
 import type { RouterProblem } from "./types.js";
 
 /** The default ceiling: a level ladder entry. */
@@ -19,8 +20,9 @@ export const DEFAULT_CAPABILITY_THRESHOLD = 0.5;
 
 /** The Jev model the package pins for the describe step. Versioned, not an
  * alias: the gates above were chosen against a model that must not move
- * underneath them. The response's `model` field reports what answered. */
-export const DEFAULT_JEV_MODEL = "jev-1.13.0";
+ * underneath them. The constant lives in the Jev client; the response's
+ * `model` field reports what answered. */
+export { DEFAULT_JEV_MODEL } from "./jev.js";
 
 /** A precise problem the config file had, or a single-finding RouterError. */
 export interface ConfigProblem {

@@ -103,7 +103,7 @@ describe("askJev request shape", () => {
       fetchSpy.mockRestore();
     }));
 
-  test("the model defaults to jev-latest when no option names one", async () =>
+  test("the model defaults to the pinned package default when no option names one", async () =>
     withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
       const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
         ok({
@@ -118,7 +118,7 @@ describe("askJev request shape", () => {
       const sent = JSON.parse(init?.body ?? "") as {
         model: string;
       };
-      expect(sent.model).toBe("jev-latest");
+      expect(sent.model).toBe("jev-1.13.0");
       fetchSpy.mockRestore();
     }));
 });

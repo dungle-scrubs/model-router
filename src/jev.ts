@@ -17,6 +17,12 @@
 const ENDPOINT = "https://api.typesafe.ai/v1/systemone";
 const KEY_VARIABLE = "TYPESAFE_API_KEY";
 
+/** The Jev model this package pins, for the describe step and for any
+ * direct `askJev` call that names no model. Versioned, not an alias: the
+ * describe gates were tuned against a model that must not move underneath
+ * them. The response's `model` field reports what answered. */
+export const DEFAULT_JEV_MODEL = "jev-1.13.0";
+
 /** Status codes the service asks callers to retry. */
 const RETRYABLE = new Set([429, 529]);
 
@@ -109,8 +115,8 @@ export type JevResponse = {
 };
 
 export type AskJevOptions = {
-  /** The model that handles the request. Pin it once thresholds are tuned;
-   * `jev-latest` moves underneath them. */
+  /** The model that handles the request. The default is the package pin;
+   * pin it once thresholds are tuned against another model. */
   readonly model?: string;
   readonly maxAttempts?: number;
   /** Injected for tests. Defaults to the global fetch. */
@@ -307,7 +313,7 @@ export async function askJev(
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const body = JSON.stringify({
     state,
-    model: options.model ?? "jev-latest",
+    model: options.model ?? DEFAULT_JEV_MODEL,
     questions,
   });
 
