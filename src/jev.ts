@@ -313,6 +313,32 @@ function redact(message: string, key: string): string {
   return message.split(key).join("[redacted]");
 }
 
+/** Check the numeric options a caller passes: misuse is a programmer error,
+ * refused with a `RangeError` naming the option before the key is read, so
+ * it never shares a label with the failures of the call itself. Only
+ * options that are present are checked. */
+function checkOptions(options: AskJevOptions): void {
+  const { maxAttempts, timeoutMs, backoffMs } = options;
+  if (
+    maxAttempts !== undefined &&
+    (typeof maxAttempts !== "number" || !Number.isInteger(maxAttempts) || maxAttempts < 1)
+  ) {
+    throw new RangeError('askJev option "maxAttempts" must be a positive integer');
+  }
+  if (
+    timeoutMs !== undefined &&
+    (typeof timeoutMs !== "number" || !Number.isInteger(timeoutMs) || timeoutMs < 1)
+  ) {
+    throw new RangeError('askJev option "timeoutMs" must be a positive integer');
+  }
+  if (
+    backoffMs !== undefined &&
+    (typeof backoffMs !== "number" || !Number.isFinite(backoffMs) || backoffMs < 0)
+  ) {
+    throw new RangeError('askJev option "backoffMs" must be a finite number of at least 0');
+  }
+}
+
 /**
  * Ask Jev one state and a map of questions. Every question sees the same
  * state and none sees another's answer, so asking more costs tokens and
@@ -324,6 +350,7 @@ export async function askJev(
   questions: Readonly<Record<string, JevQuestion>>,
   options: AskJevOptions = {},
 ): Promise<JevResponse> {
+  checkOptions(options);
   const key = requireKey();
   const call = options.fetch ?? globalThis.fetch;
   const sleep = options.sleep ?? wait;

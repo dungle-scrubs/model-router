@@ -171,6 +171,74 @@ describe("askJev key redaction", () => {
     }));
 });
 
+describe("askJev option checks", () => {
+  const rejectsRangeError = (promise: Promise<unknown>, message: string) =>
+    withEnv({ TYPESAFE_API_KEY: undefined }, async () => {
+      // The checks run before the key is read: with no key set, a bad
+      // option is still a RangeError, and no call is made.
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
+      await expect(promise).rejects.toBeInstanceOf(RangeError);
+      await expect(promise).rejects.toThrow(new RangeError(message));
+      expect(fetchSpy).not.toHaveBeenCalled();
+      fetchSpy.mockRestore();
+    });
+
+  test("maxAttempts 0 is refused", () =>
+    rejectsRangeError(
+      askJev("state", QUESTIONS, { maxAttempts: 0 }),
+      'askJev option "maxAttempts" must be a positive integer',
+    ));
+
+  test("maxAttempts 1.5 is refused", () =>
+    rejectsRangeError(
+      askJev("state", QUESTIONS, { maxAttempts: 1.5 }),
+      'askJev option "maxAttempts" must be a positive integer',
+    ));
+
+  test("timeoutMs -1 is refused", () =>
+    rejectsRangeError(
+      askJev("state", QUESTIONS, { timeoutMs: -1 }),
+      'askJev option "timeoutMs" must be a positive integer',
+    ));
+
+  test("timeoutMs 0 is refused", () =>
+    rejectsRangeError(
+      askJev("state", QUESTIONS, { timeoutMs: 0 }),
+      'askJev option "timeoutMs" must be a positive integer',
+    ));
+
+  test("backoffMs -1 is refused", () =>
+    rejectsRangeError(
+      askJev("state", QUESTIONS, { backoffMs: -1 }),
+      'askJev option "backoffMs" must be a finite number of at least 0',
+    ));
+
+  test("backoffMs NaN is refused", () =>
+    rejectsRangeError(
+      askJev("state", QUESTIONS, { backoffMs: Number.NaN }),
+      'askJev option "backoffMs" must be a finite number of at least 0',
+    ));
+
+  test("the boundary values are accepted: maxAttempts 1, timeoutMs 1, backoffMs 0", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        ok({
+          model: "m",
+          answers: { urgent: { type: "noul", noul: 0.5 } },
+          usage: { input_tokens: 1, output_tokens: 1 },
+        }),
+      );
+      const result = await askJev("state", QUESTIONS, {
+        maxAttempts: 1,
+        timeoutMs: 1,
+        backoffMs: 0,
+        sleep: never,
+      });
+      expect(result.model).toBe("m");
+      fetchSpy.mockRestore();
+    }));
+});
+
 describe("askJev request shape", () => {
   test("a successful call returns the parsed body", async () =>
     withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
