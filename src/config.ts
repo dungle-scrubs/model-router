@@ -98,7 +98,7 @@ function validateConfigObject(raw: unknown): {
       message: `the field "${key}" is not defined by the config schema`,
     });
   }
-  const effortRaw = raw.effort;
+  const effortRaw = hasOwn(raw, "effort") ? raw.effort : undefined;
   // Track whether the relationship check has all-valid values. Independent
   // problems with effort (not-object, off-ladder ceiling, off-ladder default)
   // are reported, but the default-above-ceiling check still fires beside

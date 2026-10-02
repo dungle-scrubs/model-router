@@ -71,6 +71,19 @@ describe("validateConfigObjectInput", () => {
     ).toEqual(defaultConfig());
   });
 
+  test("an own $schema with an inherited effort section falls through to defaults", () => {
+    // The own $schema avoids the empty-object early return. The inherited
+    // `effort` is on the prototype, not an own property, so the validator
+    // reads it as absent and the defaults apply. Without the own-property
+    // check at the top level, the inherited values would land as
+    // ceiling: "max" / default: "max", matching the file form
+    // {"$schema": "..."}.
+    const inherited = Object.assign(Object.create({ effort: { ceiling: "max", default: "max" } }), {
+      $schema: "https://example.invalid/config.schema.json",
+    });
+    expect(validateConfigObjectInput(inherited)).toEqual(defaultConfig());
+  });
+
   test("an off-ladder ceiling fails", () => {
     try {
       validateConfigObjectInput({ effort: { ceiling: "warp-nine" } });
