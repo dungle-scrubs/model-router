@@ -1382,4 +1382,71 @@ describe("rank resolves effort", () => {
     const modelA = answer.routes.find((route) => route.label === "model-a@harness-x");
     expect(modelA?.effort).toBe("medium");
   });
+
+  test("a policy route's effort wins against competing query and task effort", async () => {
+    // The per-route policy effort sits first in the RFC precedence, even
+    // when the query names one and the task names one. The competing
+    // values must not leak into the policy-placed route: a query effort
+    // "xhigh", a task effort "low", and a config default "medium" all
+    // lose to the policy route's "high". Routes the policy does not name
+    // still take the query effort as the shared request.
+    await withTempDir(async (dir) => {
+      const path = writeJson(dir, "registry.json", {
+        format: 1,
+        ratings: { coding: "Writes and changes code to a spec." },
+        router: { rank: ["coding"] },
+        tasks: {
+          "task-a": {
+            description: "Code.",
+            minimums: { low: { coding: 5 }, normal: { coding: 5 }, high: { coding: 5 } },
+            rank: ["coding"],
+            effort: "low",
+          },
+        },
+        policy: {
+          "policy-a": {
+            task: "task-a",
+            stakes: ["low", "normal", "high"],
+            routes: [{ route: "model-a@harness-x", effort: "high" }],
+            reason: "Pin a level.",
+          },
+        },
+        models: {
+          "model-a": {
+            family: "family-a",
+            ratings: { coding: 7 },
+            routes: [{ harness: "harness-x", modelId: "model-id-a", hosted: true }],
+          },
+          "model-b": {
+            family: "family-b",
+            ratings: { coding: 5 },
+            routes: [{ harness: "harness-x", modelId: "model-id-b", hosted: true }],
+          },
+        },
+      });
+      const answer = rank(
+        { effort: "warp-nine", minimums: { coding: 5 }, task: "task-a" },
+        {
+          registry: path,
+          config: { effort: { ceiling: "xhigh", default: "medium" } },
+        },
+      );
+      expectValidAnswer(answer);
+      const policyRoute = answer.routes.find(
+        (route) => route.label === "model-a@harness-x" && route.placedBy === "policy",
+      );
+      expect(policyRoute?.effort).toBe("high");
+      // The shared request falls through the off-ladder query effort to
+      // the task's "low". model-b is not named by the policy, so it
+      // receives the shared request.
+      const sharedRoute = answer.routes.find(
+        (route) => route.label === "model-b@harness-x" && route.placedBy === "rank",
+      );
+      expect(sharedRoute?.effort).toBe("low");
+      // The off-ladder warning names the task effort, the actual fallback
+      // source.
+      const offLadder = answer.warnings.find((warning) => warning.code === "effort-off-ladder");
+      expect(offLadder?.message).toContain("task");
+    });
+  });
 });

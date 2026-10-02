@@ -454,4 +454,61 @@ describe("rank accepts a config object or path", () => {
       expect(route.effort).toBe("low");
     }
   });
+
+  test("the same config bytes produce equal answers when fed as a file or as an object", async () => {
+    // Parity: bytes-on-disk and bytes-into-object are equivalent inputs.
+    // A successful config lowers both answers through one level, and the
+    // resulting routes carry the same effort. A malformed config fails
+    // both paths with the same RouterError code and the same problem
+    // codes; only the file-path field differs.
+    const loaded = full();
+    await withTempDir(async (dir) => {
+      const successPath = writeJson(dir, "ok.json", {
+        effort: { ceiling: "high", default: "low" },
+      });
+      const successFileAnswer = rank(
+        { effort: "xhigh", minimums: { coding: 5 } },
+        { registry: loaded, config: successPath },
+      );
+      const successObjectAnswer = rank(
+        { effort: "xhigh", minimums: { coding: 5 } },
+        { registry: loaded, config: { effort: { ceiling: "high", default: "low" } } },
+      );
+      expectValidAnswer(successFileAnswer);
+      expectValidAnswer(successObjectAnswer);
+      expect(successFileAnswer.routes.map((route) => route.effort)).toEqual(
+        successObjectAnswer.routes.map((route) => route.effort),
+      );
+      expect(successFileAnswer.warnings.map((warning) => warning.code)).toEqual(
+        successObjectAnswer.warnings.map((warning) => warning.code),
+      );
+
+      const failPath = writeJson(dir, "bad.json", {
+        effort: { ceiling: "low", default: "warp-nine" },
+      });
+      let fileErr: RouterError | undefined;
+      try {
+        rank({ minimums: { coding: 5 } }, { registry: loaded, config: failPath });
+      } catch (error) {
+        expect(error).toBeInstanceOf(RouterError);
+        fileErr = error as RouterError;
+      }
+      let objectErr: RouterError | undefined;
+      try {
+        rank(
+          { minimums: { coding: 5 } },
+          { registry: loaded, config: { effort: { ceiling: "low", default: "warp-nine" } } },
+        );
+      } catch (error) {
+        expect(error).toBeInstanceOf(RouterError);
+        objectErr = error as RouterError;
+      }
+      expect(fileErr).toBeDefined();
+      expect(objectErr).toBeDefined();
+      expect(fileErr?.code).toBe(objectErr?.code);
+      expect(fileErr?.problems.map((problem) => problem.code)).toEqual(
+        objectErr?.problems.map((problem) => problem.code),
+      );
+    });
+  });
 });
