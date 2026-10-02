@@ -6,6 +6,7 @@ import {
   captureStream,
   expectValidAnswer,
   fixturePath,
+  runBuiltCli,
   withEnv,
   withTempDir,
   writeJson,
@@ -126,5 +127,36 @@ describe("availability answer assembly", () => {
         }
       }),
     );
+  });
+});
+
+describe("repeated availability files", () => {
+  test.each(["in-process", "built"])("%s CLI rejects two paths", async (mode) => {
+    await withTempDir(async (dir) => {
+      const file = writeJson(dir, "avail.json", {
+        format: 1,
+        generatedAt: new Date().toISOString(),
+        entries: [],
+      });
+      const args = [
+        QUERY,
+        "--registry",
+        FULL,
+        "--availability-file",
+        file,
+        "--availability-file",
+        file,
+      ];
+      const result = mode === "built" ? runBuiltCli(args) : await run(args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(JSON.parse(result.stderr).error).toEqual({
+        code: "query-invalid",
+        field: "availability",
+        message: "the --availability-file option was given more than once.",
+        fix: "Give model-router exactly one --availability-file path.",
+        problems: [],
+      });
+    });
   });
 });

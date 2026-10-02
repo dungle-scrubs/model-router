@@ -111,7 +111,11 @@ interface AvailabilityOptionState {
 function addAvailabilityOptions(command: Command): Command {
   command
     .option("--availability", "run availability.command from config.json", false)
-    .option("--availability-file <path>", "read an availability document from <path>");
+    .option(
+      "--availability-file <path>",
+      "read an availability document from <path>",
+      (value: string, previous: string[] | undefined) => [...(previous ?? []), value],
+    );
   return command;
 }
 
@@ -120,7 +124,15 @@ function readAvailabilityOptionState(
   field: string,
 ): AvailabilityOptionState {
   const fromCommand = options.availability === true;
-  const fileRaw = options.availabilityFile;
+  const files = options.availabilityFile as readonly string[] | undefined;
+  if (files !== undefined && files.length > 1) {
+    throw queryInvalid(
+      field,
+      "the --availability-file option was given more than once.",
+      "Give model-router exactly one --availability-file path.",
+    );
+  }
+  const fileRaw = files?.[0];
   if (fromCommand && fileRaw !== undefined) {
     throw queryInvalid(
       field,
