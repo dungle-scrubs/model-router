@@ -1,10 +1,20 @@
 import {
   buildRouteLabel,
+  EFFORT_LADDER,
+  type EffortLevel,
   type LoadedRegistry,
   loadRegistry,
   type Model,
   type Route,
 } from "@dungle-scrubs/model-registry";
+import {
+  defaultConfig as defaultRouterConfig,
+  type LoadedConfig,
+  loadConfig as loadConfigImpl,
+  type RouterConfig,
+  resolveConfigPath,
+  validateConfigObjectInput,
+} from "./config.js";
 import { applyQueryDefaults, parseQuery } from "./query.js";
 import { validateRouterSections } from "./sections.js";
 import type {
@@ -12,6 +22,7 @@ import type {
   AnswerRoute,
   AvailabilityValue,
   Coded,
+  PinReport,
   PlacedBy,
   PolicyEntry,
   Query,
@@ -80,6 +91,15 @@ interface FlatRoute {
   readonly responseSeconds: number | undefined;
 }
 
+/** The result of effort resolution: the final level (omitted when no level
+ * is known), and any reason the level was lowered (maxEffort, ceiling).
+ * The router never emits `max` under the default ceiling, so a value
+ * above the ceiling is dropped to the ceiling with a warning. */
+interface EffortResolution {
+  readonly level: EffortLevel | undefined;
+  readonly lowered: { readonly field: string; readonly message: string } | undefined;
+}
+
 interface Floor {
   readonly minimum: number;
   readonly rating: string;
@@ -89,6 +109,25 @@ function resolveRegistry(option: RankOptions["registry"]): LoadedRegistry {
   if (typeof option === "string") return loadRegistry({ path: option });
   if (option !== undefined) return option;
   return loadRegistry();
+}
+
+/** Resolve the rank call's `config` option: a string is a path, a plain
+ * object is the settings form, an absent option falls through to the
+ * documented path order. The settings form goes through one validator;
+ * the path form goes through the same loader the CLI uses. The library
+ * accepts no pre-loaded config shortcut: callers that already ran the
+ * loader must pass the path string it consumed, not the LoadedConfig
+ * envelope, so the validator is the one source of truth. */
+function resolveConfig(
+  option: RankOptions["config"],
+  env: NodeJS.ProcessEnv = process.env,
+): LoadedConfig {
+  if (option === undefined) return loadConfigImpl({ env });
+  if (typeof option === "string") {
+    return loadConfigImpl({ explicitPath: resolveConfigPath(option), env });
+  }
+  const config = validateConfigObjectInput(option);
+  return { config, configPath: null };
 }
 
 function rejectByHardLimit(
@@ -212,10 +251,12 @@ function buildAnswerRoute(
   floor: "clears" | "below" | "skipped",
   reasons: readonly Coded[],
   placedBy: PlacedBy,
+  effort: EffortLevel | undefined,
   policy?: string,
 ): AnswerRoute {
   return {
     availability: availabilityOf(entry.route),
+    ...(effort === undefined ? {} : { effort }),
     family: entry.family,
     floor,
     harness: entry.harness,
@@ -249,6 +290,171 @@ function matchPolicy(
   }
   return fallback;
 }
+
+/** Decide whether the named pin survives the hard limits. The pin report is
+ * null when the query has no pin at all; a non-surviving pin keeps the
+ * fallback ranking and a reason. The reason names a removed cause only when
+ * one is on file for that label; otherwise the label is unknown. */
+function resolvePin(
+  pin: string | undefined,
+  flatByLabel: ReadonlyMap<string, FlatRoute>,
+  removed: readonly Removed[],
+  warnings: Coded[],
+): PinReport | null {
+  if (pin === undefined) return null;
+  if (flatByLabel.has(pin)) {
+    return { label: pin, reason: "", used: true };
+  }
+  const rejection = removed.find((entry) => entry.label === pin);
+  if (rejection !== undefined) {
+    // The hard-limit code is the cause: the same code the loader wrote when
+    // it removed the route.
+    const code = rejection.reason.code;
+    warnings.push({
+      code: "pin-unused",
+      field: "$.pin",
+      fix: `Adjust the pin "${pin}" to a route that survives the hard limits, or relax them.`,
+      message: `the pin "${pin}" was not used; a hard limit removed it (${code})`,
+    });
+    return { label: pin, reason: code, used: false };
+  }
+  warnings.push({
+    code: "pin-unknown",
+    field: "$.pin",
+    fix: `Name a route the registry declares as the pin.`,
+    message: `the pin "${pin}" was not used; the label is not in the registry`,
+  });
+  return { label: pin, reason: "unknown-label", used: false };
+}
+
+/** A non-route effort value the policy route, query, task, or config named.
+ * Empty when every source is absent (a query that never names effort and a
+ * task that has no effort, against the default config). */
+interface RequestedEffort {
+  readonly requested: EffortLevel | undefined;
+}
+
+/** Resolve the requested effort for the share route at once, by the RFC's
+ * order: policy route > query > task > config default. An off-ladder query
+ * effort is ignored with a warning; the task's effort is already validated
+ * against the ladder in `sections`, so it is always on the ladder. The
+ * config default is always on the ladder (config validation rejects a
+ * default above the ceiling). The warning names the actual fallback
+ * source so the caller can tell whether the task effort or the
+ * configured default supplied the request. */
+function resolveRequestedEffort(
+  applied: ReturnType<typeof applyQueryDefaults>,
+  resolvedTask: TaskResolution | undefined,
+  policyMatch: PolicyEntry | undefined,
+  config: RouterConfig,
+  warnings: Coded[],
+): RequestedEffort {
+  // The shared requested effort is what every rank-placed route receives
+  // unless its policy route entry names one. We collect them in priority:
+  //   1. policy route's effort when present (rare; resolved per-route)
+  //   2. query effort (with the off-ladder warning)
+  //   3. task effort (validated by sections.ts)
+  //   4. config default
+  if (applied.effort !== undefined) {
+    if ((EFFORT_LADDER as readonly string[]).includes(applied.effort)) {
+      return { requested: applied.effort as EffortLevel };
+    }
+    // The fallback that follows the warning may be either the task's
+    // effort (when one is named and on the ladder) or the configured
+    // default. Resolve the fallback first, then describe it accurately
+    // in the diagnostic.
+    const taskEffort = resolvedTask?.task?.effort;
+    const fallbackLevel: EffortLevel =
+      taskEffort !== undefined && (EFFORT_LADDER as readonly string[]).includes(taskEffort)
+        ? (taskEffort as EffortLevel)
+        : config.effort.default;
+    const fallbackSource =
+      taskEffort !== undefined && (EFFORT_LADDER as readonly string[]).includes(taskEffort)
+        ? `the task effort "${fallbackLevel}"`
+        : `the configured default "${fallbackLevel}"`;
+    warnings.push({
+      code: "effort-off-ladder",
+      field: "$.effort",
+      fix: `Set "effort" to one of ${EFFORT_LADDER.join(", ")}; ${fallbackSource} was used.`,
+      message: `the query effort "${applied.effort}" is not on the ladder; ${fallbackSource} was used`,
+    });
+    return { requested: fallbackLevel };
+  }
+  if (resolvedTask?.task?.effort !== undefined) {
+    return { requested: resolvedTask.task.effort as EffortLevel };
+  }
+  void policyMatch; // The policy route effort is per-route; the shared request falls through.
+  return { requested: config.effort.default };
+}
+
+/** Resolve effort for one route. The order: requested level, then the
+ * model's fixedEffort (replaces), then the model's maxEffort (caps with a
+ * warning), then the configured ceiling (caps with a warning). Each cap
+ * adds its own warning so a stacked lowering tells the caller which rule
+ * lowered the level. The router never emits `max` under the default
+ * ceiling, so any value at or above `max` is dropped to the ceiling. */
+function resolveRouteEffort(
+  requested: EffortLevel | undefined,
+  model: Model,
+  config: RouterConfig,
+  warnings: Coded[],
+  ownerLabel: string | null,
+): EffortResolution {
+  if (requested === undefined) return { level: undefined, lowered: undefined };
+  const ladder = EFFORT_LADDER as readonly string[];
+  let current = requested;
+  let loweredWarn: { field: string; message: string } | undefined;
+  const prefix = ownerLabel ?? "model";
+  if (model.fixedEffort !== undefined && model.fixedEffort !== current) {
+    const next = model.fixedEffort;
+    if (exceedsLadderIndex(current, next)) {
+      // fixedEffort lowered the request: warn. Raising or matching does not.
+      warnings.push({
+        code: "effort-fixed-lowering",
+        field: `$.fixedEffort[${JSON.stringify(next)}]`,
+        fix: `Lower the request to "${next}" or below, or raise the model's fixedEffort.`,
+        message: `the ${prefix} effort was lowered from "${current}" to "${next}" by the model's fixedEffort`,
+      });
+      loweredWarn = { field: "fixedEffort", message: "model fixedEffort" };
+    }
+    current = next;
+  }
+  if (model.maxEffort !== undefined && exceedsLadderIndex(current, model.maxEffort)) {
+    const next = model.maxEffort;
+    warnings.push({
+      code: "effort-above-max",
+      field: `$.maxEffort[${JSON.stringify(model.maxEffort)}]`,
+      fix: `Lower the request to "${next}" or below, or raise the model's maxEffort.`,
+      message: `the ${prefix} effort was lowered from "${current}" to "${next}" by the model's maxEffort`,
+    });
+    current = next;
+    loweredWarn = { field: "maxEffort", message: "model maxEffort" };
+  }
+  if (exceedsLadderIndex(current, config.effort.ceiling)) {
+    const next = config.effort.ceiling;
+    warnings.push({
+      code: "effort-ceiling",
+      field: `$.effort.ceiling[${JSON.stringify(config.effort.ceiling)}]`,
+      fix: `Lower the request to "${next}" or below, or raise "effort"."ceiling" in config.json.`,
+      message: `the ${prefix} effort was lowered from "${current}" to "${next}" by effort.ceiling`,
+    });
+    current = next;
+    loweredWarn = { field: "ceiling", message: "effort.ceiling" };
+  }
+  void ladder;
+  return { level: current, lowered: loweredWarn };
+}
+
+function exceedsLadderIndex(value: string, top: string): boolean {
+  const ladder = EFFORT_LADDER as readonly string[];
+  const valueIndex = ladder.indexOf(value);
+  const topIndex = ladder.indexOf(top);
+  if (valueIndex === -1 || topIndex === -1) return false;
+  return valueIndex > topIndex;
+}
+
+/** The package default config: exposed for callers and tests. */
+export const defaultRouterConfigExported = defaultRouterConfig;
 interface TaskResolution {
   readonly needs: readonly string[];
   readonly rank: readonly string[];
@@ -350,14 +556,21 @@ export function listTasks(options: RankOptions = {}): readonly TaskSummary[] {
 /**
  * Rank routes for a query. The steps run in the contract's order: load the
  * registry, validate the router section, validate the query, resolve the
- * task and policy, apply the hard limits, place the policy routes, then sort.
- * The function is synchronous and pure over its inputs.
+ * task and policy, apply the hard limits, place the pin and policy,
+ * resolve effort, then sort. The function is synchronous and pure over
+ * its inputs.
  */
 export function rank(query: unknown, options: RankOptions = {}): Answer {
   const loaded = resolveRegistry(options.registry);
   const sections: RouterSections = validateRouterSections(loaded);
   const parsed: Query = parseQuery(query);
   const applied = applyQueryDefaults(parsed);
+
+  // Load the config: the path order applies when the option is absent.
+  // The router never reads the clock or runs a subprocess here, so the
+  // result is pure over its inputs (path, env, or object).
+  const loadedConfig = resolveConfig(options.config);
+  const config = loadedConfig.config;
 
   const warnings: Coded[] = [];
   const removed: Removed[] = [];
@@ -406,26 +619,6 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
     }
   }
 
-  // Effort resolution is out of scope: when the query names an effort and no
-  // task is named, the value is parsed but unapplied. A task's effort is
-  // validated and parsed but likewise unapplied until effort resolution
-  // ships (a later release).
-  if (applied.effort !== undefined && resolvedTask === undefined) {
-    warnings.push({
-      code: "effort-unapplied",
-      message: `the query effort "${applied.effort}" was not applied; this release does not resolve effort levels`,
-      fix: "Remove effort from the query; effort resolution arrives in a later release.",
-    });
-  }
-
-  if (applied.pin !== undefined) {
-    warnings.push({
-      code: "pin-unapplied",
-      message: `the pin "${applied.pin}" was not used; this release does not place pins`,
-      fix: "Remove pin from the query; pins arrive in a later release.",
-    });
-  }
-
   const policyMatch = matchPolicy(sections, applied);
   // The warning fires only when the caller stated a spec: an unstated spec
   // defaults to open without asking for a policy, so it stays silent.
@@ -436,6 +629,18 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
       fix: "Remove spec from the query, or add a policy matching the task, stakes and spec.",
     });
   }
+
+  // Effort resolution runs at the route level, but the requested level is
+  // shared: the policy route's `effort` first, then the query's, then the
+  // task's, then the config default. An off-ladder value in the query is
+  // ignored with a warning; the schema accepts any string for effort.
+  const requestedEffort = resolveRequestedEffort(
+    applied,
+    resolvedTask,
+    policyMatch,
+    config,
+    warnings,
+  );
 
   const surviving: FlatRoute[] = [];
   const flatByLabel = new Map<string, FlatRoute>();
@@ -479,8 +684,31 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
     warnings.push(WARNING_LOCAL_OR_NOTHING);
   }
 
+  // Pin placement: the pin is used only when the label is in the surviving
+  // set. A used pin goes first with placedBy=pin and floor=skipped; the
+  // fallback ranking follows without it. A non-surviving pin keeps the
+  // fallback ranking with pin.used=false and a reason.
+  const pinReport = resolvePin(applied.pin, flatByLabel, removed, warnings);
+
+  // The pin's effort, when the pin label is also a matching policy route,
+  // comes from the policy route entry: per RFC, the policy route's
+  // effort sits first in the effort precedence. Build the lookup up
+  // front so the pin placement can apply it without re-walking the
+  // policy's written order.
+  const policyRouteEffortByLabel = new Map<string, EffortLevel>();
+  if (policyMatch !== undefined) {
+    for (const policyRoute of policyMatch.routes) {
+      if (typeof policyRoute.effort === "string") {
+        policyRouteEffortByLabel.set(policyRoute.route, policyRoute.effort as EffortLevel);
+      }
+    }
+  }
+
   const policyPlaced: AnswerRoute[] = [];
   const placedLabels = new Set<string>();
+  if (pinReport?.used === true) {
+    placedLabels.add(pinReport.label);
+  }
   if (policyMatch !== undefined) {
     for (const policyRoute of policyMatch.routes) {
       const label = policyRoute.route;
@@ -498,7 +726,26 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
         continue;
       }
       if (placedLabels.has(label)) continue;
-      policyPlaced.push(buildAnswerRoute(entry, "skipped", [], "policy", policyMatch.name));
+      // Per-route effort: a policy route may name its own effort in the
+      // registry, which overrides the shared request for that route alone.
+      // Validation rejects an off-ladder value at sections.ts and would
+      // have raised policy-route-effort-invalid, so when the value is a
+      // string it is on the ladder.
+      const policyRouteEffort = policyRoute.effort;
+      const policyRequested =
+        typeof policyRouteEffort === "string"
+          ? (policyRouteEffort as EffortLevel)
+          : requestedEffort.requested;
+      const policyResolved = resolveRouteEffort(
+        policyRequested,
+        entry.model,
+        config,
+        warnings,
+        policyRouteEffort !== undefined ? `policy "${policyMatch.name}" route "${label}"` : null,
+      );
+      policyPlaced.push(
+        buildAnswerRoute(entry, "skipped", [], "policy", policyResolved.level, policyMatch.name),
+      );
       placedLabels.add(label);
     }
   }
@@ -533,19 +780,51 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
   clearing.sort(compareClearing);
   below.sort((a, b) => compareCapabilityFirst(a, b, effectiveRank));
 
-  const routes: AnswerRoute[] = [
-    ...policyPlaced,
-    ...clearing.map((entry) => buildAnswerRoute(entry, "clears", [], "rank")),
-    ...below.map((entry) =>
-      buildAnswerRoute(entry, "below", belowReasons(entry.ratings, floors), "rank"),
-    ),
-  ];
+  // Resolve effort for each ranked route. Below-floor routes still receive
+  // an effort: the request is independent of floor outcome.
+  const clearingRoutes = clearing.map((entry) => {
+    const resolved = resolveRouteEffort(
+      requestedEffort.requested,
+      entry.model,
+      config,
+      warnings,
+      null,
+    );
+    return buildAnswerRoute(entry, "clears", [], "rank", resolved.level);
+  });
+  const belowRoutes = below.map((entry) => {
+    const reasons = belowReasons(entry.ratings, floors);
+    const resolved = resolveRouteEffort(
+      requestedEffort.requested,
+      entry.model,
+      config,
+      warnings,
+      null,
+    );
+    return buildAnswerRoute(entry, "below", reasons, "rank", resolved.level);
+  });
+
+  const routes: AnswerRoute[] = [];
+  if (pinReport?.used === true) {
+    const pinEntry = flatByLabel.get(pinReport.label);
+    if (pinEntry !== undefined) {
+      // The pin's effort comes from the policy route's effort when one
+      // names the pin label: the policy route effort sits first in the RFC's
+      // precedence, even for the route the pin places. When no policy names
+      // the label, the shared request applies.
+      const pinRequested =
+        policyRouteEffortByLabel.get(pinEntry.label) ?? requestedEffort.requested;
+      const resolved = resolveRouteEffort(pinRequested, pinEntry.model, config, warnings, null);
+      routes.push(buildAnswerRoute(pinEntry, "skipped", [], "pin", resolved.level));
+    }
+  }
+  routes.push(...policyPlaced, ...clearingRoutes, ...belowRoutes);
 
   return {
     availabilityNote: null,
     contract: 1,
     describe: null,
-    pin: null,
+    pin: pinReport,
     query: applied,
     registryDigest: loaded.digest,
     removed,

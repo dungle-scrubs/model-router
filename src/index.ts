@@ -1,3 +1,4 @@
+export { defaultConfig, loadConfig, validateConfigObjectInput } from "./config.js";
 export { RouterError } from "./error.js";
 export { listTasks, rank } from "./rank.js";
 export type {
@@ -7,6 +8,7 @@ export type {
   AvailabilityValue,
   Coded,
   Floor,
+  LoadedConfig,
   PinReport,
   PlacedBy,
   PolicyEntry,
@@ -17,6 +19,8 @@ export type {
   Query,
   RankOptions,
   Removed,
+  RouterConfig,
+  RouterConfigInput,
   RouterErrorCode,
   RouterErrorDetails,
   RouterProblem,

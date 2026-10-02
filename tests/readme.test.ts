@@ -16,6 +16,18 @@ describe("README problem codes", () => {
     }
   });
 
+  test("documents every config code the config module emits", () => {
+    const source = readFileSync(join(repoRoot, "src", "config.ts"), "utf8");
+    const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
+    const emitted = [...new Set(source.match(/"config-[a-z-]+"/g) ?? [])].map((code) =>
+      code.replaceAll('"', ""),
+    );
+    expect(emitted.length).toBeGreaterThanOrEqual(5);
+    for (const code of emitted) {
+      expect(readme, `${code} is missing from README.md`).toContain(code);
+    }
+  });
+
   test("states shipped features and policy-route placement accurately", () => {
     const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
     expect(readme).not.toMatch(/Inline `minimums`[^.]*arrive in later issues/);

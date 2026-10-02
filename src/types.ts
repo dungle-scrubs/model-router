@@ -1,4 +1,8 @@
 import type { EffortLevel, LoadedRegistry, RegistryDigest } from "@dungle-scrubs/model-registry";
+import type { RouterConfig } from "./config.js";
+
+export type { EffortLevel } from "@dungle-scrubs/model-registry";
+export type { LoadedConfig, RouterConfig } from "./config.js";
 
 export type Stakes = "low" | "normal" | "high";
 export type Prefer = "cost" | "speed";
@@ -94,7 +98,7 @@ export type Answer = {
   readonly warnings: readonly Coded[];
 };
 
-export type RouterErrorCode = "query-invalid" | "registry-sections-invalid";
+export type RouterErrorCode = "query-invalid" | "registry-sections-invalid" | "config-invalid";
 
 export interface RouterProblem {
   readonly code: string;
@@ -111,10 +115,24 @@ export interface RouterErrorDetails {
   readonly problems: readonly RouterProblem[];
 }
 
-/** Options the rank entry point accepts. `registry` is a path or a loaded registry. */
+/** Options the rank entry point accepts. `registry` is a path or a loaded registry.
+ * `config` is a path string or a plain settings object. The library has no
+ * pre-loaded config shortcut: callers that already ran the loader must pass
+ * the path string it consumed. */
 export interface RankOptions {
+  readonly config?: string | RouterConfigInput;
   readonly registry?: string | LoadedRegistry;
 }
+
+/** Either shape the library accepts for `config`. An object passes through
+ * `validateConfigObjectInput`; a path uses `loadConfig`. The library's
+ * `RouterConfigInput` is the same `unknown`: the runtime validates it. */
+export type RouterConfigInput = unknown;
+
+/** The library's `RouterConfigInput` is `unknown` at the type level; once
+ * validated, the result is a `RouterConfig`. The map below keeps the
+ * contract reachable from `RankOptions`. */
+export type _RouterConfigLink = RouterConfig;
 
 /** A task entry validated from the registry's tasks section. */
 export interface TaskEntry {

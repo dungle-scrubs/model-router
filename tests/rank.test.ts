@@ -4,7 +4,14 @@ import { loadRegistry, RegistryError } from "@dungle-scrubs/model-registry";
 import { describe, expect, test } from "vitest";
 import packageJson from "../package.json" with { type: "json" };
 import { RouterError, rank } from "../src/index.js";
-import { expectValidAnswer, fixturePath, sha256Hex, withEnv, withTempDir } from "./helpers.js";
+import {
+  expectValidAnswer,
+  fixturePath,
+  sha256Hex,
+  withEnv,
+  withTempDir,
+  writeJson,
+} from "./helpers.js";
 
 const FULL = fixturePath("full.json");
 const SPEED = fixturePath("speed.json");
@@ -43,6 +50,7 @@ describe("rank with inline minimums", () => {
       routes: [
         {
           availability: "unmetered",
+          effort: "medium",
           family: "family-b",
           floor: "clears",
           harness: "harness-x",
@@ -55,6 +63,7 @@ describe("rank with inline minimums", () => {
         },
         {
           availability: "unknown",
+          effort: "medium",
           family: "family-a",
           floor: "clears",
           harness: "harness-x",
@@ -68,6 +77,7 @@ describe("rank with inline minimums", () => {
         },
         {
           availability: "unmetered",
+          effort: "medium",
           family: "family-a",
           floor: "clears",
           harness: "harness-y",
@@ -81,6 +91,7 @@ describe("rank with inline minimums", () => {
         },
         {
           availability: "unmetered",
+          effort: "medium",
           family: "family-b",
           floor: "clears",
           harness: "harness-z",
@@ -93,6 +104,7 @@ describe("rank with inline minimums", () => {
         },
         {
           availability: "unmetered",
+          effort: "medium",
           family: "family-a",
           floor: "clears",
           harness: "harness-x",
@@ -105,6 +117,7 @@ describe("rank with inline minimums", () => {
         },
         {
           availability: "unmetered",
+          effort: "medium",
           family: "family-a",
           floor: "below",
           harness: "harness-w",
@@ -534,8 +547,8 @@ describe("rank hard limits", () => {
   });
 });
 
-describe("rank warnings for fields this slice does not apply", () => {
-  test("a query naming effort, pin and settled spec warns for each, in order", () => {
+describe("rank warnings for fields this slice applies", () => {
+  test("a query naming effort, pin and settled spec still warns only for policy-none", () => {
     const loaded = full();
     const answer = rank(
       {
@@ -547,28 +560,15 @@ describe("rank warnings for fields this slice does not apply", () => {
       { registry: loaded },
     );
     expectValidAnswer(answer);
-    expect(answer.warnings).toEqual([
-      {
-        code: "effort-unapplied",
-        message:
-          'the query effort "high" was not applied; this release does not resolve effort levels',
-        fix: "Remove effort from the query; effort resolution arrives in a later release.",
-      },
-      {
-        code: "pin-unapplied",
-        message: 'the pin "model-a@harness-x" was not used; this release does not place pins',
-        fix: "Remove pin from the query; pins arrive in a later release.",
-      },
-      {
-        code: "policy-none",
-        message: 'the spec "settled" matched no policy; normal ranking was used',
-        fix: "Remove spec from the query, or add a policy matching the task, stakes and spec.",
-      },
-    ]);
-    expect(answer.pin).toBeNull();
+    expect(answer.warnings.map((warning) => warning.code)).toEqual(["policy-none"]);
+    expect(answer.pin).toEqual({ label: "model-a@harness-x", reason: "", used: true });
     expect(answer.query.effort).toBe("high");
     expect(answer.query.pin).toBe("model-a@harness-x");
     expect(answer.query.spec).toBe("settled");
+    // Effort is applied: the pinned route carries the requested effort.
+    const pinned = answer.routes[0];
+    expect(pinned?.effort).toBe("high");
+    expect(pinned?.placedBy).toBe("pin");
   });
 
   test("a minimum naming an undeclared rating warns and makes every route below", () => {
@@ -789,5 +789,664 @@ describe("rank registry input", () => {
     expectValidAnswer(answer);
     expect(answer.routes).toEqual([]);
     expect(answer.warnings).toEqual([]);
+  });
+});
+
+describe("rank places the pin first", () => {
+  test("a used pin goes first with placedBy: pin and floor: skipped", () => {
+    const loaded = full();
+    const answer = rank(
+      { minimums: { coding: 5 }, pin: "model-a@harness-x" },
+      { registry: loaded },
+    );
+    expectValidAnswer(answer);
+    expect(answer.pin).toEqual({ label: "model-a@harness-x", reason: "", used: true });
+    expect(answer.routes[0]).toMatchObject({
+      floor: "skipped",
+      label: "model-a@harness-x",
+      placedBy: "pin",
+    });
+    // The pinned route is filtered out of the ranked list so it does not
+    // appear twice.
+    const labels = answer.routes.map((route) => route.label);
+    expect(labels.filter((label) => label === "model-a@harness-x")).toHaveLength(1);
+  });
+
+  test("a pin against an unknown label falls through to the fallback ranking with a reason", () => {
+    const loaded = full();
+    const answer = rank(
+      { minimums: { coding: 5 }, pin: "model-z@harness-x" },
+      { registry: loaded },
+    );
+    expectValidAnswer(answer);
+    expect(answer.pin).toEqual({
+      label: "model-z@harness-x",
+      reason: "unknown-label",
+      used: false,
+    });
+    expect(answer.warnings.map((warning) => warning.code)).toEqual(["pin-unknown"]);
+    // The fallback ranking is the full registry ranking: every surviving
+    // route appears, none carries placedBy: pin, and the ordering is the
+    // documented clearing order. Asserting the full label list proves
+    // the fallback is complete and ordered: an empty `routes` array
+    // would vacuously satisfy a placedBy check.
+    expect(answer.routes.map((route) => route.label)).toEqual([
+      "model-b@harness-x",
+      "model-a@harness-x",
+      "model-a@harness-y/provider-1",
+      "model-d@harness-z",
+      "model-c@harness-x",
+      "model-e@harness-w",
+    ]);
+    expect(answer.routes.every((route) => route.placedBy !== "pin")).toBe(true);
+  });
+
+  test("a pin against a hard-limit-removed route keeps the hard-limit code as the reason", () => {
+    const loaded = full();
+    // needs=telepathy removes every route. The pin's reason is the loader's
+    // hard-limit code so the caller can tell which rule rejected it.
+    const answer = rank(
+      {
+        minimums: { coding: 5 },
+        needs: ["telepathy"],
+        pin: "model-a@harness-x",
+      },
+      { registry: loaded },
+    );
+    expectValidAnswer(answer);
+    expect(answer.pin).toEqual({
+      label: "model-a@harness-x",
+      reason: "needs-not-satisfied",
+      used: false,
+    });
+    expect(answer.warnings.map((warning) => warning.code)).toEqual([
+      "capability-unknown",
+      "pin-unused",
+    ]);
+    expect(answer.routes).toEqual([]);
+  });
+
+  test("a pin under privacy: secret keeps only privacyEligible routes and pins the surviving one", () => {
+    const loaded = full();
+    const answer = rank(
+      {
+        minimums: { coding: 5 },
+        pin: "model-a@harness-x",
+        privacy: "secret",
+      },
+      { registry: loaded },
+    );
+    expectValidAnswer(answer);
+    expect(answer.pin?.used).toBe(true);
+    expect(answer.routes[0]?.label).toBe("model-a@harness-x");
+    expect(answer.routes[0]?.placedBy).toBe("pin");
+  });
+
+  test("a pin that fails privacy: secret reports privacy-secret-not-eligible", () => {
+    const loaded = full();
+    // model-b@harness-x is not privacyEligible; the pin lands on the
+    // privacy-secret-not-eligible hard-limit reason.
+    const answer = rank(
+      {
+        minimums: { coding: 5 },
+        pin: "model-b@harness-x",
+        privacy: "secret",
+      },
+      { registry: loaded },
+    );
+    expectValidAnswer(answer);
+    expect(answer.pin).toEqual({
+      label: "model-b@harness-x",
+      reason: "privacy-secret-not-eligible",
+      used: false,
+    });
+  });
+
+  test("a pin and a policy together: the pin leads the policy routes", async () => {
+    // Build a registry where the pin's route survives the hard limits and
+    // the policy's routes survive, so both placements happen in order.
+    await withTempDir(async (dir) => {
+      const path = writeJson(dir, "registry.json", {
+        format: 1,
+        ratings: { coding: "Writes and changes code to a spec." },
+        capabilities: { "repo-access": "Can read and change files in the workspace." },
+        router: { rank: ["coding"] },
+        tasks: {
+          "task-a": {
+            description: "Code.",
+            minimums: { low: { coding: 5 }, normal: { coding: 5 }, high: { coding: 5 } },
+            rank: ["coding"],
+            needs: ["repo-access"],
+          },
+        },
+        policy: {
+          "policy-a": {
+            task: "task-a",
+            stakes: ["low", "normal", "high"],
+            routes: [{ route: "model-b@harness-x" }, { route: "model-c@harness-x" }],
+            reason: "Cheap code routes run first.",
+          },
+        },
+        models: {
+          "model-a": {
+            family: "family-a",
+            ratings: { coding: 7 },
+            routes: [
+              {
+                harness: "harness-x",
+                modelId: "model-id-a",
+                hosted: true,
+                capabilities: ["repo-access"],
+              },
+            ],
+          },
+          "model-b": {
+            family: "family-b",
+            ratings: { coding: 6 },
+            routes: [
+              {
+                harness: "harness-x",
+                modelId: "model-id-b",
+                hosted: true,
+                capabilities: ["repo-access"],
+              },
+            ],
+          },
+          "model-c": {
+            family: "family-c",
+            ratings: { coding: 6 },
+            routes: [
+              {
+                harness: "harness-x",
+                modelId: "model-id-c",
+                hosted: true,
+                capabilities: ["repo-access"],
+              },
+            ],
+          },
+        },
+      });
+      const answer = rank(
+        {
+          minimums: { coding: 5 },
+          pin: "model-a@harness-x",
+          stakes: "normal",
+          task: "task-a",
+        },
+        { registry: path },
+      );
+      expectValidAnswer(answer);
+      expect(answer.pin?.used).toBe(true);
+      expect(answer.routes[0]?.placedBy).toBe("pin");
+      expect(answer.routes[0]?.label).toBe("model-a@harness-x");
+      expect(answer.routes[1]?.placedBy).toBe("policy");
+      expect(answer.routes[1]?.label).toBe("model-b@harness-x");
+    });
+  });
+
+  test("the pin's pinned route is dropped from the ranked list, not duplicated", () => {
+    const loaded = full();
+    const answer = rank(
+      { minimums: { coding: 5 }, pin: "model-c@harness-x" },
+      { registry: loaded },
+    );
+    expectValidAnswer(answer);
+    const labels = answer.routes.map((route) => route.label);
+    // model-c clears the floor at coding 5, so it would normally appear in
+    // the rank output. With the pin, the rank output drops it and only the
+    // pin route remains for that label.
+    expect(labels.filter((label) => label === "model-c@harness-x")).toHaveLength(1);
+    expect(answer.routes[0]?.placedBy).toBe("pin");
+    expect(answer.routes[0]?.label).toBe("model-c@harness-x");
+  });
+});
+
+describe("rank resolves effort", () => {
+  test("an off-ladder query effort is reported and the default applies", () => {
+    const loaded = full();
+    const answer = rank({ effort: "warp-nine", minimums: { coding: 5 } }, { registry: loaded });
+    expectValidAnswer(answer);
+    expect(answer.warnings.map((warning) => warning.code)).toEqual(["effort-off-ladder"]);
+    expect(answer.warnings[0]?.message).toContain("warp-nine");
+    // The configured default (medium) is the level every route carries.
+    for (const route of answer.routes) {
+      expect(route.effort).toBe("medium");
+    }
+  });
+
+  test("the off-ladder warning names the actual fallback source", async () => {
+    // task effort "high" beats the configured default "medium" in the
+    // request order. The off-ladder warning names the actual source
+    // applied, not the configured default.
+    await withTempDir(async (dir) => {
+      const path = writeJson(dir, "registry.json", {
+        format: 1,
+        ratings: { coding: "Writes and changes code to a spec." },
+        router: { rank: ["coding"] },
+        tasks: {
+          "task-a": {
+            description: "Code.",
+            minimums: { low: { coding: 5 }, normal: { coding: 5 }, high: { coding: 5 } },
+            rank: ["coding"],
+            effort: "high",
+          },
+        },
+        models: {
+          "model-a": {
+            family: "family-a",
+            ratings: { coding: 7 },
+            routes: [{ harness: "harness-x", modelId: "model-id-a", hosted: true }],
+          },
+        },
+      });
+      const answer = rank(
+        {
+          effort: "warp-nine",
+          minimums: { coding: 5 },
+          task: "task-a",
+        },
+        {
+          registry: path,
+          config: { effort: { ceiling: "xhigh", default: "medium" } },
+        },
+      );
+      expectValidAnswer(answer);
+      const offLadder = answer.warnings.find((warning) => warning.code === "effort-off-ladder");
+      expect(offLadder?.message).toBeDefined();
+      expect(offLadder?.message).toContain("warp-nine");
+      // The task's effort was the actual fallback: the message names it.
+      expect(offLadder?.message).toContain("task");
+      // The fix names the configured-default level by intent (it is still the
+      // recommended setting), but the diagnostic and fallback source is the
+      // task's effort, not the configured default.
+      expect(answer.routes[0]?.effort).toBe("high");
+    });
+  });
+
+  test("a query effort on the ladder wins over the config default", () => {
+    const loaded = full();
+    const answer = rank({ effort: "high", minimums: { coding: 5 } }, { registry: loaded });
+    expectValidAnswer(answer);
+    expect(answer.warnings).toEqual([]);
+    for (const route of answer.routes) {
+      expect(route.effort).toBe("high");
+    }
+  });
+
+  test("a query's effort wins over the task's effort", async () => {
+    // The RFC names the order policy > query > task > default. The query
+    // sits between the policy route and the task, so a query effort is
+    // requested first.
+    await withTempDir(async (dir) => {
+      const path = writeJson(dir, "registry.json", {
+        format: 1,
+        ratings: { coding: "Writes and changes code to a spec." },
+        router: { rank: ["coding"] },
+        tasks: {
+          "task-a": {
+            description: "Code.",
+            minimums: { low: { coding: 5 }, normal: { coding: 5 }, high: { coding: 5 } },
+            rank: ["coding"],
+            effort: "high",
+          },
+        },
+        models: {
+          "model-a": {
+            family: "family-a",
+            ratings: { coding: 7 },
+            routes: [{ harness: "harness-x", modelId: "model-id-a", hosted: true }],
+          },
+        },
+      });
+      const answer = rank(
+        { effort: "low", minimums: { coding: 5 }, task: "task-a" },
+        { registry: path },
+      );
+      expectValidAnswer(answer);
+      // The query's effort "low" wins over the task's "high", so the route
+      // carries "low".
+      const routeA = answer.routes.find((route) => route.label === "model-a@harness-x");
+      expect(routeA?.effort).toBe("low");
+      expect(answer.query.effort).toBe("low");
+    });
+  });
+
+  test("a task's effort applies when the query omits effort", async () => {
+    // With no query effort, the task's effort is the request.
+    await withTempDir(async (dir) => {
+      const path = writeJson(dir, "registry.json", {
+        format: 1,
+        ratings: { coding: "Writes and changes code to a spec." },
+        router: { rank: ["coding"] },
+        tasks: {
+          "task-a": {
+            description: "Code.",
+            minimums: { low: { coding: 5 }, normal: { coding: 5 }, high: { coding: 5 } },
+            rank: ["coding"],
+            effort: "high",
+          },
+        },
+        models: {
+          "model-a": {
+            family: "family-a",
+            ratings: { coding: 7 },
+            routes: [{ harness: "harness-x", modelId: "model-id-a", hosted: true }],
+          },
+        },
+      });
+      const answer = rank({ minimums: { coding: 5 }, task: "task-a" }, { registry: path });
+      expectValidAnswer(answer);
+      const routeA = answer.routes.find((route) => route.label === "model-a@harness-x");
+      expect(routeA?.effort).toBe("high");
+    });
+  });
+
+  test("a fixedEffort replaces the requested level", async () => {
+    // Build a registry with fixedEffort and a request that the fixedEffort
+    // overrides, so the test proves the override applies.
+    await withTempDir(async (dir) => {
+      const path = writeJson(dir, "registry.json", {
+        format: 1,
+        ratings: { coding: "Writes and changes code to a spec." },
+        router: { rank: ["coding"] },
+        models: {
+          "model-fixed": {
+            family: "family-a",
+            fixedEffort: "high",
+            ratings: { coding: 7 },
+            routes: [{ harness: "harness-x", modelId: "model-id-fixed", hosted: true }],
+          },
+        },
+      });
+      const answer = rank({ effort: "low", minimums: { coding: 5 } }, { registry: path });
+      expectValidAnswer(answer);
+      const fixed = answer.routes.find((route) => route.label === "model-fixed@harness-x");
+      expect(fixed?.effort).toBe("high");
+    });
+  });
+
+  test("a maxEffort caps the requested level with a warning", async () => {
+    // A request above the model's maxEffort is lowered, with a warning.
+    await withTempDir(async (dir) => {
+      const path = writeJson(dir, "registry.json", {
+        format: 1,
+        ratings: { coding: "Writes and changes code to a spec." },
+        router: { rank: ["coding"] },
+        models: {
+          "model-max": {
+            family: "family-a",
+            maxEffort: "medium",
+            ratings: { coding: 7 },
+            routes: [{ harness: "harness-x", modelId: "model-id-max", hosted: true }],
+          },
+        },
+      });
+      const answer = rank({ effort: "high", minimums: { coding: 5 } }, { registry: path });
+      expectValidAnswer(answer);
+      const maxed = answer.routes.find((route) => route.label === "model-max@harness-x");
+      expect(maxed?.effort).toBe("medium");
+      expect(answer.warnings.map((warning) => warning.code)).toContain("effort-above-max");
+    });
+  });
+
+  test("a request above the configured ceiling is capped last, with a warning", () => {
+    const loaded = full();
+    const answer = rank(
+      { effort: "max", minimums: { coding: 5 } },
+      { registry: loaded, config: { effort: { ceiling: "high", default: "medium" } } },
+    );
+    expectValidAnswer(answer);
+    for (const route of answer.routes) {
+      expect(route.effort).toBe("high");
+    }
+    // model-a has maxEffort: high, so its two routes hit the maxEffort cap
+    // first and never need the ceiling cap. Every other route has no
+    // maxEffort, so it caps against the configured ceiling once each.
+    // No warning is duplicated: ceiling fires once per uncapped route,
+    // effort-above-max fires once per maxEffort-bound route, and the
+    // totals together cover every route exactly once.
+    expect(answer.routes).toHaveLength(6);
+    const ceilingWarnings = answer.warnings.filter((warning) => warning.code === "effort-ceiling");
+    const maxWarnings = answer.warnings.filter((warning) => warning.code === "effort-above-max");
+    expect(ceilingWarnings).toHaveLength(4);
+    expect(maxWarnings).toHaveLength(2);
+    expect(ceilingWarnings.length + maxWarnings.length).toBe(answer.routes.length);
+  });
+
+  test("the router never emits max under the default ceiling", () => {
+    const loaded = full();
+    const answer = rank({ effort: "max", minimums: { coding: 5 } }, { registry: loaded });
+    expectValidAnswer(answer);
+    for (const route of answer.routes) {
+      expect(route.effort).not.toBe("max");
+    }
+  });
+
+  test("a fixedEffort that lowers the request adds an effort-fixed-lowering warning", async () => {
+    // Request high; the model has fixedEffort: low. The replacement
+    // lowers the level, so a warning names the rule that lowered it. The
+    // same shape with a request that matches the fixed level adds no
+    // warning, and a request below the fixed level (the fixedEffort
+    // raises it) also adds no warning.
+    await withTempDir(async (dir) => {
+      const lowPath = writeJson(dir, "registry-low.json", {
+        format: 1,
+        ratings: { coding: "Writes and changes code to a spec." },
+        router: { rank: ["coding"] },
+        models: {
+          "model-fixed": {
+            family: "family-a",
+            fixedEffort: "low",
+            ratings: { coding: 7 },
+            routes: [{ harness: "harness-x", modelId: "model-id-fixed", hosted: true }],
+          },
+        },
+      });
+      const lower = rank({ effort: "high", minimums: { coding: 5 } }, { registry: lowPath });
+      expectValidAnswer(lower);
+      const fixedLower = lower.routes.find((route) => route.label === "model-fixed@harness-x");
+      expect(fixedLower?.effort).toBe("low");
+      expect(lower.warnings.map((warning) => warning.code)).toContain("effort-fixed-lowering");
+
+      const same = rank({ effort: "low", minimums: { coding: 5 } }, { registry: lowPath });
+      expectValidAnswer(same);
+      expect(same.warnings.map((warning) => warning.code)).not.toContain("effort-fixed-lowering");
+
+      const raisePath = writeJson(dir, "registry-raise.json", {
+        format: 1,
+        ratings: { coding: "Writes and changes code to a spec." },
+        router: { rank: ["coding"] },
+        models: {
+          "model-fixed": {
+            family: "family-a",
+            fixedEffort: "high",
+            ratings: { coding: 7 },
+            routes: [{ harness: "harness-x", modelId: "model-id-fixed", hosted: true }],
+          },
+        },
+      });
+      const raise = rank({ effort: "low", minimums: { coding: 5 } }, { registry: raisePath });
+      expectValidAnswer(raise);
+      const fixedRaise = raise.routes.find((route) => route.label === "model-fixed@harness-x");
+      expect(fixedRaise?.effort).toBe("high");
+      expect(raise.warnings.map((warning) => warning.code)).not.toContain("effort-fixed-lowering");
+    });
+  });
+
+  test("a policy route's per-route effort overrides the shared request", async () => {
+    // Build a fixture where the policy's per-route effort is the only signal
+    // for that route's level, so the test proves the override applies.
+    await withTempDir(async (dir) => {
+      const path = writeJson(dir, "registry.json", {
+        format: 1,
+        ratings: { coding: "Writes and changes code to a spec." },
+        router: { rank: ["coding"] },
+        tasks: {
+          "task-a": {
+            description: "Code.",
+            minimums: { low: { coding: 5 }, normal: { coding: 5 }, high: { coding: 5 } },
+            rank: ["coding"],
+          },
+        },
+        policy: {
+          "policy-a": {
+            task: "task-a",
+            stakes: ["low", "normal", "high"],
+            routes: [{ route: "model-a@harness-x", effort: "low" }],
+            reason: "Cheap first.",
+          },
+        },
+        models: {
+          "model-a": {
+            family: "family-a",
+            ratings: { coding: 7 },
+            routes: [{ harness: "harness-x", modelId: "model-id-a", hosted: true }],
+          },
+        },
+      });
+      const answer = rank({ minimums: { coding: 5 }, task: "task-a" }, { registry: path });
+      expectValidAnswer(answer);
+      const policyRouteA = answer.routes.find(
+        (route) => route.label === "model-a@harness-x" && route.placedBy === "policy",
+      );
+      // The shared request (no effort named) is the config default "medium";
+      // the per-route "low" overrides that for this route alone.
+      expect(policyRouteA?.effort).toBe("low");
+    });
+  });
+
+  test("a pinned route the policy also names takes the policy route's effort first", async () => {
+    // Per RFC: the policy route's `effort` is first in the effort precedence,
+    // even when the route is also the pin. The pin still places first with
+    // placedBy: pin and floor: skipped; the effort comes from the matching
+    // policy route, not the shared request.
+    await withTempDir(async (dir) => {
+      const path = writeJson(dir, "registry.json", {
+        format: 1,
+        ratings: { coding: "Writes and changes code to a spec." },
+        router: { rank: ["coding"] },
+        tasks: {
+          "task-a": {
+            description: "Code.",
+            minimums: { low: { coding: 5 }, normal: { coding: 5 }, high: { coding: 5 } },
+            rank: ["coding"],
+          },
+        },
+        policy: {
+          "policy-a": {
+            task: "task-a",
+            stakes: ["low", "normal", "high"],
+            routes: [{ route: "model-a@harness-x", effort: "low" }],
+            reason: "Cheap first.",
+          },
+        },
+        models: {
+          "model-a": {
+            family: "family-a",
+            ratings: { coding: 7 },
+            routes: [{ harness: "harness-x", modelId: "model-id-a", hosted: true }],
+          },
+        },
+      });
+      const answer = rank(
+        {
+          effort: "high",
+          minimums: { coding: 5 },
+          pin: "model-a@harness-x",
+          task: "task-a",
+        },
+        { registry: path },
+      );
+      expectValidAnswer(answer);
+      expect(answer.pin?.used).toBe(true);
+      const pinned = answer.routes.find((route) => route.label === "model-a@harness-x");
+      expect(pinned?.placedBy).toBe("pin");
+      // The query requests "high", the policy names the route's effort "low",
+      // and the policy route's effort wins. The pin's effort is "low".
+      expect(pinned?.effort).toBe("low");
+    });
+  });
+
+  test("a warning is added for each rule that lowered the level", () => {
+    const loaded = full();
+    // model-a has maxEffort=high; a request for "xhigh" is first capped to
+    // "high" by maxEffort, then a configured ceiling of "medium" caps again,
+    // producing two warnings: one effort-above-max and one effort-ceiling.
+    const answer = rank(
+      { effort: "xhigh", minimums: { coding: 5 } },
+      { registry: loaded, config: { effort: { ceiling: "medium", default: "medium" } } },
+    );
+    expectValidAnswer(answer);
+    expect(answer.warnings.map((warning) => warning.code)).toContain("effort-above-max");
+    expect(answer.warnings.map((warning) => warning.code)).toContain("effort-ceiling");
+    const modelA = answer.routes.find((route) => route.label === "model-a@harness-x");
+    expect(modelA?.effort).toBe("medium");
+  });
+
+  test("a policy route's effort wins against competing query and task effort", async () => {
+    // The per-route policy effort sits first in the RFC precedence, even
+    // when the query names one and the task names one. The competing
+    // values must not leak into the policy-placed route: a query effort
+    // "xhigh", a task effort "low", and a config default "medium" all
+    // lose to the policy route's "high". Routes the policy does not name
+    // still take the query effort as the shared request.
+    await withTempDir(async (dir) => {
+      const path = writeJson(dir, "registry.json", {
+        format: 1,
+        ratings: { coding: "Writes and changes code to a spec." },
+        router: { rank: ["coding"] },
+        tasks: {
+          "task-a": {
+            description: "Code.",
+            minimums: { low: { coding: 5 }, normal: { coding: 5 }, high: { coding: 5 } },
+            rank: ["coding"],
+            effort: "low",
+          },
+        },
+        policy: {
+          "policy-a": {
+            task: "task-a",
+            stakes: ["low", "normal", "high"],
+            routes: [{ route: "model-a@harness-x", effort: "high" }],
+            reason: "Pin a level.",
+          },
+        },
+        models: {
+          "model-a": {
+            family: "family-a",
+            ratings: { coding: 7 },
+            routes: [{ harness: "harness-x", modelId: "model-id-a", hosted: true }],
+          },
+          "model-b": {
+            family: "family-b",
+            ratings: { coding: 5 },
+            routes: [{ harness: "harness-x", modelId: "model-id-b", hosted: true }],
+          },
+        },
+      });
+      const answer = rank(
+        { effort: "warp-nine", minimums: { coding: 5 }, task: "task-a" },
+        {
+          registry: path,
+          config: { effort: { ceiling: "xhigh", default: "medium" } },
+        },
+      );
+      expectValidAnswer(answer);
+      const policyRoute = answer.routes.find(
+        (route) => route.label === "model-a@harness-x" && route.placedBy === "policy",
+      );
+      expect(policyRoute?.effort).toBe("high");
+      // The shared request falls through the off-ladder query effort to
+      // the task's "low". model-b is not named by the policy, so it
+      // receives the shared request.
+      const sharedRoute = answer.routes.find(
+        (route) => route.label === "model-b@harness-x" && route.placedBy === "rank",
+      );
+      expect(sharedRoute?.effort).toBe("low");
+      // The off-ladder warning names the task effort, the actual fallback
+      // source.
+      const offLadder = answer.warnings.find((warning) => warning.code === "effort-off-ladder");
+      expect(offLadder?.message).toContain("task");
+    });
   });
 });

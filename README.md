@@ -4,7 +4,7 @@ Rank model routes for a structured query against the shared model registry.
 
 A route is one model reached through one harness. The caller states what the work needs; the router orders the registry's routes into one ranked list, contract version 1. This package is the router half of the design in the model-registry RFC; the loader and validator half is [`@dungle-scrubs/model-registry`](https://github.com/dungle-scrubs/model-registry). Development release: the package is private and unpublished.
 
-This release implements issue #28: tasks and policies. Pins, effort levels, `config.json`, availability and the describe step arrive in later issues.
+This release implements issue #29: pins, effort resolution, `config.json` and the `check` subcommand. Availability and the describe step arrive in later issues.
 
 ## CLI
 
@@ -14,11 +14,14 @@ $ model-router '{"task":"task-a","stakes":"normal"}' --registry registry.json
 
 $ model-router tasks --registry registry.json
 [{"name":"task-a","description":"..."}]
+
+$ model-router check --registry registry.json
+{"configPath":null,"registryDigest":"sha256:...","registryPath":"..."}
 ```
 
 The query is the positional JSON argument, or `-` to read it from stdin. `--registry <path>` names the registry file; without it the loader's path order applies (`MODEL_REGISTRY_FILE`, then `$XDG_CONFIG_HOME/model-registry/registry.json`, then `~/.config/model-registry/registry.json`).
 
-A first argument that starts with `{` or `-` is the ranking call. Any other word is `tasks`. An unknown word is `query-invalid`; the `fix` says to run `model-router tasks` or `model-router '<query>'`. The `check` subcommand arrives in a later release.
+A first argument that starts with `{` or `-` is the ranking call. Any other word is `tasks` or `check`. An unknown word is `query-invalid`; the `fix` says to run `model-router tasks`, `model-router check`, or `model-router '<query>'`.
 
 The answer is one JSON line on stdout, also when no route survives. `model-router tasks` prints one JSON line: the task list, or `[]` when the registry has none. Errors print as one JSON line on stderr: `{"error":{"code":"...","message":"...","fix":"...","field":"...","problems":[]}}`. A loader error keeps model-registry's own envelope, with `path` instead of `field`.
 
@@ -29,7 +32,7 @@ The answer is one JSON line on stdout, also when no route survives. `model-route
 | 0 | an answer with at least one route, or the task list printed |
 | 2 | invalid query, flag or subcommand (`query-invalid`) |
 | 3 | an answer with no route; the answer is still printed |
-| 4 | the registry cannot be loaded, or its router section is invalid |
+| 4 | the registry or its router section, or the config file, failed to load |
 | 1 | an internal fault (`internal-error`) |
 
 ## The query
@@ -39,8 +42,8 @@ The answer is one JSON line on stdout, also when no route survives. `model-route
 | `task` | string | none | a name declared in `registry.tasks`; a task the registry does not declare warns `task-unranked` and ranks by `router.rank` |
 | `minimums` | rating name to number | none | inline floors that replace per rating at the query's stakes; `minimums: {}` states no floor explicitly |
 | `needs` | list of strings | `[]` | adds to the task's needs when a task is named |
-| `effort` | string | none | parses; this release does not resolve effort levels. Without a task it warns `effort-unapplied`; with a task the query's effort replaces the task's level when effort resolution ships |
-| `pin` | route label | none | parses; this release warns `pin-unapplied` |
+| `effort` | string | `effort.default` in `config.json` (medium) | the requested level. An off-ladder value warns `effort-off-ladder` and the default is used |
+| `pin` | route label | none | placed first with `placedBy: "pin"` and `floor: "skipped"` when the label exists and the route passed the hard limits; a non-surviving pin warns `pin-unused` (hard-limit code) or `pin-unknown` (label not in the registry). Needs `task` or `minimums` |
 | `stakes` | `low`, `normal`, `high` | `normal` | selects the task's floor set; no effect on an inline-only need |
 | `prefer` | `cost`, `speed` | `cost` | how clearing routes are ordered |
 | `privacy` | `normal`, `secret` | `normal` | `secret` keeps only `privacyEligible` routes |
@@ -55,9 +58,31 @@ A named task whose name is in `registry.tasks` resolves the query against the ta
 
 - `minimums` replaces the task's floor for each rating it names, at the query's stakes.
 - `needs` adds to the task's needs.
-- `effort` is parsed and echoed on the applied query; this release resolves no effort levels, so neither the task's level nor the query's reaches a route.
+- `effort` is parsed and echoed on the applied query; effort resolution then applies it (see below).
 
 The order list is the task's `rank`. A misspelled task in the registry falls through to `router.rank` and adds the `task-unranked` warning.
+
+### Resolving effort
+
+The requested level follows this order: a policy route's `effort` when it names one, else the query's `effort`, else the task's `effort`, else `effort.default` in `config.json`. The model then layers its limits on top:
+
+- A model's `fixedEffort` replaces the requested level.
+- A model's `maxEffort` caps the level. A lowered level adds the `effort-above-max` warning.
+- `effort.ceiling` from `config.json` caps the level last, including a level named by a task, a pin, a policy or a query. A lowered level adds the `effort-ceiling` warning. It is never an error.
+- The router never emits `max` under the default ceiling.
+- A route carries no `effort` only when no level was known.
+
+### Placing the pin
+
+When the query names a route label, the pin is placed ahead of the policy and ranked routes:
+
+- The pin is used when the label exists in the registry and the route passed every hard limit. The pin route appears first with `placedBy: "pin"` and `floor: "skipped"`, then the rest of the answer follows without it.
+- A non-surviving pin keeps the fallback ranking. `pin.used` is `false` and `pin.reason` names the cause: a hard-limit code (`privacy-secret-not-eligible`, `family-excluded-by-query`, `needs-not-satisfied`) or `unknown-label`. A `pin-unused` or `pin-unknown` warning names the label.
+- The answer's `pin` field is `null` when the query has no pin.
+
+### `config.json`
+
+The router reads its `config.json` for `effort.ceiling` and `effort.default`. The path order is `--config <path>`, `MODEL_ROUTER_CONFIG`, then `$XDG_CONFIG_HOME/model-router/config.json`. When no file is at the XDG path, every default applies and no warning is added. An explicit path that does not exist, or an invalid file, is `config-invalid`. Every key is OPTIONAL, and the schema is closed: an unknown key is `config-invalid`; `$schema` is allowed for editor support. A default above the ceiling is `config-invalid`. The file holds no registry path and no Jev key; the key comes from `TYPESAFE_API_KEY`.
 
 ### Resolving the policy
 
@@ -68,15 +93,17 @@ The policy's routes come before the ranked routes, in written order, with `place
 ## The ranking
 
 1. Load the registry and validate the router sections: `router`, `tasks`, `policy`. `router.rank` is required, `tasks` and `policy` are optional. Any problem is `registry-sections-invalid`.
-2. Validate the query.
-3. Resolve the task. Apply inline `minimums` over the task's floor at the query's stakes. Apply inline `needs` over the task's needs. Inline `effort` replaces the task's level.
-4. Apply the hard limits in order: `privacy: secret` (routes without `privacyEligible: true`), `excludeFamilies`, `needs`. A removed route lands in `removed` with one reason.
-5. Place the policy routes. A route that a hard limit removed stays in `removed` with its hard-limit reason, and a `policy-route-removed` warning names the policy. No route appears twice.
-6. Apply the floors: a route whose model meets every floor in `minimums` clears; everything else is below. A model with no value for a floor's rating counts as below.
-7. Sort. Clearing routes order by cost (higher rating, so cheaper, first), then the rank in force (the task's `rank` or `router.rank` when no task resolves), then the model's route order, then file order; with `prefer: speed`, response time comes first. Routes below a floor order by the rank in force, then cost, then route order, then file order. `minimums: {}` states no floor explicitly: every route clears and orders by that clearing order. A query naming a task the registry does not declare, with no floor, orders every route most capable first, never cheapest first; with `minimums` floors, it uses the orders above. A missing value sorts below every route that has it.
-8. Build the answer: `contract`, `routerVersion`, `registryDigest`, the query as applied, `pin: null`, the ordered `routes`, `removed`, `warnings`, `availabilityNote: null`, `describe: null`.
+2. Load `config.json` (or fall through to the documented defaults). An explicit path that does not exist or an invalid file is `config-invalid`.
+3. Validate the query.
+4. Resolve the task. Apply inline `minimums` over the task's floor at the query's stakes. Apply inline `needs` over the task's needs. The task's effort and the query's effort feed step 7.
+5. Apply the hard limits in order: `privacy: secret` (routes without `privacyEligible: true`), `excludeFamilies`, `needs`. A removed route lands in `removed` with one reason.
+6. Place the pin. A used pin goes first with `placedBy: "pin"` and `floor: "skipped"`. A non-surviving pin keeps the fallback ranking with `pin.used: false` and a reason in `pin.reason`.
+7. Place the policy routes. A route that a hard limit removed stays in `removed` with its hard-limit reason, and a `policy-route-removed` warning names the policy. No route appears twice.
+8. Sort the rest. Clearing routes order by cost (higher rating, so cheaper, first), then the rank in force (the task's `rank` or `router.rank` when no task resolves), then the model's route order, then file order; with `prefer: speed`, response time comes first. Routes below a floor order by the rank in force, then cost, then route order, then file order. `minimums: {}` states no floor explicitly: every route clears and orders by that clearing order. A query naming a task the registry does not declare, with no floor, orders every route most capable first, never cheapest first; with `minimums` floors, it uses the orders above. A missing value sorts below every route that has it.
+9. Resolve effort for each route. The requested level is the policy route's `effort` when stated, else the query's, else the task's, else `effort.default`. The model's `fixedEffort` replaces, `maxEffort` caps (with a warning), and `effort.ceiling` caps last (with a warning).
+10. Build the answer: `contract`, `routerVersion`, `registryDigest`, the query as applied, `pin`, the ordered `routes`, `removed`, `warnings`, `availabilityNote: null`, `describe: null`.
 
-Each answer route carries `label`, `model`, `harness`, `modelId`, `provider` (when set), `hosted`, `family`, `meter` (when set), `placedBy` (`"pin"`, `"policy"` or `"rank"`), `policy` (the policy's name, only when `placedBy` is `"policy"`), `floor` (`"clears"`, `"below"` or `"skipped"`), `availability` (`unknown` for metered routes, `unmetered` otherwise, because this release reads no availability document) and `reasons`. Routes below a floor carry one `floor-not-met` reason per failed floor.
+Each answer route carries `label`, `model`, `harness`, `modelId`, `provider` (when set), `effort` (when a level is known), `hosted`, `family`, `meter` (when set), `placedBy` (`"pin"`, `"policy"` or `"rank"`), `policy` (the policy's name, only when `placedBy` is `"policy"`), `floor` (`"clears"`, `"below"` or `"skipped"`), `availability` (`unknown` for metered routes, `unmetered` otherwise, because this release reads no availability document) and `reasons`. Routes below a floor carry one `floor-not-met` reason per failed floor.
 
 The same registry and the same query always give the same answer.
 
@@ -90,8 +117,12 @@ The RFC names the error codes; these warning and reason codes are this package's
 | `rating-unknown` | warnings | a minimum names a rating the registry does not declare |
 | `capability-unknown` | warnings | a need names a capability the registry does not declare |
 | `family-unknown` | warnings | an excluded family is not in the registry |
-| `effort-unapplied` | warnings | the query names an effort without a task; this release does not resolve effort levels |
-| `pin-unapplied` | warnings | the query names a pin this release does not place |
+| `effort-off-ladder` | warnings | the query's `effort` is not on the ladder; the actual fallback source (task effort or `effort.default`) applies |
+| `effort-fixed-lowering` | warnings | the requested level was lowered by the model's `fixedEffort` |
+| `effort-above-max` | warnings | the requested level was lowered by the model's `maxEffort` |
+| `effort-ceiling` | warnings | the requested level was lowered by `effort.ceiling` in `config.json` |
+| `pin-unknown` | warnings | the query's pin is not in the registry |
+| `pin-unused` | warnings | the query's pin was removed by a hard limit; the warning names the limit code |
 | `policy-none` | warnings | the query stated a `spec` (`open` or `settled`) and no policy matched |
 | `local-or-nothing` | warnings | `privacy: secret` removed every route; the work runs locally or not at all |
 | `policy-route-removed` | warnings | a hard limit removed a route the matching policy names; the warning names the policy and the route |
@@ -102,7 +133,7 @@ The RFC names the error codes; these warning and reason codes are this package's
 
 ## Registry-section problem codes
 
-A `registry-sections-invalid` error carries one problem per finding in `problems[]`. These are the codes this package emits:
+A `registry-sections-invalid` error carries one problem per finding in `problems[]`. These are the codes this package emits for the router sections:
 
 | Code | Cause |
 |---|---|
@@ -154,6 +185,7 @@ A `registry-sections-invalid` error carries one problem per finding in `problems
 | `policy-route-effort-fixed-mismatch` | a `policy` route's `effort` differs from the model's `fixedEffort` |
 | `policy-route-effort-above-max` | a `policy` route's `effort` is above the model's `maxEffort` |
 | `policy-route-field-unknown` | a `policy` route carries a field other than `route` and `effort` |
+| `policy-route-duplicate` | a `policy` route names the same label more than once |
 | `policy-reason-missing` | a `policy` entry has no `reason` |
 | `policy-reason-not-string` | a `policy` entry's `reason` is not a string |
 | `policy-spec-invalid` | a `policy` entry's `spec` is not `settled` |
@@ -161,17 +193,36 @@ A `registry-sections-invalid` error carries one problem per finding in `problems
 | `policy-field-unknown` | a `policy` entry carries a field other than the policy fields |
 | `policy-tie` | two policy entries match the same query at the same level |
 
+## Config problem codes
+
+A `config-invalid` error carries one problem per finding in `problems[]`. These are the codes this package emits for `config.json`:
+
+| Code | Cause |
+|---|---|
+| `config-not-object` | the file is not a JSON object |
+| `config-key-unknown` | a top-level field other than `effort` and `$schema` |
+| `config-effort-not-object` | `effort` is not a JSON object |
+| `config-effort-ceiling-invalid` | `effort.ceiling` is not a ladder level |
+| `config-effort-default-invalid` | `effort.default` is not a ladder level |
+| `config-effort-key-unknown` | a field in `effort` other than `ceiling` and `default` |
+| `config-effort-default-above-ceiling` | `effort.default` is above `effort.ceiling` |
+
 ## Library
 
 ```ts
 import { listTasks, rank, RouterError } from "@dungle-scrubs/model-router";
 
-const answer = rank({ task: "task-a", stakes: "normal" }, { registry: "registry.json" });
+const answer = rank(
+  { task: "task-a", stakes: "normal" },
+  { registry: "registry.json", config: "config.json" },
+);
 answer.routes[0]?.label;       // "model-c@harness-x"
 answer.routes[0]?.placedBy;    // "policy"
 answer.routes[0]?.policy;      // "policy-a"
 answer.routes[0]?.floor;       // "skipped"
-answer.registryDigest;         // "sha256:<hex>"
+answer.routes[0]?.effort;      // "high" (resolved through the model limits and config)
+answer.pin;                   // null without a pin, else { label, used, reason }
+answer.registryDigest;        // "sha256:<hex>"
 
 const tasks = listTasks({ registry: "registry.json" });
 // [{ name, description }, ...] in file order, or []
@@ -179,11 +230,11 @@ const tasks = listTasks({ registry: "registry.json" });
 // A path, or a LoadedRegistry from model-registry's loadRegistry, so several
 // calls share one load and one digest:
 const loaded = loadRegistry({ path: "registry.json" });
-rank({ task: "task-a", stakes: "normal" }, { registry: loaded });
+rank({ task: "task-a", stakes: "normal" }, { registry: loaded, config: { effort: { default: "low" } } });
 listTasks({ registry: loaded });
 ```
 
-`rank` and `listTasks` are synchronous and pure over their inputs. They throw `RouterError` (`query-invalid`, exit 2; `registry-sections-invalid`, exit 4) and rethrow model-registry's `RegistryError` unchanged. The loader and the label builder are not re-exported; import them from `@dungle-scrubs/model-registry`. The package ships `query.schema.json` and `answer.schema.json`: the query schema rejects undefined fields, the answer schema allows them.
+`rank` and `listTasks` are synchronous and pure over their inputs. They throw `RouterError` (`query-invalid`, exit 2; `registry-sections-invalid`, exit 4; `config-invalid`, exit 4) and rethrow model-registry's `RegistryError` unchanged. The loader and the label builder are not re-exported; import them from `@dungle-scrubs/model-registry`. The package ships `query.schema.json` and `answer.schema.json`: the query schema rejects undefined fields, the answer schema allows them.
 
 ## Development
 

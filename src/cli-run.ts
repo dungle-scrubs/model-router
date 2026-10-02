@@ -1,8 +1,10 @@
 import { readFileSync } from "node:fs";
-import { RegistryError } from "@dungle-scrubs/model-registry";
+import { loadRegistry, RegistryError } from "@dungle-scrubs/model-registry";
 import { Command, CommanderError } from "commander";
+import { type LoadedConfig, loadConfig } from "./config.js";
 import { RouterError } from "./error.js";
 import { listTasks, rank } from "./rank.js";
+import { validateRouterSections } from "./sections.js";
 import type { RouterErrorCode } from "./types.js";
 import { ROUTER_VERSION } from "./version.js";
 
@@ -18,14 +20,14 @@ Exit codes:
   0  an answer with at least one route (rank call); or tasks printed
   2  invalid query, flag or subcommand (query-invalid)
   3  an answer with no route; the answer is still printed
-  4  the registry or its router section failed to load
+  4  the registry or its router section, or the config file, failed to load
   1  an internal fault (internal-error)`;
 
 const USAGE_FIX = "Run model-router --help for the ranking call and its options.";
 const NO_QUERY_FIX =
   "Run model-router '<query>' with a JSON query object, or pass - to read the query from stdin.";
 const TASKS_FIX =
-  "Run model-router tasks to print the registry's task list, or model-router '<query>' to rank.";
+  "Run model-router tasks to print the registry's task list, or model-router check, or model-router '<query>' to rank.";
 const INTERNAL_FIX = "Report this failure together with the command you ran.";
 
 export interface CliSink {
@@ -67,6 +69,34 @@ function routerExitCode(code: RouterErrorCode): number {
   return code === "query-invalid" ? EXIT_QUERY_INVALID : EXIT_REGISTRY_FAILURE;
 }
 
+function resolveConfigOption(configValues: readonly string[]): string | undefined {
+  if (configValues.length > 1) {
+    throw queryInvalid(
+      "config",
+      "the --config option was given more than once.",
+      "Give model-router exactly one --config path.",
+    );
+  }
+  const explicit = configValues[0];
+  if (explicit === "") {
+    throw queryInvalid(
+      "config",
+      "the --config option was given an empty path.",
+      "Give --config a non-empty path to a config file.",
+    );
+  }
+  return explicit;
+}
+
+function addConfigOption(command: Command): Command {
+  return command.option(
+    "--config <path>",
+    "path to the config.json file",
+    (value: string, previous: string[]) => [...previous, value],
+    [],
+  );
+}
+
 function queryInvalid(field: string, message: string, fix: string): RouterError {
   return new RouterError({ code: "query-invalid", field, fix, message, problems: [] });
 }
@@ -99,6 +129,26 @@ function addRegistryOption(command: Command): Command {
   );
 }
 
+/** Resolve the registry the way the CLI does: an explicit `--registry`
+ * path uses the file the caller chose, an absent path uses the loader's path
+ * order. The check command needs both the digest and the resolved path,
+ * so it calls the loader directly with the right options. */
+function loadRegistryOption(explicit: string): ReturnType<typeof loadRegistry> {
+  return explicit === "" ? loadRegistry() : loadRegistry({ path: explicit });
+}
+
+/** Resolve the config the way the CLI does: an explicit `--config` path
+ * uses the file the caller chose, an absent option falls through to the
+ * documented env path order. The same call works for rank and check, so
+ * both go through this helper. */
+function loadConfigOption(explicit: string | undefined): LoadedConfig {
+  return loadConfig(
+    explicit === undefined
+      ? { env: process.env as Record<string, string | undefined> }
+      : { explicitPath: explicit },
+  );
+}
+
 export function runCli(argv: readonly string[], io: Partial<CliIo> = {}): number {
   const stdout = io.stdout ?? process.stdout;
   const stderr = io.stderr ?? process.stderr;
@@ -122,9 +172,12 @@ export function runCli(argv: readonly string[], io: Partial<CliIo> = {}): number
   });
 
   addRegistryOption(program);
+  addConfigOption(program);
 
   const tasksCommand = addRegistryOption(
-    new Command("tasks").description("Print the registry's task list as one JSON line."),
+    addConfigOption(
+      new Command("tasks").description("Print the registry's task list as one JSON line."),
+    ),
   );
   // Commander 15 does not inherit the root's exitOverride or output sinks
   // through addCommand: configure the child the same way, so its parser
@@ -137,28 +190,97 @@ export function runCli(argv: readonly string[], io: Partial<CliIo> = {}): number
     writeErr: () => {},
   });
   tasksCommand.action(function (this: Command) {
-    const options = this.optsWithGlobals() as { registry?: string[] };
-    const explicit = resolveRegistryOption(options.registry ?? []);
-    const tasks = listTasks(explicit === "" ? {} : { registry: explicit });
+    const options = this.optsWithGlobals() as { registry?: string[]; config?: string[] };
+    const explicitRegistry = resolveRegistryOption(options.registry ?? []);
+    const configValues = options.config ?? [];
+    // The command --config takes no value: tasks prints the registry's
+    // task list and never reads the config, so a config flag here is
+    // exit 2 with the query-invalid envelope.
+    if (configValues.length > 0) {
+      throw queryInvalid(
+        "config",
+        "the --config option does not apply to the tasks subcommand.",
+        "Run model-router check or model-router '<query>' to use --config.",
+      );
+    }
+    const tasks = listTasks(explicitRegistry === "" ? {} : { registry: explicitRegistry });
     stdout.write(`${JSON.stringify(tasks)}\n`);
     answerExit = EXIT_SUCCESS;
   });
   program.addCommand(tasksCommand);
 
-  program.argument("[query]", "the query as a JSON object, or - to read it from stdin");
-  program.action((query: string | undefined, options: { registry?: string[] }) => {
-    const explicit = resolveRegistryOption(options.registry ?? []);
-    if (query === undefined) {
-      throw queryInvalid("query", "no query argument was given.", NO_QUERY_FIX);
-    }
-    if (query !== "-" && !query.startsWith("{")) {
-      throw queryInvalid("query", `unknown command ${JSON.stringify(query)}.`, TASKS_FIX);
-    }
-    const raw = query === "-" ? readStdin() : query;
-    const answer = rank(raw, explicit === "" ? {} : { registry: explicit });
-    stdout.write(`${JSON.stringify(answer)}\n`);
-    answerExit = answer.routes.length === 0 ? EXIT_NO_ROUTE : EXIT_SUCCESS;
+  const checkCommand = addRegistryOption(
+    addConfigOption(
+      new Command("check").description(
+        "Load the registry and config, then print their paths and the registry digest.",
+      ),
+    ),
+  );
+  // Commander 15 does not inherit the root's exitOverride or output sinks
+  // through addCommand: configure the child the same way, so its parser
+  // errors throw back to the shared catch instead of calling process.exit,
+  // and its help reaches stdout through the same sink.
+  checkCommand.exitOverride().configureOutput({
+    writeOut: (text) => {
+      stdout.write(text);
+    },
+    writeErr: () => {},
   });
+  checkCommand.action(function (this: Command) {
+    const options = this.optsWithGlobals() as {
+      registry?: string[];
+      config?: string[];
+    };
+    const explicitRegistry = resolveRegistryOption(options.registry ?? []);
+    const explicitConfig = resolveConfigOption(options.config ?? []);
+    // The check command runs no availability source and makes no Jev call:
+    // it loads the registry (path resolution and digest), validates the
+    // router sections the same way rank and listTasks do, then loads the
+    // config. Any of those failures is exit 4.
+    const loaded = loadRegistryOption(explicitRegistry);
+    validateRouterSections(loaded);
+    const config = loadConfigOption(explicitConfig);
+    stdout.write(
+      `${JSON.stringify({
+        configPath: config.configPath,
+        registryDigest: loaded.digest,
+        registryPath: loaded.path,
+      })}\n`,
+    );
+    answerExit = EXIT_SUCCESS;
+  });
+  program.addCommand(checkCommand);
+
+  program.argument("[query]", "the query as a JSON object, or - to read it from stdin");
+  program.action(
+    (query: string | undefined, options: { registry?: string[]; config?: string[] }) => {
+      const explicitRegistry = resolveRegistryOption(options.registry ?? []);
+      const explicitConfig = resolveConfigOption(options.config ?? []);
+      if (query === undefined) {
+        throw queryInvalid("query", "no query argument was given.", NO_QUERY_FIX);
+      }
+      if (query !== "-" && !query.startsWith("{")) {
+        throw queryInvalid("query", `unknown command ${JSON.stringify(query)}.`, TASKS_FIX);
+      }
+      const raw = query === "-" ? readStdin() : query;
+      // The config option goes through the same loader the check command
+      // uses. When the caller leaves it off, rank's documented env path
+      // order applies (process.env read by the loader itself). The
+      // library's `config` option is a path string or a plain settings
+      // object: a loader that found a file passes the path so rank can
+      // re-read it through the same loader, and a loader that fell
+      // through to defaults passes the validated object directly.
+      const config = loadConfigOption(explicitConfig);
+      const configOption = config.configPath ?? config.config;
+      const rankOptions: Parameters<typeof rank>[1] =
+        explicitRegistry === ""
+          ? { config: configOption }
+          : { registry: explicitRegistry, config: configOption };
+      const answer = rank(raw, rankOptions);
+      stdout.write(`${JSON.stringify(answer)}\n`);
+      answerExit = answer.routes.length === 0 ? EXIT_NO_ROUTE : EXIT_SUCCESS;
+    },
+  );
 
   try {
     program.parse(argv, { from: "user" });
