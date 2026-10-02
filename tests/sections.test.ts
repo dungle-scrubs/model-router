@@ -819,6 +819,52 @@ describe("validateRouterSections tasks and policy", () => {
     });
   });
 
+  test("a policy route with effort above a route whose provider is an empty string is invalid", async () => {
+    // The label of a route with provider "" keeps the trailing slash
+    // ("model-a@harness-x/"); validation must read it from the loaded
+    // route index, not rebuild it and lose the empty provider.
+    const error = withPolicy(
+      {
+        "policy-a": {
+          task: "task-a",
+          stakes: ["normal"],
+          routes: [{ route: "model-a@harness-x/", effort: "high" }],
+          reason: "r",
+        },
+      },
+      {
+        tasks: {
+          "task-a": {
+            description: "Code.",
+            minimums: { low: { coding: 6 }, normal: { coding: 7 }, high: { coding: 8 } },
+            rank: ["coding"],
+          },
+        },
+        models: {
+          "model-a": {
+            family: "family-a",
+            maxEffort: "low",
+            ratings: { coding: 7 },
+            routes: [
+              {
+                harness: "harness-x",
+                modelId: "model-id-a",
+                provider: "",
+                hosted: true,
+              },
+            ],
+          },
+        },
+      },
+    );
+    expect(error.problems.map((problem) => problem.code)).toEqual([
+      "policy-route-effort-above-max",
+    ]);
+    expect(error.problems[0]?.message).toBe(
+      'the policy "policy-a" route "model-a@harness-x/" effort "high" is above the model\'s maxEffort "low"',
+    );
+  });
+
   test("a policy route carrying an unknown field is invalid", async () => {
     const error = withPolicy(
       {

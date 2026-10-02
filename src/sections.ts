@@ -437,7 +437,6 @@ function validatePolicy(
   }
 
   const declaredRoutes = loaded.routes;
-  const modelsByRoute = collectModelsByRoute(loaded);
   const policiesMap = nullRecord<PolicyEntry>();
 
   for (const [policyName, policyRaw] of Object.entries(raw)) {
@@ -550,7 +549,10 @@ function validatePolicy(
           }
         }
         if (typeof routeLabel === "string" && Object.hasOwn(declaredRoutes, routeLabel)) {
-          const modelKey = modelsByRoute.get(routeLabel);
+          // The loader's route index is the one label authority: it holds the
+          // exact label (including a present-but-empty provider) and the
+          // model that owns the route.
+          const modelKey = declaredRoutes[routeLabel]?.model;
           if (modelKey !== undefined) {
             const model = loaded.registry.models[modelKey];
             if (model !== undefined) {
@@ -701,17 +703,6 @@ function detectPolicyTies(policies: PoliciesMap, problems: RouterProblem[]): voi
       });
     }
   }
-}
-
-function collectModelsByRoute(loaded: LoadedRegistry): Map<string, string> {
-  const map = new Map<string, string>();
-  for (const [modelKey, model] of Object.entries(loaded.registry.models)) {
-    for (const route of model.routes) {
-      const label = `${modelKey}@${route.harness}${route.provider ? `/${route.provider}` : ""}`;
-      map.set(label, modelKey);
-    }
-  }
-  return map;
 }
 
 function exceedsLadder(value: string, ceiling: string): boolean {
