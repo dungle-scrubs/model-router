@@ -121,3 +121,19 @@ describe("availability edge contracts", () => {
     ).toBe("unknown");
   });
 });
+
+describe("future timestamp boundary", () => {
+  test("even one millisecond after the read is stale", () => {
+    const result = parseAvailabilityDocument(
+      {
+        format: 1,
+        generatedAt: "2026-10-01T12:00:00.001Z",
+        entries: [{ meter: "meter-a", status: "ok" }],
+      },
+      { maxAgeSeconds: 300, now: new Date("2026-10-01T12:00:00Z") },
+    );
+    expect(result.note?.code).toBe("availability-reading-stale");
+    expect(result.note?.message).toBe("the availability document has a generatedAt in the future");
+    expect(result.entries).toEqual([]);
+  });
+});

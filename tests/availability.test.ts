@@ -1260,18 +1260,21 @@ describe("CLI availability flags", () => {
     expect(answer.warnings.map((w) => w.code)).not.toContain("meter-no-reading");
   });
 
-  test("--availability-file with a missing path exits 0 with availability-file-unreadable", () => {
-    const result = runBuiltCli([
-      '{"minimums":{"coding":5}}',
-      "--registry",
-      FULL,
-      "--availability-file",
-      "./does-not-exist.json",
-    ]);
-    expect(result.exitCode).toBe(0);
-    const answer = JSON.parse(result.stdout);
-    expectValidAnswer(answer);
-    expect(answer.availabilityNote?.code).toBe("availability-file-unreadable");
+  test("--availability-file with a missing path exits 0 with availability-file-unreadable", async () => {
+    await withTempDir(async (dir) => {
+      const result = runBuiltCli([
+        '{"minimums":{"coding":5}}',
+        "--registry",
+        FULL,
+        "--availability-file",
+        join(dir, "missing.json"),
+      ]);
+      expect(result.exitCode).toBe(0);
+      const answer = JSON.parse(result.stdout);
+      expectValidAnswer(answer);
+      expect(answer.availabilityNote?.code).toBe("availability-file-unreadable");
+      expect(answer.warnings.map((w) => w.code)).not.toContain("meter-no-reading");
+    });
   });
 
   test("--availability-file with a fresh document applies the readings (temp dir)", async () => {
