@@ -1,5 +1,18 @@
 export { defaultConfig, loadConfig, validateConfigObjectInput } from "./config.js";
+export { describe } from "./describe.js";
 export { RouterError } from "./error.js";
+export type {
+  JevAnswer,
+  JevChoiceAnswer,
+  JevChoiceQuestion,
+  JevNoulAnswer,
+  JevNoulQuestion,
+  JevQuestion,
+  JevResponse,
+  JevScoreAnswer,
+  JevScoreQuestion,
+} from "./jev.js";
+export { askJev, JevError } from "./jev.js";
 export { listTasks, rank } from "./rank.js";
 export type {
   Answer,
@@ -7,6 +20,12 @@ export type {
   AppliedQuery,
   AvailabilityValue,
   Coded,
+  DescribeBlock,
+  DescribeNeedAdded,
+  DescribeOptions,
+  DescribeResult,
+  DescribeTaskCandidate,
+  DescribeTaskReport,
   Floor,
   LoadedConfig,
   PinReport,

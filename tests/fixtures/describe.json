@@ -1,0 +1,89 @@
+{
+  "format": 1,
+  "ratings": {
+    "coding": "Writes and changes code to a spec.",
+    "taste": "Editorial judgment."
+  },
+  "capabilities": {
+    "browser": "Can drive a web browser.",
+    "repo-access": "Can read and change files in the workspace."
+  },
+  "router": {
+    "rank": ["coding", "taste"],
+    "questions": {
+      "browser": "Does the work described in the state require driving a web browser, meaning loading pages, clicking or reading a rendered DOM?",
+      "repo-access": "Does the work described in the state require reading or changing files in the workspace?"
+    }
+  },
+  "tasks": {
+    "task-a": {
+      "description": "Implements a change to code in a repository.",
+      "minimums": {
+        "low": { "coding": 5 },
+        "normal": { "coding": 6 },
+        "high": { "coding": 8 }
+      },
+      "rank": ["coding"],
+      "needs": ["repo-access"]
+    },
+    "task-b": {
+      "description": "Researches a question and reports the answer as text.",
+      "minimums": {
+        "low": { "coding": 4 },
+        "normal": { "coding": 5 },
+        "high": { "coding": 6 }
+      },
+      "rank": ["taste"]
+    }
+  },
+  "models": {
+    "model-a": {
+      "family": "family-a",
+      "ratings": {
+        "coding": 7,
+        "taste": 6
+      },
+      "routes": [
+        {
+          "harness": "harness-x",
+          "modelId": "model-id-a1",
+          "hosted": true,
+          "cost": 5,
+          "capabilities": ["browser", "repo-access"]
+        }
+      ]
+    },
+    "model-b": {
+      "family": "family-b",
+      "ratings": {
+        "coding": 9,
+        "taste": 4
+      },
+      "routes": [
+        {
+          "harness": "harness-x",
+          "modelId": "model-id-b1",
+          "hosted": true,
+          "cost": 8,
+          "capabilities": ["repo-access"]
+        }
+      ]
+    },
+    "model-c": {
+      "family": "family-a",
+      "ratings": {
+        "coding": 5,
+        "taste": 9
+      },
+      "routes": [
+        {
+          "harness": "harness-y",
+          "modelId": "model-id-c1",
+          "hosted": true,
+          "cost": 3,
+          "capabilities": ["browser", "repo-access"]
+        }
+      ]
+    }
+  }
+}

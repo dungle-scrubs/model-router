@@ -26,10 +26,10 @@ interface RunResult {
   stderr: () => string;
 }
 
-function run(args: string[], stdin?: string): RunResult {
+async function run(args: string[], stdin?: string): Promise<RunResult> {
   const out = captureStream();
   const err = captureStream();
-  const exitCode = runCli(args, {
+  const exitCode = await runCli(args, {
     stdout: out.stream,
     stderr: err.stream,
     readStdin: () => {
@@ -47,8 +47,8 @@ function errorEnvelope(text: () => string): { error: Record<string, unknown> } {
 }
 
 describe("the ranking call", () => {
-  test("exits 0 and prints one JSON answer line on stdout", () => {
-    const result = run(['{"minimums":{"coding":5}}', "--registry", FULL]);
+  test("exits 0 and prints one JSON answer line on stdout", async () => {
+    const result = await run(['{"minimums":{"coding":5}}', "--registry", FULL]);
     expect(result.exitCode).toBe(0);
     expect(result.stderr()).toBe("");
     const lines = result.stdout().split("\n");
@@ -60,8 +60,8 @@ describe("the ranking call", () => {
     expect(answer.routerVersion).toBe(packageJson.version);
   });
 
-  test("the answer carries the sha256 of the registry file", () => {
-    const result = run(['{"minimums":{"coding":5}}', "--registry", FULL]);
+  test("the answer carries the sha256 of the registry file", async () => {
+    const result = await run(['{"minimums":{"coding":5}}', "--registry", FULL]);
     const answer = JSON.parse(result.stdout());
     expectValidAnswer(answer);
     expect(answer.registryDigest).toBe(
@@ -69,16 +69,20 @@ describe("the ranking call", () => {
     );
   });
 
-  test("reads the query from stdin with '-'", () => {
-    const result = run(["-", "--registry", FULL], '{"minimums":{"coding":5}}');
+  test("reads the query from stdin with '-'", async () => {
+    const result = await run(["-", "--registry", FULL], '{"minimums":{"coding":5}}');
     expect(result.exitCode).toBe(0);
     const answer = JSON.parse(result.stdout());
     expectValidAnswer(answer);
     expect(answer.routes.length).toBeGreaterThan(0);
   });
 
-  test("exits 3 and still prints the answer when every route is removed", () => {
-    const result = run(['{"minimums":{"coding":5},"needs":["telepathy"]}', "--registry", FULL]);
+  test("exits 3 and still prints the answer when every route is removed", async () => {
+    const result = await run([
+      '{"minimums":{"coding":5},"needs":["telepathy"]}',
+      "--registry",
+      FULL,
+    ]);
     expect(result.exitCode).toBe(3);
     const answer = JSON.parse(result.stdout());
     expectValidAnswer(answer);
@@ -86,8 +90,12 @@ describe("the ranking call", () => {
     expect(answer.removed.length).toBe(6);
   });
 
-  test("privacy: secret with nothing left exits 3 with the local-or-nothing warning", () => {
-    const result = run(['{"minimums":{"coding":5},"privacy":"secret"}', "--registry", MINIMAL]);
+  test("privacy: secret with nothing left exits 3 with the local-or-nothing warning", async () => {
+    const result = await run([
+      '{"minimums":{"coding":5},"privacy":"secret"}',
+      "--registry",
+      MINIMAL,
+    ]);
     expect(result.exitCode).toBe(3);
     const answer = JSON.parse(result.stdout());
     expectValidAnswer(answer);
@@ -99,8 +107,8 @@ describe("the ranking call", () => {
 });
 
 describe("usage failures exit 2 with query-invalid", () => {
-  test("no query argument", () => {
-    const result = run(["--registry", FULL]);
+  test("no query argument", async () => {
+    const result = await run(["--registry", FULL]);
     expect(result.exitCode).toBe(2);
     expect(result.stdout()).toBe("");
     expect(errorEnvelope(result.stderr).error).toEqual({
@@ -112,8 +120,8 @@ describe("usage failures exit 2 with query-invalid", () => {
     });
   });
 
-  test("an unknown word names itself and points at the ranking call", () => {
-    const result = run(["frobnicate", "--registry", FULL]);
+  test("an unknown word names itself and points at the ranking call", async () => {
+    const result = await run(["frobnicate", "--registry", FULL]);
     expect(result.exitCode).toBe(2);
     expect(errorEnvelope(result.stderr).error).toEqual({
       code: "query-invalid",
@@ -124,8 +132,8 @@ describe("usage failures exit 2 with query-invalid", () => {
     });
   });
 
-  test("an unknown flag is routed through the same envelope", () => {
-    const result = run(['{"minimums":{}}', "--registry", FULL, "--matrix"]);
+  test("an unknown flag is routed through the same envelope", async () => {
+    const result = await run(['{"minimums":{}}', "--registry", FULL, "--matrix"]);
     expect(result.exitCode).toBe(2);
     const error = errorEnvelope(result.stderr).error;
     expect(error.code).toBe("query-invalid");
@@ -133,14 +141,14 @@ describe("usage failures exit 2 with query-invalid", () => {
     expect(error.message).toContain("--matrix");
   });
 
-  test("two positional arguments", () => {
-    const result = run(['{"minimums":{}}', "extra", "--registry", FULL]);
+  test("two positional arguments", async () => {
+    const result = await run(['{"minimums":{}}', "extra", "--registry", FULL]);
     expect(result.exitCode).toBe(2);
     expect(errorEnvelope(result.stderr).error.code).toBe("query-invalid");
   });
 
-  test("--registry given twice", () => {
-    const result = run(["--registry", FULL, "--registry", MINIMAL, '{"minimums":{}}']);
+  test("--registry given twice", async () => {
+    const result = await run(["--registry", FULL, "--registry", MINIMAL, '{"minimums":{}}']);
     expect(result.exitCode).toBe(2);
     const error = errorEnvelope(result.stderr).error;
     expect(error.code).toBe("query-invalid");
@@ -148,8 +156,8 @@ describe("usage failures exit 2 with query-invalid", () => {
     expect(error.message).toBe("the --registry option was given more than once.");
   });
 
-  test("--registry given an empty path", () => {
-    const result = run(["--registry", "", '{"minimums":{}}']);
+  test("--registry given an empty path", async () => {
+    const result = await run(["--registry", "", '{"minimums":{}}']);
     expect(result.exitCode).toBe(2);
     const error = errorEnvelope(result.stderr).error;
     expect(error.message).toBe("the --registry option was given an empty path.");
@@ -158,8 +166,8 @@ describe("usage failures exit 2 with query-invalid", () => {
 });
 
 describe("query failures exit 2 with query-invalid", () => {
-  test("an undefined field", () => {
-    const result = run(['{"minimums":{},"tasl":"implement"}', "--registry", FULL]);
+  test("an undefined field", async () => {
+    const result = await run(['{"minimums":{},"tasl":"implement"}', "--registry", FULL]);
     expect(result.exitCode).toBe(2);
     expect(result.stdout()).toBe("");
     expect(errorEnvelope(result.stderr).error).toEqual({
@@ -171,8 +179,8 @@ describe("query failures exit 2 with query-invalid", () => {
     });
   });
 
-  test("a query with neither task nor minimums", () => {
-    const result = run(['{"privacy":"secret"}', "--registry", FULL]);
+  test("a query with neither task nor minimums", async () => {
+    const result = await run(['{"privacy":"secret"}', "--registry", FULL]);
     expect(result.exitCode).toBe(2);
     expect(errorEnvelope(result.stderr).error).toEqual({
       code: "query-invalid",
@@ -183,8 +191,8 @@ describe("query failures exit 2 with query-invalid", () => {
     });
   });
 
-  test("a query that is not valid JSON", () => {
-    const result = run(["{oops", "--registry", FULL]);
+  test("a query that is not valid JSON", async () => {
+    const result = await run(["{oops", "--registry", FULL]);
     expect(result.exitCode).toBe(2);
     const error = errorEnvelope(result.stderr).error;
     expect(error.code).toBe("query-invalid");
@@ -193,8 +201,12 @@ describe("query failures exit 2 with query-invalid", () => {
 });
 
 describe("registry failures exit 4", () => {
-  test("a registry without router.rank reports registry-sections-invalid with the line to add", () => {
-    const result = run(['{"minimums":{"coding":5}}', "--registry", fixturePath("no-router.json")]);
+  test("a registry without router.rank reports registry-sections-invalid with the line to add", async () => {
+    const result = await run([
+      '{"minimums":{"coding":5}}',
+      "--registry",
+      fixturePath("no-router.json"),
+    ]);
     expect(result.exitCode).toBe(4);
     expect(result.stdout()).toBe("");
     expect(errorEnvelope(result.stderr).error).toEqual({
@@ -213,8 +225,8 @@ describe("registry failures exit 4", () => {
     });
   });
 
-  test("a registry whose router section has no rank", () => {
-    const result = run([
+  test("a registry whose router section has no rank", async () => {
+    const result = await run([
       '{"minimums":{"coding":5}}',
       "--registry",
       fixturePath("missing-rank.json"),
@@ -229,7 +241,7 @@ describe("registry failures exit 4", () => {
   test("a missing registry file prints the loader's own envelope unchanged", async () => {
     await withTempDir(async (dir) => {
       const missing = resolve(dir, "nonexistent", "nope.json");
-      const result = run([`{"minimums":{"coding":5}}`, "--registry", missing]);
+      const result = await run([`{"minimums":{"coding":5}}`, "--registry", missing]);
       expect(result.exitCode).toBe(4);
       expect(result.stdout()).toBe("");
       const error = errorEnvelope(result.stderr).error;
@@ -243,8 +255,12 @@ describe("registry failures exit 4", () => {
     });
   });
 
-  test("a registry file that is not JSON prints the loader's own envelope", () => {
-    const result = run(['{"minimums":{"coding":5}}', "--registry", fixturePath("not-json.json")]);
+  test("a registry file that is not JSON prints the loader's own envelope", async () => {
+    const result = await run([
+      '{"minimums":{"coding":5}}',
+      "--registry",
+      fixturePath("not-json.json"),
+    ]);
     expect(result.exitCode).toBe(4);
     const error = errorEnvelope(result.stderr).error;
     expect(error.code).toBe("registry-unreadable");
@@ -258,7 +274,7 @@ describe("registry failures exit 4", () => {
       delete process.env.MODEL_REGISTRY_FILE;
       process.env.XDG_CONFIG_HOME = dir;
       try {
-        const result = run(['{"minimums":{"coding":5}}']);
+        const result = await run(['{"minimums":{"coding":5}}']);
         expect(result.exitCode).toBe(4);
         expect(errorEnvelope(result.stderr).error.code).toBe("registry-missing");
       } finally {
@@ -278,8 +294,8 @@ describe("registry failures exit 4", () => {
 });
 
 describe("help, version and environment", () => {
-  test("--help exits 0 and documents the exit codes", () => {
-    const result = run(["--help"]);
+  test("--help exits 0 and documents the exit codes", async () => {
+    const result = await run(["--help"]);
     expect(result.exitCode).toBe(0);
     expect(result.stderr()).toBe("");
     expect(result.stdout()).toContain("model-router");
@@ -294,17 +310,17 @@ describe("help, version and environment", () => {
     expect(result.stdout()).toContain("--registry <path>");
   });
 
-  test("--version prints the package version", () => {
-    const result = run(["--version"]);
+  test("--version prints the package version", async () => {
+    const result = await run(["--version"]);
     expect(result.exitCode).toBe(0);
     expect(result.stderr()).toBe("");
     expect(result.stdout()).toBe(`${packageJson.version}\n`);
   });
 
-  test("a broken stdin read reports an internal fault and exits 1", () => {
+  test("a broken stdin read reports an internal fault and exits 1", async () => {
     const out = captureStream();
     const err = captureStream();
-    const exitCode = runCli(["-", "--registry", FULL], {
+    const exitCode = await runCli(["-", "--registry", FULL], {
       stdout: out.stream,
       stderr: err.stream,
       readStdin: () => {
@@ -323,8 +339,8 @@ describe("help, version and environment", () => {
 });
 
 describe("the tasks subcommand", () => {
-  test("prints the task list as one JSON line on stdout and exits 0", () => {
-    const result = run(["tasks", "--registry", TASKS]);
+  test("prints the task list as one JSON line on stdout and exits 0", async () => {
+    const result = await run(["tasks", "--registry", TASKS]);
     expect(result.exitCode).toBe(0);
     expect(result.stderr()).toBe("");
     const lines = result.stdout().split("\n");
@@ -337,13 +353,13 @@ describe("the tasks subcommand", () => {
     ]);
   });
 
-  test("prints [] when the registry has no tasks section", () => {
-    const result = run(["tasks", "--registry", EMPTY]);
+  test("prints [] when the registry has no tasks section", async () => {
+    const result = await run(["tasks", "--registry", EMPTY]);
     expect(result.exitCode).toBe(0);
     expect(JSON.parse(result.stdout())).toEqual([]);
   });
 
-  test("exits 4 with registry-sections-invalid on the same problems as rank", () => {
+  test("exits 4 with registry-sections-invalid on the same problems as rank", async () => {
     let rankProblems: readonly unknown[] = [];
     try {
       rank({ task: "task-a" }, { registry: POLICY_BROKEN });
@@ -353,7 +369,7 @@ describe("the tasks subcommand", () => {
       rankProblems = (error as RouterError).problems;
     }
     expect(rankProblems.length).toBeGreaterThanOrEqual(5);
-    const result = run(["tasks", "--registry", POLICY_BROKEN]);
+    const result = await run(["tasks", "--registry", POLICY_BROKEN]);
     expect(result.exitCode).toBe(4);
     expect(result.stdout()).toBe("");
     const error = errorEnvelope(result.stderr).error;
@@ -361,16 +377,16 @@ describe("the tasks subcommand", () => {
     expect(error.problems).toEqual(rankProblems);
   });
 
-  test("exits 4 with registry-sections-invalid when router is missing", () => {
-    const result = run(["tasks", "--registry", fixturePath("no-router.json")]);
+  test("exits 4 with registry-sections-invalid when router is missing", async () => {
+    const result = await run(["tasks", "--registry", fixturePath("no-router.json")]);
     expect(result.exitCode).toBe(4);
     expect(errorEnvelope(result.stderr).error.code).toBe("registry-sections-invalid");
   });
 
-  test("a tasks subcommand parser failure returns 2 with the envelope instead of exiting", () => {
+  test("a tasks subcommand parser failure returns 2 with the envelope instead of exiting", async () => {
     // runCli must return, not process.exit: an embedding process keeps
     // control when the child command rejects an option.
-    const result = run(["tasks", "--matrix"]);
+    const result = await run(["tasks", "--matrix"]);
     expect(result.exitCode).toBe(2);
     expect(result.stdout()).toBe("");
     expect(errorEnvelope(result.stderr).error).toEqual({
@@ -382,23 +398,23 @@ describe("the tasks subcommand", () => {
     });
   });
 
-  test("tasks rejects --config with exit 2", () => {
+  test("tasks rejects --config with exit 2", async () => {
     // tasks prints the registry's task list and never reads config: the
     // flag has nothing to apply to, so the parser rejects it. The error
     // is exit 2 with the query-invalid envelope, so a caller can branch
     // on the same shape it uses for every other usage failure.
-    const result = run(["tasks", "--registry", TASKS, "--config", "./nope.json"]);
+    const result = await run(["tasks", "--registry", TASKS, "--config", "./nope.json"]);
     expect(result.exitCode).toBe(2);
     expect(result.stdout()).toBe("");
     const error = errorEnvelope(result.stderr).error;
     expect(error.code).toBe("query-invalid");
   });
 
-  test("tasks rejects --config when it is given before the subcommand", () => {
+  test("tasks rejects --config when it is given before the subcommand", async () => {
     // The CLI's parser fails the option whether it is given before or
     // after the subcommand. The brief states the check applies to both
     // orderings.
-    const result = run(["--config", "./nope.json", "tasks", "--registry", TASKS]);
+    const result = await run(["--config", "./nope.json", "tasks", "--registry", TASKS]);
     expect(result.exitCode).toBe(2);
     const error = errorEnvelope(result.stderr).error;
     expect(error.code).toBe("query-invalid");
@@ -406,8 +422,8 @@ describe("the tasks subcommand", () => {
 });
 
 describe("the check subcommand", () => {
-  test("prints configPath, registryPath and registryDigest, exits 0", () => {
-    const result = run(["check", "--registry", FULL]);
+  test("prints configPath, registryPath and registryDigest, exits 0", async () => {
+    const result = await run(["check", "--registry", FULL]);
     expect(result.exitCode).toBe(0);
     expect(result.stderr()).toBe("");
     const lines = result.stdout().split("\n");
@@ -420,7 +436,7 @@ describe("the check subcommand", () => {
     expect(payload.configPath).toBeNull();
   });
 
-  test("prints configPath: null when defaults apply and makes no Jev call", () => {
+  test("prints configPath: null when defaults apply and makes no Jev call", async () => {
     // The check subcommand must not call Jev or run any command: a Jev
     // call would either fail (no key) or set up the wrong type. The
     // absence of TYPESAFE_API_KEY only shows success is possible, so
@@ -429,7 +445,7 @@ describe("the check subcommand", () => {
     const savedKey = process.env.TYPESAFE_API_KEY;
     delete process.env.TYPESAFE_API_KEY;
     try {
-      const result = run(["check", "--registry", FULL]);
+      const result = await run(["check", "--registry", FULL]);
       expect(result.exitCode).toBe(0);
       expect(result.stderr()).toBe("");
       const payload = JSON.parse(result.stdout());
@@ -479,7 +495,7 @@ describe("the check subcommand", () => {
       // the call and the assertion fails.
       expect(cp.spawnSync).not.toHaveBeenCalled();
       expect(fetchSpy).not.toHaveBeenCalled();
-      const result = run(["check", "--registry", FULL]);
+      const result = await run(["check", "--registry", FULL]);
       expect(result.exitCode).toBe(0);
       expect(cp.spawnSync).not.toHaveBeenCalled();
       expect(cp.execSync).not.toHaveBeenCalled();
@@ -497,31 +513,31 @@ describe("the check subcommand", () => {
   test("an explicit --config path that exists prints it", async () => {
     await withTempDir(async (dir) => {
       const path = writeJson(dir, "config.json", { effort: { default: "low" } });
-      const result = run(["check", "--registry", FULL, "--config", path]);
+      const result = await run(["check", "--registry", FULL, "--config", path]);
       expect(result.exitCode).toBe(0);
       const payload = JSON.parse(result.stdout());
       expect(payload.configPath).toBe(path);
     });
   });
 
-  test("an explicit --config path that does not exist exits 4 with config-invalid", () => {
-    const result = run(["check", "--registry", FULL, "--config", "./nope.json"]);
+  test("an explicit --config path that does not exist exits 4 with config-invalid", async () => {
+    const result = await run(["check", "--registry", FULL, "--config", "./nope.json"]);
     expect(result.exitCode).toBe(4);
     expect(result.stdout()).toBe("");
     expect(errorEnvelope(result.stderr).error.code).toBe("config-invalid");
   });
 
-  test("a malformed registry exits 4 with the loader's envelope", () => {
-    const result = run(["check", "--registry", fixturePath("not-json.json")]);
+  test("a malformed registry exits 4 with the loader's envelope", async () => {
+    const result = await run(["check", "--registry", fixturePath("not-json.json")]);
     expect(result.exitCode).toBe(4);
     expect(errorEnvelope(result.stderr).error.code).toBe("registry-unreadable");
   });
 
-  test("check validates router sections and fails when the registry has no router section", () => {
+  test("check validates router sections and fails when the registry has no router section", async () => {
     // The check subcommand runs validateRouterSections. A registry without
     // a router section passes the loader, but the check command must
     // surface the missing router section as registry-sections-invalid.
-    const result = run(["check", "--registry", fixturePath("no-router.json")]);
+    const result = await run(["check", "--registry", fixturePath("no-router.json")]);
     expect(result.exitCode).toBe(4);
     expect(result.stdout()).toBe("");
     const error = errorEnvelope(result.stderr).error;
@@ -540,7 +556,7 @@ describe("the check subcommand", () => {
       expect(error).toBeInstanceOf(RouterError);
       rankProblems = (error as RouterError).problems;
     }
-    const result = run(["check", "--registry", POLICY_BROKEN]);
+    const result = await run(["check", "--registry", POLICY_BROKEN]);
     expect(result.exitCode).toBe(4);
     const error = errorEnvelope(result.stderr).error;
     expect(error.code).toBe("registry-sections-invalid");
@@ -569,22 +585,22 @@ describe("the check subcommand", () => {
           },
         },
       });
-      const result = run(["check", "--registry", path]);
+      const result = await run(["check", "--registry", path]);
       expect(result.exitCode).toBe(4);
       const error = errorEnvelope(result.stderr).error;
       expect(error.code).toBe("registry-sections-invalid");
     });
   });
 
-  test("a check parser failure exits 2 with the envelope instead of exiting", () => {
-    const result = run(["check", "--matrix"]);
+  test("a check parser failure exits 2 with the envelope instead of exiting", async () => {
+    const result = await run(["check", "--matrix"]);
     expect(result.exitCode).toBe(2);
     expect(result.stdout()).toBe("");
     expect(errorEnvelope(result.stderr).error.code).toBe("query-invalid");
   });
 
-  test("check --help exits 0 and prints the check help", () => {
-    const result = run(["check", "--help"]);
+  test("check --help exits 0 and prints the check help", async () => {
+    const result = await run(["check", "--help"]);
     expect(result.exitCode).toBe(0);
     expect(result.stdout()).toContain("check");
     expect(result.stdout()).toContain("--registry");
@@ -592,8 +608,8 @@ describe("the check subcommand", () => {
     expect(result.stderr()).toBe("");
   });
 
-  test("--help documents exit 4 as covering config failures too", () => {
-    const result = run(["--help"]);
+  test("--help documents exit 4 as covering config failures too", async () => {
+    const result = await run(["--help"]);
     expect(result.exitCode).toBe(0);
     expect(result.stdout()).toContain("4  the registry");
     expect(result.stdout()).toContain("config");
