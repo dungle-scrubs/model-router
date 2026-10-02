@@ -134,6 +134,33 @@ describe("the describe step's privacy gate", () => {
       fetchSpy.mockRestore();
     }));
 
+  test("the empty-text refusal carries its fix", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const error = await catchRouterError(
+        describeStep("   \n  ", '{"privacy":"normal"}', { registry: FIXTURE }),
+      );
+      expect(error.code).toBe("query-invalid");
+      expect(error.field).toBe("text");
+      expect(error.fix).toBe(
+        "Describe the work in the description file, or rank without the describe step.",
+      );
+    }));
+
+  test("the describe-private refusal carries its message, fix and field", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const error = await catchRouterError(
+        describeStep("some work", '{"privacy":"secret"}', { registry: FIXTURE }),
+      );
+      expect(error.code).toBe("describe-private");
+      expect(error.field).toBe("privacy");
+      expect(error.message).toBe(
+        "the describe step sends the work description to a hosted Jev model, so it never runs for privacy: secret work",
+      );
+      expect(error.fix).toBe(
+        "Run the describe step with privacy: normal, or rank a privacy: secret query without the describe step.",
+      );
+    }));
+
   test("a partial query with an unknown field is query-invalid before any request", async () =>
     withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
       const fetchSpy = vi.spyOn(globalThis, "fetch");
