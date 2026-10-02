@@ -186,6 +186,23 @@ describe("rank with inline minimums", () => {
     );
   });
 
+  test("a model whose rating exactly meets one floor but misses another has one reason, not two", () => {
+    const loaded = full();
+    // model-b has coding=5 and taste=4. Floor coding=5 (meets) and taste=5 (misses).
+    // Below-floor reasons: only taste, not coding.
+    const answer = rank({ minimums: { coding: 5, taste: 5 } }, { registry: loaded });
+    expectValidAnswer(answer);
+    const boundary = answer.routes.find((route) => route.label === "model-b@harness-x");
+    expect(boundary?.floor).toBe("below");
+    expect(boundary?.reasons).toEqual([
+      {
+        code: "floor-not-met",
+        field: '$.minimums["taste"]',
+        message: 'the model\'s rating for "taste" is 4, below the floor 5',
+      },
+    ]);
+  });
+
   test("a route with no cost sorts below every clearing route that has one", () => {
     const loaded = full();
     const answer = rank({ minimums: { coding: 6 } }, { registry: loaded });
@@ -219,7 +236,7 @@ describe("rank for a task this release does not rank", () => {
     expect(labels(answer)).toEqual(capabilityOrder);
     expect(answer.warnings.map((warning) => warning.code)).toEqual(["task-unranked"]);
     expect(answer.warnings[0]?.message).toBe(
-      'the task "ghost" was not ranked; this release ranks by router.rank only',
+      'the task "ghost" is not declared in the registry\'s tasks section; ranking by router.rank',
     );
     expect(answer.query.task).toBe("ghost");
   });
@@ -545,7 +562,7 @@ describe("rank warnings for fields this slice does not apply", () => {
       {
         code: "policy-none",
         message: 'the spec "settled" matched no policy; normal ranking was used',
-        fix: "Remove spec from the query, or add a matching policy when policies ship.",
+        fix: "Remove spec from the query, or add a policy matching the task, stakes and spec.",
       },
     ]);
     expect(answer.pin).toBeNull();
@@ -582,8 +599,9 @@ describe("rank warnings for fields this slice does not apply", () => {
     expect(answer.warnings).toEqual([
       {
         code: "task-unranked",
-        message: 'the task "implement" was not ranked; this release ranks by router.rank only',
-        fix: "State minimums for inline floors; ranking by task arrives in a later release.",
+        message:
+          'the task "implement" is not declared in the registry\'s tasks section; ranking by router.rank',
+        fix: "Correct the task name, or add the task to the registry's tasks section.",
       },
     ]);
     const inline = rank({ minimums: { coding: 5 } }, { registry: loaded });

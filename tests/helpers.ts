@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadRegistry } from "@dungle-scrubs/model-registry";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect } from "vitest";
 import answerSchema from "../answer.schema.json" with { type: "json" };
@@ -56,6 +57,10 @@ export function runBuiltCli(
 
 export function fixturePath(name: string): string {
   return join(fixturesDir, name);
+}
+
+export function loadLoaded(path: string) {
+  return loadRegistry({ path });
 }
 
 export function sha256Hex(bytes: Buffer | string): string {

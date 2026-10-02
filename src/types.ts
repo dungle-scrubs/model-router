@@ -60,7 +60,9 @@ export type PinReport = {
   readonly used: boolean;
 };
 
-/** One ranked route in the answer: identity, run facts and placement. */
+/** One ranked route in the answer: identity, run facts and placement. A
+ * policy-placed route names its policy in `policy`; every other placement
+ * omits the field. */
 export type AnswerRoute = {
   readonly availability: AvailabilityValue;
   readonly effort?: EffortLevel;
@@ -73,6 +75,7 @@ export type AnswerRoute = {
   readonly model: string;
   readonly modelId: string;
   readonly placedBy: PlacedBy;
+  readonly policy?: string;
   readonly provider?: string;
   readonly reasons: readonly Coded[];
 };
@@ -113,7 +116,45 @@ export interface RankOptions {
   readonly registry?: string | LoadedRegistry;
 }
 
+/** A task entry validated from the registry's tasks section. */
+export interface TaskEntry {
+  readonly description: string;
+  readonly effort?: string;
+  readonly minimums: Readonly<Record<string, Readonly<Record<string, number>>>>;
+  readonly needs: readonly string[];
+  readonly rank: readonly string[];
+}
+
+/** One policy route validated from the registry's policy section. */
+export interface PolicyRoute {
+  readonly effort?: string;
+  readonly route: string;
+}
+
+/** A policy's spec condition. Only "settled" is valid: it applies solely to
+ * settled queries. A policy without `spec` applies to every query. */
+export type PolicySpec = "settled";
+
+/** A policy entry validated from the registry's policy section. A policy
+ * without `spec` applies to every query; one with `spec: "settled"` applies
+ * only to settled queries and beats a specless policy for those. */
+export interface PolicyEntry {
+  readonly name: string;
+  readonly routes: readonly PolicyRoute[];
+  readonly spec?: PolicySpec;
+  readonly stakes: readonly Stakes[];
+  readonly task: string;
+}
+
+/** One task summary returned by listTasks. */
+export interface TaskSummary {
+  readonly description: string;
+  readonly name: string;
+}
+
 /** The router section shape from the registry file, after validation. */
 export interface RouterSections {
+  readonly policies: Readonly<Record<string, PolicyEntry>>;
   readonly rank: readonly string[];
+  readonly tasks: Readonly<Record<string, TaskEntry>>;
 }

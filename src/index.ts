@@ -1,5 +1,5 @@
 export { RouterError } from "./error.js";
-export { rank } from "./rank.js";
+export { listTasks, rank } from "./rank.js";
 export type {
   Answer,
   AnswerRoute,
@@ -9,6 +9,9 @@ export type {
   Floor,
   PinReport,
   PlacedBy,
+  PolicyEntry,
+  PolicyRoute,
+  PolicySpec,
   Prefer,
   Privacy,
   Query,
@@ -20,4 +23,6 @@ export type {
   RouterSections,
   Spec,
   Stakes,
+  TaskEntry,
+  TaskSummary,
 } from "./types.js";

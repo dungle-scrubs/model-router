@@ -12,10 +12,14 @@ import type {
   AnswerRoute,
   AvailabilityValue,
   Coded,
+  PlacedBy,
+  PolicyEntry,
   Query,
   RankOptions,
   Removed,
   RouterSections,
+  TaskEntry,
+  TaskSummary,
 } from "./types.js";
 import { ROUTER_VERSION } from "./version.js";
 
@@ -205,8 +209,10 @@ function availabilityOf(route: Route): AvailabilityValue {
 
 function buildAnswerRoute(
   entry: FlatRoute,
-  floor: "clears" | "below",
+  floor: "clears" | "below" | "skipped",
   reasons: readonly Coded[],
+  placedBy: PlacedBy,
+  policy?: string,
 ): AnswerRoute {
   return {
     availability: availabilityOf(entry.route),
@@ -217,40 +223,89 @@ function buildAnswerRoute(
     label: entry.label,
     model: entry.modelKey,
     modelId: entry.route.modelId,
-    placedBy: "rank",
-    reasons,
+    placedBy,
+    ...(policy === undefined ? {} : { policy }),
     ...(entry.meter === undefined ? {} : { meter: entry.meter }),
     ...(entry.provider === undefined ? {} : { provider: entry.provider }),
+    reasons,
   };
 }
 
-/**
- * Rank routes for a query. The steps run in the contract's order: load the
- * registry, validate the router section, validate the query, apply the hard
- * limits, then sort. The function is synchronous and pure over its inputs:
- * the same registry and the same query give the same answer.
- */
-export function rank(query: unknown, options: RankOptions = {}): Answer {
-  const loaded = resolveRegistry(options.registry);
-  const sections: RouterSections = validateRouterSections(loaded);
-  const parsed: Query = parseQuery(query);
-  const applied = applyQueryDefaults(parsed);
+function matchPolicy(
+  sections: RouterSections,
+  applied: ReturnType<typeof applyQueryDefaults>,
+): PolicyEntry | undefined {
+  let fallback: PolicyEntry | undefined;
+  for (const policy of Object.values(sections.policies)) {
+    if (policy.task !== applied.task) continue;
+    if (!policy.stakes.includes(applied.stakes)) continue;
+    // A policy without spec applies whatever the query's spec is. Only
+    // "settled" is a valid policy spec, and it matches only settled
+    // queries. A settled policy beats the specless fallback, so the first
+    // explicit-spec candidate is the winner.
+    if (policy.spec !== undefined && policy.spec !== applied.spec) continue;
+    if (policy.spec !== undefined) return policy;
+    fallback = policy;
+  }
+  return fallback;
+}
+interface TaskResolution {
+  readonly needs: readonly string[];
+  readonly rank: readonly string[];
+  readonly task: TaskEntry | undefined;
+  readonly unknown: boolean;
+}
 
-  const warnings: Coded[] = [];
-  const removed: Removed[] = [];
+function resolveTask(
+  sections: RouterSections,
+  applied: ReturnType<typeof applyQueryDefaults>,
+): TaskResolution | undefined {
+  if (applied.task === undefined) return undefined;
+  // Own-property read: a name such as "toString" is not a declared task.
+  const task = Object.hasOwn(sections.tasks, applied.task)
+    ? sections.tasks[applied.task]
+    : undefined;
+  if (task === undefined) {
+    return {
+      needs: applied.needs,
+      rank: sections.rank,
+      task: undefined,
+      unknown: true,
+    };
+  }
+  return {
+    needs: dedupe([...task.needs, ...applied.needs]),
+    rank: task.rank,
+    task,
+    unknown: false,
+  };
+}
 
-  if (applied.task !== undefined) {
-    warnings.push({
-      code: "task-unranked",
-      message: `the task "${applied.task}" was not ranked; this release ranks by router.rank only`,
-      fix: "State minimums for inline floors; ranking by task arrives in a later release.",
-    });
+function dedupe(values: readonly string[]): readonly string[] {
+  return [...new Set(values)];
+}
+
+function resolveFloors(
+  applied: ReturnType<typeof applyQueryDefaults>,
+  resolvedTask: TaskResolution | undefined,
+  declaredRatings: ReadonlySet<string>,
+  warnings: Coded[],
+): { floors: Floor[]; everyRouteBelow: boolean } {
+  const taskFloors = new Map<string, number>();
+  if (resolvedTask !== undefined && resolvedTask.task !== undefined) {
+    const stakeFloors = resolvedTask.task.minimums[applied.stakes] ?? {};
+    for (const [rating, value] of Object.entries(stakeFloors)) {
+      taskFloors.set(rating, value);
+    }
+  }
+  // Inline minimums replace per rating at the query's stakes.
+  for (const [rating, value] of Object.entries(applied.minimums)) {
+    taskFloors.set(rating, value);
   }
 
-  const declaredRatings = new Set(Object.keys(loaded.registry.ratings ?? {}));
   const floors: Floor[] = [];
   let everyRouteBelow = false;
-  for (const [rating, minimum] of Object.entries(applied.minimums)) {
+  for (const [rating, minimum] of taskFloors) {
     if (!declaredRatings.has(rating)) {
       warnings.push({
         code: "rating-unknown",
@@ -263,9 +318,72 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
     }
     floors.push({ rating, minimum });
   }
+  return { floors, everyRouteBelow };
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * List the registry's tasks in file order. Each entry has the task name
+ * and its one-line description. Returns `[]` when the registry has no
+ * tasks. Validates the router's sections, so a caller never sees a task
+ * list `rank` then refuses.
+ */
+export function listTasks(options: RankOptions = {}): readonly TaskSummary[] {
+  const loaded = resolveRegistry(options.registry);
+  const sections: RouterSections = validateRouterSections(loaded);
+  const out: TaskSummary[] = [];
+  const seen = new Set<string>();
+  const tasksSection = loaded.sections.tasks;
+  if (isPlainObject(tasksSection)) {
+    for (const name of Object.keys(tasksSection)) {
+      if (seen.has(name)) continue;
+      seen.add(name);
+      out.push({ name, description: sections.tasks[name]?.description ?? "" });
+    }
+  }
+  return out;
+}
+
+/**
+ * Rank routes for a query. The steps run in the contract's order: load the
+ * registry, validate the router section, validate the query, resolve the
+ * task and policy, apply the hard limits, place the policy routes, then sort.
+ * The function is synchronous and pure over its inputs.
+ */
+export function rank(query: unknown, options: RankOptions = {}): Answer {
+  const loaded = resolveRegistry(options.registry);
+  const sections: RouterSections = validateRouterSections(loaded);
+  const parsed: Query = parseQuery(query);
+  const applied = applyQueryDefaults(parsed);
+
+  const warnings: Coded[] = [];
+  const removed: Removed[] = [];
+
+  const resolvedTask = resolveTask(sections, applied);
+
+  if (resolvedTask?.unknown) {
+    warnings.push({
+      code: "task-unranked",
+      message: `the task "${applied.task}" is not declared in the registry's tasks section; ranking by router.rank`,
+      fix: "Correct the task name, or add the task to the registry's tasks section.",
+    });
+  }
+
+  const declaredRatings = new Set(Object.keys(loaded.registry.ratings ?? {}));
+  const { floors, everyRouteBelow } = resolveFloors(
+    applied,
+    resolvedTask,
+    declaredRatings,
+    warnings,
+  );
+
+  const effectiveNeeds = resolvedTask?.needs ?? applied.needs;
 
   const declaredCapabilities = new Set(Object.keys(loaded.registry.capabilities ?? {}));
-  for (const need of applied.needs) {
+  for (const need of effectiveNeeds) {
     if (!declaredCapabilities.has(need)) {
       warnings.push({
         code: "capability-unknown",
@@ -288,7 +406,11 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
     }
   }
 
-  if (applied.effort !== undefined) {
+  // Effort resolution is out of scope: when the query names an effort and no
+  // task is named, the value is parsed but unapplied. A task's effort is
+  // validated and parsed but likewise unapplied until effort resolution
+  // ships (a later release).
+  if (applied.effort !== undefined && resolvedTask === undefined) {
     warnings.push({
       code: "effort-unapplied",
       message: `the query effort "${applied.effort}" was not applied; this release does not resolve effort levels`,
@@ -304,15 +426,19 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
     });
   }
 
-  if (applied.spec === "settled") {
+  const policyMatch = matchPolicy(sections, applied);
+  // The warning fires only when the caller stated a spec: an unstated spec
+  // defaults to open without asking for a policy, so it stays silent.
+  if (parsed.spec !== undefined && policyMatch === undefined) {
     warnings.push({
       code: "policy-none",
-      message: 'the spec "settled" matched no policy; normal ranking was used',
-      fix: "Remove spec from the query, or add a matching policy when policies ship.",
+      message: `the spec "${applied.spec}" matched no policy; normal ranking was used`,
+      fix: "Remove spec from the query, or add a policy matching the task, stakes and spec.",
     });
   }
 
   const surviving: FlatRoute[] = [];
+  const flatByLabel = new Map<string, FlatRoute>();
   let order = 0;
   for (const [modelKey, model] of Object.entries(loaded.registry.models)) {
     for (const [routeIndex, route] of model.routes.entries()) {
@@ -322,13 +448,13 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
         model.family,
         applied.privacy,
         applied.excludeFamilies,
-        applied.needs,
+        effectiveNeeds,
       );
       if (rejection !== null) {
         removed.push({ label, reason: rejection });
         continue;
       }
-      surviving.push({
+      const entry: FlatRoute = {
         cost: route.cost,
         family: model.family,
         harness: route.harness,
@@ -343,7 +469,9 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
         responseSeconds: route.responseSeconds,
         route,
         routeIndex,
-      });
+      };
+      surviving.push(entry);
+      flatByLabel.set(label, entry);
     }
   }
 
@@ -351,22 +479,51 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
     warnings.push(WARNING_LOCAL_OR_NOTHING);
   }
 
+  const policyPlaced: AnswerRoute[] = [];
+  const placedLabels = new Set<string>();
+  if (policyMatch !== undefined) {
+    for (const policyRoute of policyMatch.routes) {
+      const label = policyRoute.route;
+      const entry = flatByLabel.get(label);
+      if (entry === undefined) {
+        // Validation guarantees the label exists, so a hard limit removed it:
+        // the removal keeps its hard-limit reason, and a warning names the
+        // policy that wanted the route.
+        warnings.push({
+          code: "policy-route-removed",
+          field: `$.policy[${JSON.stringify(policyMatch.name)}].routes`,
+          message: `the policy "${policyMatch.name}" names the route "${label}", which a hard limit removed`,
+          fix: `Adjust the policy "${policyMatch.name}" to a route that survives the hard limits, or relax them.`,
+        });
+        continue;
+      }
+      if (placedLabels.has(label)) continue;
+      policyPlaced.push(buildAnswerRoute(entry, "skipped", [], "policy", policyMatch.name));
+      placedLabels.add(label);
+    }
+  }
+
+  const remaining = surviving.filter((entry) => !placedLabels.has(entry.label));
+
   const floorsPresent = floors.length > 0 || everyRouteBelow;
   // An unknown task ranks most capable first, never cheapest first; an
-  // explicitly empty inline floor set is "no floor" and clears by cost.
-  const rankByCapability = applied.task !== undefined && !floorsPresent;
+  // explicitly empty floor set is "no floor" and clears by cost. A known
+  // task's floors use the normal clearing and below-floor orders.
+  const rankByCapability =
+    resolvedTask !== undefined && resolvedTask.unknown === true && !floorsPresent;
+  const effectiveRank = resolvedTask?.rank ?? sections.rank;
   const baseComparator = rankByCapability ? compareCapabilityFirst : compareCostFirst;
   const compareClearing = (a: FlatRoute, b: FlatRoute): number => {
     if (applied.prefer === "speed") {
       const bySpeed = byResponseTime(a, b);
       if (bySpeed !== 0) return bySpeed;
     }
-    return baseComparator(a, b, sections.rank);
+    return baseComparator(a, b, effectiveRank);
   };
 
   const clearing: FlatRoute[] = [];
   const below: FlatRoute[] = [];
-  for (const entry of surviving) {
+  for (const entry of remaining) {
     if (floorOf(entry.ratings, floors, everyRouteBelow) === "clears") {
       clearing.push(entry);
     } else {
@@ -374,11 +531,14 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
     }
   }
   clearing.sort(compareClearing);
-  below.sort((a, b) => compareCapabilityFirst(a, b, sections.rank));
+  below.sort((a, b) => compareCapabilityFirst(a, b, effectiveRank));
 
   const routes: AnswerRoute[] = [
-    ...clearing.map((entry) => buildAnswerRoute(entry, "clears", [])),
-    ...below.map((entry) => buildAnswerRoute(entry, "below", belowReasons(entry.ratings, floors))),
+    ...policyPlaced,
+    ...clearing.map((entry) => buildAnswerRoute(entry, "clears", [], "rank")),
+    ...below.map((entry) =>
+      buildAnswerRoute(entry, "below", belowReasons(entry.ratings, floors), "rank"),
+    ),
   ];
 
   return {

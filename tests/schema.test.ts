@@ -213,9 +213,12 @@ describe("answer.schema.json", () => {
     expect(validate({ ...baseAnswer, routes: [{ ...baseRoute, availability: "later" }] })).toBe(
       false,
     );
-    for (const placedBy of ["rank", "pin", "policy"]) {
+    for (const placedBy of ["rank", "pin"]) {
       expect(validate({ ...baseAnswer, routes: [{ ...baseRoute, placedBy }] })).toBe(true);
     }
+    expect(
+      validate({ ...baseAnswer, routes: [{ ...baseRoute, placedBy: "policy", policy: "p1" }] }),
+    ).toBe(true);
     expect(validate({ ...baseAnswer, routes: [{ ...baseRoute, placedBy: "manual" }] })).toBe(false);
     for (const floor of ["clears", "below", "skipped"]) {
       expect(validate({ ...baseAnswer, routes: [{ ...baseRoute, floor }] })).toBe(true);
@@ -226,6 +229,14 @@ describe("answer.schema.json", () => {
   test("a route without availability is not a contract 1 answer", () => {
     const { availability: _availability, ...withoutAvailability } = baseRoute;
     expect(validate({ ...baseAnswer, routes: [withoutAvailability] })).toBe(false);
+  });
+
+  test("a policy-placed route requires the policy name; other placements forbid it", () => {
+    expect(validate({ ...baseAnswer, routes: [{ ...baseRoute, placedBy: "policy" }] })).toBe(false);
+    expect(validate({ ...baseAnswer, routes: [{ ...baseRoute, policy: "p1" }] })).toBe(false);
+    expect(
+      validate({ ...baseAnswer, routes: [{ ...baseRoute, placedBy: "pin", policy: "p1" }] }),
+    ).toBe(false);
   });
 
   test("rejects an answer whose contract is not 1", () => {

@@ -1,0 +1,54 @@
+{
+  "format": 1,
+  "ratings": {
+    "coding": "Writes and changes code to a spec."
+  },
+  "router": {
+    "rank": ["coding"]
+  },
+  "tasks": {
+    "task-a": {
+      "description": "Write or change code to a stated spec.",
+      "minimums": {
+        "low": { "coding": 6 },
+        "normal": { "coding": 7 },
+        "high": { "coding": 8 }
+      },
+      "rank": ["coding"],
+      "extra": true
+    }
+  },
+  "policy": {
+    "policy-1": {
+      "task": "task-a",
+      "stakes": ["low", "normal"],
+      "routes": [
+        { "route": "model-a@harness-x", "effort": "medium" },
+        { "route": "model-missing@harness-x" }
+      ],
+      "reason": "Code first."
+    },
+    "policy-2": {
+      "task": "task-a",
+      "stakes": ["normal", "high"],
+      "routes": [{ "route": "model-a@harness-x" }],
+      "reason": "Code first too.",
+      "mystery": true
+    }
+  },
+  "models": {
+    "model-a": {
+      "family": "family-a",
+      "maxEffort": "low",
+      "ratings": { "coding": 7 },
+      "routes": [
+        {
+          "harness": "harness-x",
+          "modelId": "model-id-a1",
+          "hosted": true,
+          "cost": 5
+        }
+      ]
+    }
+  }
+}

@@ -4,16 +4,21 @@ import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 import packageJson from "../package.json" with { type: "json" };
 import { runCli } from "../src/cli-run.js";
+import { RouterError, rank } from "../src/index.js";
 import {
   captureStream,
   expectValidAnswer,
   fixturePath,
   runBuiltCli,
   withTempDir,
+  writeJson,
 } from "./helpers.js";
 
 const FULL = fixturePath("full.json");
 const MINIMAL = fixturePath("minimal.json");
+const TASKS = fixturePath("tasks.json");
+const EMPTY = fixturePath("empty-models.json");
+const POLICY_BROKEN = fixturePath("policy-broken.json");
 
 interface RunResult {
   exitCode: number;
@@ -108,13 +113,13 @@ describe("usage failures exit 2 with query-invalid", () => {
   });
 
   test("an unknown word names itself and points at the ranking call", () => {
-    const result = run(["tasks", "--registry", FULL]);
+    const result = run(["frobnicate", "--registry", FULL]);
     expect(result.exitCode).toBe(2);
     expect(errorEnvelope(result.stderr).error).toEqual({
       code: "query-invalid",
       field: "query",
-      fix: "Run model-router '<query>' or model-router - to read the query from stdin; the tasks and check subcommands arrive in a later release.",
-      message: 'unknown command "tasks".',
+      fix: "Run model-router tasks to print the registry's task list, or model-router '<query>' to rank.",
+      message: 'unknown command "frobnicate".',
       problems: [],
     });
   });
@@ -315,7 +320,105 @@ describe("help, version and environment", () => {
   });
 });
 
+describe("the tasks subcommand", () => {
+  test("prints the task list as one JSON line on stdout and exits 0", () => {
+    const result = run(["tasks", "--registry", TASKS]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr()).toBe("");
+    const lines = result.stdout().split("\n");
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toBe("");
+    const tasks = JSON.parse(lines[0] ?? "");
+    expect(tasks).toEqual([
+      { name: "task-a", description: "Write or change code to a stated spec." },
+      { name: "task-b", description: "Browse the web and gather references." },
+    ]);
+  });
+
+  test("prints [] when the registry has no tasks section", () => {
+    const result = run(["tasks", "--registry", EMPTY]);
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout())).toEqual([]);
+  });
+
+  test("exits 4 with registry-sections-invalid on the same problems as rank", () => {
+    let rankProblems: readonly unknown[] = [];
+    try {
+      rank({ task: "task-a" }, { registry: POLICY_BROKEN });
+      throw new Error("expected rank to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RouterError);
+      rankProblems = (error as RouterError).problems;
+    }
+    expect(rankProblems.length).toBeGreaterThanOrEqual(5);
+    const result = run(["tasks", "--registry", POLICY_BROKEN]);
+    expect(result.exitCode).toBe(4);
+    expect(result.stdout()).toBe("");
+    const error = errorEnvelope(result.stderr).error;
+    expect(error.code).toBe("registry-sections-invalid");
+    expect(error.problems).toEqual(rankProblems);
+  });
+
+  test("exits 4 with registry-sections-invalid when router is missing", () => {
+    const result = run(["tasks", "--registry", fixturePath("no-router.json")]);
+    expect(result.exitCode).toBe(4);
+    expect(errorEnvelope(result.stderr).error.code).toBe("registry-sections-invalid");
+  });
+
+  test("a tasks subcommand parser failure returns 2 with the envelope instead of exiting", () => {
+    // runCli must return, not process.exit: an embedding process keeps
+    // control when the child command rejects an option.
+    const result = run(["tasks", "--matrix"]);
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout()).toBe("");
+    expect(errorEnvelope(result.stderr).error).toEqual({
+      code: "query-invalid",
+      field: "query",
+      fix: "Run model-router --help for the ranking call and its options.",
+      message: "unknown option '--matrix'",
+      problems: [],
+    });
+  });
+});
+
 describe("the built CLI", () => {
+  test("a malformed policy route label exits 4 with both section problems", async () => {
+    // The malformed label must surface as registry-sections-invalid, not
+    // as an internal fault from formatting the effort diagnostic.
+    await withTempDir(async (dir) => {
+      const path = writeJson(dir, "policy-malformed-label.json", {
+        format: 1,
+        ratings: { coding: "Code." },
+        router: { rank: ["coding"] },
+        tasks: {
+          "task-a": {
+            description: "Code.",
+            minimums: { low: {}, normal: {}, high: {} },
+            rank: ["coding"],
+          },
+        },
+        policy: {
+          "policy-a": {
+            task: "task-a",
+            stakes: ["normal"],
+            routes: [{ route: { toString: 7 }, effort: "warp-nine" }],
+            reason: "r",
+          },
+        },
+        models: {},
+      });
+      const result = runBuiltCli(['{"task":"task-a"}', "--registry", path]);
+      expect(result.exitCode).toBe(4);
+      expect(result.stdout).toBe("");
+      const error = JSON.parse(result.stderr).error;
+      expect(error.code).toBe("registry-sections-invalid");
+      expect(error.problems.map((problem: { code: string }) => problem.code)).toEqual([
+        "policy-route-label-missing",
+        "policy-route-effort-invalid",
+      ]);
+    });
+  });
+
   test("a rank call exits 0 through node dist/cli.js", () => {
     const result = runBuiltCli(['{"minimums":{"coding":5}}', "--registry", FULL]);
     expect(result.exitCode).toBe(0);
@@ -351,5 +454,25 @@ describe("the built CLI", () => {
     });
     expect(result.exitCode).toBe(0);
     expectValidAnswer(JSON.parse(result.stdout));
+  });
+
+  test("a tasks subcommand parser failure exits 2 with the query-invalid envelope", () => {
+    const result = runBuiltCli(["tasks", "--matrix", "--registry", TASKS]);
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout).toBe("");
+    const error = JSON.parse(result.stderr).error;
+    expect(error.code).toBe("query-invalid");
+    expect(error.field).toBe("query");
+    expect(error.fix).toBe("Run model-router --help for the ranking call and its options.");
+    expect(error.message).toContain("--matrix");
+    expect(error.problems).toEqual([]);
+  });
+
+  test("tasks --help exits 0 and prints its help on stdout", () => {
+    const result = runBuiltCli(["tasks", "--help"]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("tasks");
+    expect(result.stdout).toContain("--registry");
+    expect(result.stderr).toBe("");
   });
 });

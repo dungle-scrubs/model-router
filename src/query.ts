@@ -123,6 +123,12 @@ function dedupe(values: readonly string[] | undefined): readonly string[] {
  * families. Lists are deduplicated; the given order is kept.
  */
 export function applyQueryDefaults(query: Query): AppliedQuery {
+  // A null-prototype record, like every other name-keyed map: a floor
+  // named "__proto__" stays an ordinary own property, and inherited names
+  // are absent. Object.assign onto the null-prototype target copies each
+  // own floor as an own property.
+  const minimums = Object.create(null) as Record<string, number>;
+  Object.assign(minimums, query.minimums ?? {});
   const applied: {
     excludeFamilies: readonly string[];
     effort?: string;
@@ -136,7 +142,7 @@ export function applyQueryDefaults(query: Query): AppliedQuery {
     task?: string;
   } = {
     excludeFamilies: dedupe(query.excludeFamilies),
-    minimums: { ...(query.minimums ?? {}) },
+    minimums,
     needs: dedupe(query.needs),
     prefer: query.prefer ?? "cost",
     privacy: query.privacy ?? "normal",
