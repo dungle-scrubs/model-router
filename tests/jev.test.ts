@@ -607,6 +607,33 @@ describe("askJev retry and failure handling", () => {
       fetchSpy.mockRestore();
     }));
 
+  test("exhausted attempts throw RATE_LIMITED with the exact message and the status", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const slept: number[] = [];
+      let calls = 0;
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+        calls++;
+        return fail(429, { "Retry-After": "0" });
+      });
+      const error = await rejected(
+        askJev("state", QUESTIONS, {
+          maxAttempts: 2,
+          sleep: (ms) => {
+            slept.push(ms);
+            return Promise.resolve();
+          },
+        }),
+      );
+      expect(calls).toBe(2);
+      expect(slept).toEqual([0]);
+      expect(error.code).toBe("RATE_LIMITED");
+      expect(error.status).toBe(429);
+      expect(error.message).toBe(
+        `${ENDPOINT} returned HTTP 429 on every one of 2 attempts. This is a service failure, not a setup problem: the key resolved.`,
+      );
+      fetchSpy.mockRestore();
+    }));
+
   test("a non-retryable status throws SERVICE_ERROR on the first response", async () =>
     withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
       let attempt = 0;
