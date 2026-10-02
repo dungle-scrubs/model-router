@@ -194,56 +194,65 @@ describe("askJev key redaction", () => {
 });
 
 describe("askJev option checks", () => {
-  const rejectsRangeError = (promise: Promise<unknown>, message: string) =>
-    withEnv({ TYPESAFE_API_KEY: undefined }, async () => {
-      // The checks run before the key is read: with no key set, a bad
-      // option is still a RangeError, and no call is made.
-      const fetchSpy = vi.spyOn(globalThis, "fetch");
-      await expect(promise).rejects.toBeInstanceOf(RangeError);
-      await expect(promise).rejects.toThrow(new RangeError(message));
+  /** Refuse a bad option with the spy up before the call and refusing
+   * every request: a client that skips the check and calls anyway is
+   * both observed and still refused here, with the key in place. */
+  const rejectsRangeError = (call: () => Promise<unknown>, message: string) =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockRejectedValue(new Error("no request was expected"));
+      const error = await call().then(
+        () => {
+          throw new Error("expected a rejection");
+        },
+        (caught: unknown) => caught,
+      );
+      expect(error, `expected a RangeError, got ${String(error)}`).toBeInstanceOf(RangeError);
+      expect((error as Error).message).toBe(message);
       expect(fetchSpy).not.toHaveBeenCalled();
       fetchSpy.mockRestore();
     });
 
   test("maxAttempts 0 is refused", () =>
     rejectsRangeError(
-      askJev("state", QUESTIONS, { maxAttempts: 0 }),
+      () => askJev("state", QUESTIONS, { maxAttempts: 0 }),
       'askJev option "maxAttempts" must be a positive integer',
     ));
 
   test("maxAttempts 1.5 is refused", () =>
     rejectsRangeError(
-      askJev("state", QUESTIONS, { maxAttempts: 1.5 }),
+      () => askJev("state", QUESTIONS, { maxAttempts: 1.5 }),
       'askJev option "maxAttempts" must be a positive integer',
     ));
 
   test("timeoutMs -1 is refused", () =>
     rejectsRangeError(
-      askJev("state", QUESTIONS, { timeoutMs: -1 }),
+      () => askJev("state", QUESTIONS, { timeoutMs: -1 }),
       'askJev option "timeoutMs" must be a positive integer',
     ));
 
   test("timeoutMs 0 is refused", () =>
     rejectsRangeError(
-      askJev("state", QUESTIONS, { timeoutMs: 0 }),
+      () => askJev("state", QUESTIONS, { timeoutMs: 0 }),
       'askJev option "timeoutMs" must be a positive integer',
     ));
 
   test("timeoutMs 1.5 is refused", () =>
     rejectsRangeError(
-      askJev("state", QUESTIONS, { timeoutMs: 1.5 }),
+      () => askJev("state", QUESTIONS, { timeoutMs: 1.5 }),
       'askJev option "timeoutMs" must be a positive integer',
     ));
 
   test("backoffMs -1 is refused", () =>
     rejectsRangeError(
-      askJev("state", QUESTIONS, { backoffMs: -1 }),
+      () => askJev("state", QUESTIONS, { backoffMs: -1 }),
       'askJev option "backoffMs" must be a finite number of at least 0',
     ));
 
   test("backoffMs NaN is refused", () =>
     rejectsRangeError(
-      askJev("state", QUESTIONS, { backoffMs: Number.NaN }),
+      () => askJev("state", QUESTIONS, { backoffMs: Number.NaN }),
       'askJev option "backoffMs" must be a finite number of at least 0',
     ));
 
