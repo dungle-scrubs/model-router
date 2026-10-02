@@ -257,6 +257,7 @@ describe("ranking config snapshot", () => {
             { status: 200 },
           );
         });
+        vi.mocked(readFileSync).mockClear();
         const answer = answerOf(
           await run([
             '{"privacy":"normal"}',
@@ -269,6 +270,9 @@ describe("ranking config snapshot", () => {
           ]),
         );
         expect(answer.routes.map((r) => r.effort)).toEqual(["low", "low", "low"]);
+        expect(vi.mocked(readFileSync).mock.calls.filter(([path]) => path === config)).toHaveLength(
+          1,
+        );
       }),
     );
   });
