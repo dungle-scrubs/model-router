@@ -770,6 +770,28 @@ describe("askJev response validation", () => {
       fetchSpy.mockRestore();
     }));
 
+  test("a choice answer whose probabilities name an unoffered key is BAD_RESPONSE", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        ok(
+          okBody({
+            pick: {
+              type: "choice",
+              choice: "task-a",
+              confidence: 0.8,
+              probabilities: { "task-a": 0.8, "task-zz": 0.2 },
+            },
+          }),
+        ),
+      );
+      const error = await rejected(askJev("state", choiceQuestions, { sleep: never }));
+      expect(error.code).toBe("BAD_RESPONSE");
+      expect(error.message).toBe(
+        `${ENDPOINT} returned an unusable answer: the answer for question "pick" has a "probabilities" key the question did not offer`,
+      );
+      fetchSpy.mockRestore();
+    }));
+
   test("an answer for a question that was not asked is ignored", async () =>
     withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
       const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(

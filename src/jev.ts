@@ -171,6 +171,13 @@ function validateChoiceAnswer(
   if (!isOwnObject(answer.probabilities)) {
     throw badResponse(`the answer for question "${id}" has no "probabilities" object`);
   }
+  for (const candidate of Object.keys(answer.probabilities)) {
+    if (!Object.hasOwn(question.criteria, candidate)) {
+      throw badResponse(
+        `the answer for question "${id}" has a "probabilities" key the question did not offer`,
+      );
+    }
+  }
   for (const probability of Object.values(answer.probabilities)) {
     if (!isUnit(probability)) {
       throw badResponse(

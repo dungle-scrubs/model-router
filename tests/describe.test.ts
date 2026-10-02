@@ -331,6 +331,29 @@ describe("the describe step's gate and result", () => {
       spy.mockRestore();
     }));
 
+  test("a task answer whose probabilities name a task the registry does not declare is unusable", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const body = {
+        model: "jev-1.13.0",
+        answers: {
+          task: choiceAnswer("task-a", 0.9, { "task-a": 0.9, "task-zz": 0.1 }),
+          needs_browser: noulAnswer(0.1),
+          "needs_repo-access": noulAnswer(0.1),
+        },
+        usage: USAGE,
+      };
+      const { spy } = stubFetch(body);
+      const error = await catchRouterError(
+        describeStep("some work", '{"privacy":"normal"}', { registry: FIXTURE }),
+      );
+      expect(error.code).toBe("describe-failed");
+      expect(error.message).toBe(
+        "the describe step needed a task from Jev and the call failed (BAD_RESPONSE): " +
+          'https://api.typesafe.ai/v1/systemone returned an unusable answer: the answer for question "task" has a "probabilities" key the question did not offer',
+      );
+      spy.mockRestore();
+    }));
+
   test("an unusable capability answer makes the whole response unusable", async () =>
     withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
       const body = {
