@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 import packageJson from "../package.json" with { type: "json" };
 import { runCli } from "../src/cli-run.js";
@@ -118,7 +118,7 @@ describe("usage failures exit 2 with query-invalid", () => {
     expect(errorEnvelope(result.stderr).error).toEqual({
       code: "query-invalid",
       field: "query",
-      fix: "Run model-router tasks to print the registry's task list, or model-router '<query>' to rank.",
+      fix: "Run model-router tasks to print the registry's task list, or model-router check, or model-router '<query>' to rank.",
       message: 'unknown command "frobnicate".',
       problems: [],
     });
@@ -287,7 +287,9 @@ describe("help, version and environment", () => {
     expect(result.stdout()).toContain("0  an answer with at least one route");
     expect(result.stdout()).toContain("2  invalid query, flag or subcommand (query-invalid)");
     expect(result.stdout()).toContain("3  an answer with no route; the answer is still printed");
-    expect(result.stdout()).toContain("4  the registry or its router section failed to load");
+    expect(result.stdout()).toContain(
+      "4  the registry or its router section, or the config file, failed to load",
+    );
     expect(result.stdout()).toContain("1  an internal fault (internal-error)");
     expect(result.stdout()).toContain("--registry <path>");
   });
@@ -379,6 +381,28 @@ describe("the tasks subcommand", () => {
       problems: [],
     });
   });
+
+  test("tasks rejects --config with exit 2", () => {
+    // tasks prints the registry's task list and never reads config: the
+    // flag has nothing to apply to, so the parser rejects it. The error
+    // is exit 2 with the query-invalid envelope, so a caller can branch
+    // on the same shape it uses for every other usage failure.
+    const result = run(["tasks", "--registry", TASKS, "--config", "./nope.json"]);
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout()).toBe("");
+    const error = errorEnvelope(result.stderr).error;
+    expect(error.code).toBe("query-invalid");
+  });
+
+  test("tasks rejects --config when it is given before the subcommand", () => {
+    // The CLI's parser fails the option whether it is given before or
+    // after the subcommand. The brief states the check applies to both
+    // orderings.
+    const result = run(["--config", "./nope.json", "tasks", "--registry", TASKS]);
+    expect(result.exitCode).toBe(2);
+    const error = errorEnvelope(result.stderr).error;
+    expect(error.code).toBe("query-invalid");
+  });
 });
 
 describe("the check subcommand", () => {
@@ -436,6 +460,36 @@ describe("the check subcommand", () => {
     expect(errorEnvelope(result.stderr).error.code).toBe("registry-unreadable");
   });
 
+  test("check validates router sections and fails when the registry has no router section", () => {
+    // The check subcommand runs validateRouterSections. A registry without
+    // a router section passes the loader, but the check command must
+    // surface the missing router section as registry-sections-invalid.
+    const result = run(["check", "--registry", fixturePath("no-router.json")]);
+    expect(result.exitCode).toBe(4);
+    expect(result.stdout()).toBe("");
+    const error = errorEnvelope(result.stderr).error;
+    expect(error.code).toBe("registry-sections-invalid");
+  });
+
+  test("check validates router sections on the same problems as rank", async () => {
+    // The check command emits every problem the rank command does for the
+    // same registry. Test the equivalence with the policy-broken fixture
+    // the rank path uses.
+    let rankProblems: readonly unknown[] = [];
+    try {
+      rank({ task: "task-a" }, { registry: POLICY_BROKEN });
+      throw new Error("expected rank to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RouterError);
+      rankProblems = (error as RouterError).problems;
+    }
+    const result = run(["check", "--registry", POLICY_BROKEN]);
+    expect(result.exitCode).toBe(4);
+    const error = errorEnvelope(result.stderr).error;
+    expect(error.code).toBe("registry-sections-invalid");
+    expect(error.problems).toEqual(rankProblems);
+  });
+
   test("a check parser failure exits 2 with the envelope instead of exiting", () => {
     const result = run(["check", "--matrix"]);
     expect(result.exitCode).toBe(2);
@@ -451,9 +505,102 @@ describe("the check subcommand", () => {
     expect(result.stdout()).toContain("--config");
     expect(result.stderr()).toBe("");
   });
+
+  test("--help documents exit 4 as covering config failures too", () => {
+    const result = run(["--help"]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout()).toContain("4  the registry");
+    expect(result.stdout()).toContain("config");
+  });
 });
 
 describe("the built CLI", () => {
+  test("the ranking action forwards --config, exiting 4 on a missing path", () => {
+    // The ranking action now resolves --config the same way check does:
+    // an explicit missing path is config-invalid, not a silent default.
+    const result = runBuiltCli([
+      '{"minimums":{"coding":5}}',
+      "--registry",
+      FULL,
+      "--config",
+      "./nope.json",
+    ]);
+    expect(result.exitCode).toBe(4);
+    expect(result.stdout).toBe("");
+    const error = JSON.parse(result.stderr).error;
+    expect(error.code).toBe("config-invalid");
+  });
+
+  test("the ranking action forwards --config, exiting 4 on a malformed file", async () => {
+    await withTempDir(async (dir) => {
+      const path = join(dir, "bad.json");
+      writeFileSync(path, "{not json");
+      const result = runBuiltCli([
+        '{"minimums":{"coding":5}}',
+        "--registry",
+        FULL,
+        "--config",
+        path,
+      ]);
+      expect(result.exitCode).toBe(4);
+      const error = JSON.parse(result.stderr).error;
+      expect(error.code).toBe("config-invalid");
+    });
+  });
+
+  test("the ranking action forwards --config, lowering a request with a valid ceiling", async () => {
+    // A valid explicit config lowers a high request to the named ceiling,
+    // proving the option reached rank through the same loader the CLI uses
+    // for check. Without forwarding, the request would land on the default
+    // ceiling (xhigh) and the route would carry "high".
+    await withTempDir(async (dir) => {
+      const path = writeJson(dir, "config.json", {
+        effort: { ceiling: "low", default: "low" },
+      });
+      const result = runBuiltCli([
+        '{"effort":"high","minimums":{"coding":5}}',
+        "--registry",
+        FULL,
+        "--config",
+        path,
+      ]);
+      expect(result.exitCode).toBe(0);
+      const answer = JSON.parse(result.stdout);
+      expectValidAnswer(answer);
+      for (const route of answer.routes) {
+        expect(route.effort).toBe("low");
+      }
+      const codes = answer.warnings.map((w: { code: string }) => w.code);
+      expect(codes).toContain("effort-ceiling");
+    });
+  });
+
+  test("the ranking action rejects --config given more than once", () => {
+    const result = runBuiltCli([
+      '{"minimums":{"coding":5}}',
+      "--registry",
+      FULL,
+      "--config",
+      "./a.json",
+      "--config",
+      "./b.json",
+    ]);
+    expect(result.exitCode).toBe(2);
+    const error = JSON.parse(result.stderr).error;
+    expect(error.code).toBe("query-invalid");
+    expect(error.field).toBe("config");
+    expect(error.message).toContain("more than once");
+  });
+
+  test("the ranking action rejects an empty --config path", () => {
+    const result = runBuiltCli(['{"minimums":{"coding":5}}', "--registry", FULL, "--config", ""]);
+    expect(result.exitCode).toBe(2);
+    const error = JSON.parse(result.stderr).error;
+    expect(error.code).toBe("query-invalid");
+    expect(error.field).toBe("config");
+    expect(error.message).toContain("empty path");
+  });
+
   test("a malformed policy route label exits 4 with both section problems", async () => {
     // The malformed label must surface as registry-sections-invalid, not
     // as an internal fault from formatting the effort diagnostic.

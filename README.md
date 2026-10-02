@@ -32,7 +32,7 @@ The answer is one JSON line on stdout, also when no route survives. `model-route
 | 0 | an answer with at least one route, or the task list printed |
 | 2 | invalid query, flag or subcommand (`query-invalid`) |
 | 3 | an answer with no route; the answer is still printed |
-| 4 | the registry cannot be loaded, or its router section is invalid |
+| 4 | the registry or its router section, or the config file, failed to load |
 | 1 | an internal fault (`internal-error`) |
 
 ## The query

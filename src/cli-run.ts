@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
 import { loadRegistry, RegistryError } from "@dungle-scrubs/model-registry";
 import { Command, CommanderError } from "commander";
-import { loadConfig } from "./config.js";
+import { type LoadedConfig, loadConfig } from "./config.js";
 import { RouterError } from "./error.js";
 import { listTasks, rank } from "./rank.js";
+import { validateRouterSections } from "./sections.js";
 import type { RouterErrorCode } from "./types.js";
 import { ROUTER_VERSION } from "./version.js";
 
@@ -19,14 +20,14 @@ Exit codes:
   0  an answer with at least one route (rank call); or tasks printed
   2  invalid query, flag or subcommand (query-invalid)
   3  an answer with no route; the answer is still printed
-  4  the registry or its router section failed to load
+  4  the registry or its router section, or the config file, failed to load
   1  an internal fault (internal-error)`;
 
 const USAGE_FIX = "Run model-router --help for the ranking call and its options.";
 const NO_QUERY_FIX =
   "Run model-router '<query>' with a JSON query object, or pass - to read the query from stdin.";
 const TASKS_FIX =
-  "Run model-router tasks to print the registry's task list, or model-router '<query>' to rank.";
+  "Run model-router tasks to print the registry's task list, or model-router check, or model-router '<query>' to rank.";
 const INTERNAL_FIX = "Report this failure together with the command you ran.";
 
 export interface CliSink {
@@ -136,6 +137,18 @@ function loadRegistryOption(explicit: string): ReturnType<typeof loadRegistry> {
   return explicit === "" ? loadRegistry() : loadRegistry({ path: explicit });
 }
 
+/** Resolve the config the way the CLI does: an explicit `--config` path
+ * uses the file the caller chose, an absent option falls through to the
+ * documented env path order. The same call works for rank and check, so
+ * both go through this helper. */
+function loadConfigOption(explicit: string | undefined): LoadedConfig {
+  return loadConfig(
+    explicit === undefined
+      ? { env: process.env as Record<string, string | undefined> }
+      : { explicitPath: explicit },
+  );
+}
+
 export function runCli(argv: readonly string[], io: Partial<CliIo> = {}): number {
   const stdout = io.stdout ?? process.stdout;
   const stderr = io.stderr ?? process.stderr;
@@ -177,9 +190,20 @@ export function runCli(argv: readonly string[], io: Partial<CliIo> = {}): number
     writeErr: () => {},
   });
   tasksCommand.action(function (this: Command) {
-    const options = this.optsWithGlobals() as { registry?: string[] };
-    const explicit = resolveRegistryOption(options.registry ?? []);
-    const tasks = listTasks(explicit === "" ? {} : { registry: explicit });
+    const options = this.optsWithGlobals() as { registry?: string[]; config?: string[] };
+    const explicitRegistry = resolveRegistryOption(options.registry ?? []);
+    const configValues = options.config ?? [];
+    // The command --config takes no value: tasks prints the registry's
+    // task list and never reads the config, so a config flag here is
+    // exit 2 with the query-invalid envelope.
+    if (configValues.length > 0) {
+      throw queryInvalid(
+        "config",
+        "the --config option does not apply to the tasks subcommand.",
+        "Run model-router check or model-router '<query>' to use --config.",
+      );
+    }
+    const tasks = listTasks(explicitRegistry === "" ? {} : { registry: explicitRegistry });
     stdout.write(`${JSON.stringify(tasks)}\n`);
     answerExit = EXIT_SUCCESS;
   });
@@ -210,14 +234,12 @@ export function runCli(argv: readonly string[], io: Partial<CliIo> = {}): number
     const explicitRegistry = resolveRegistryOption(options.registry ?? []);
     const explicitConfig = resolveConfigOption(options.config ?? []);
     // The check command runs no availability source and makes no Jev call:
-    // it loads the registry (path resolution and digest), then loads the
-    // config. A loader error is exit 4.
+    // it loads the registry (path resolution and digest), validates the
+    // router sections the same way rank and listTasks do, then loads the
+    // config. Any of those failures is exit 4.
     const loaded = loadRegistryOption(explicitRegistry);
-    const config = loadConfig(
-      explicitConfig === undefined
-        ? { env: process.env as Record<string, string | undefined> }
-        : { explicitPath: explicitConfig },
-    );
+    validateRouterSections(loaded);
+    const config = loadConfigOption(explicitConfig);
     stdout.write(
       `${JSON.stringify({
         configPath: config.configPath,
@@ -230,19 +252,28 @@ export function runCli(argv: readonly string[], io: Partial<CliIo> = {}): number
   program.addCommand(checkCommand);
 
   program.argument("[query]", "the query as a JSON object, or - to read it from stdin");
-  program.action((query: string | undefined, options: { registry?: string[] }) => {
-    const explicit = resolveRegistryOption(options.registry ?? []);
-    if (query === undefined) {
-      throw queryInvalid("query", "no query argument was given.", NO_QUERY_FIX);
-    }
-    if (query !== "-" && !query.startsWith("{")) {
-      throw queryInvalid("query", `unknown command ${JSON.stringify(query)}.`, TASKS_FIX);
-    }
-    const raw = query === "-" ? readStdin() : query;
-    const answer = rank(raw, explicit === "" ? {} : { registry: explicit });
-    stdout.write(`${JSON.stringify(answer)}\n`);
-    answerExit = answer.routes.length === 0 ? EXIT_NO_ROUTE : EXIT_SUCCESS;
-  });
+  program.action(
+    (query: string | undefined, options: { registry?: string[]; config?: string[] }) => {
+      const explicitRegistry = resolveRegistryOption(options.registry ?? []);
+      const explicitConfig = resolveConfigOption(options.config ?? []);
+      if (query === undefined) {
+        throw queryInvalid("query", "no query argument was given.", NO_QUERY_FIX);
+      }
+      if (query !== "-" && !query.startsWith("{")) {
+        throw queryInvalid("query", `unknown command ${JSON.stringify(query)}.`, TASKS_FIX);
+      }
+      const raw = query === "-" ? readStdin() : query;
+      // The config option goes through the same loader the check command
+      // uses. When the caller leaves it off, rank's documented env path
+      // order applies (process.env read by the loader itself).
+      const config = loadConfigOption(explicitConfig);
+      const rankOptions: Parameters<typeof rank>[1] =
+        explicitRegistry === "" ? { config } : { registry: explicitRegistry, config };
+      const answer = rank(raw, rankOptions);
+      stdout.write(`${JSON.stringify(answer)}\n`);
+      answerExit = answer.routes.length === 0 ? EXIT_NO_ROUTE : EXIT_SUCCESS;
+    },
+  );
 
   try {
     program.parse(argv, { from: "user" });
