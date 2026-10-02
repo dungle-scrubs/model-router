@@ -1,28 +1,26 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import type { RouterConfigAvailability } from "./config.js";
-import type { AvailabilityDocument, AvailabilityEntry, AvailabilityValue, Coded } from "./types.js";
+import type {
+  AvailabilityEntry,
+  AvailabilityEntryStatus,
+  AvailabilityValue,
+  Coded,
+} from "./types.js";
 
-/** A successful load carries the entries; a failure carries a `note` the
- * answer reports as `availabilityNote`. The two are exclusive: a failed
- * load returns no entries. */
 export interface AvailabilityLoad {
   readonly entries: readonly AvailabilityEntry[];
   readonly note: Coded | null;
+  readonly warnings: readonly Coded[];
 }
 
-const VALID_STATUSES = new Set(["ok", "projected", "exhausted"]);
+const VALID_STATUSES = new Set<AvailabilityValue>(["ok", "projected", "exhausted"]);
+const EIGHT_MIB = 8 * 1024 * 1024;
 
 function note(code: string, message: string, fix: string): Coded {
   return { code, fix, message };
 }
 
-/** Decode one parsed JSON value into an availability document. A wrong
- * top level means the load fails with a `note`; a single bad entry is
- * skipped silently (the engine treats unknown statuses as no-op and
- * warns `availability-entry-invalid` separately). The caller passes
- * `maxAgeSeconds` for the staleness check. The check uses the document's
- * `generatedAt`. */
 export function parseAvailabilityDocument(
   raw: unknown,
   options: { readonly maxAgeSeconds: number; readonly now?: Date },
@@ -35,49 +33,54 @@ export function parseAvailabilityDocument(
         "the availability document must be a JSON object",
         "Replace the document with an object holding format, generatedAt and entries.",
       ),
+      warnings: [],
     };
   }
   const doc = raw as Record<string, unknown>;
-  if (doc["format"] !== 1) {
+  if (doc.format !== 1) {
     return {
       entries: [],
       note: note(
         "availability-reading-invalid",
-        'the availability document "format" is not 1',
+        "the availability document format is not 1",
         "Use a document at format version 1.",
       ),
+      warnings: [],
     };
   }
-  if (typeof doc["generatedAt"] !== "string") {
+  if (typeof doc.generatedAt !== "string") {
     return {
       entries: [],
       note: note(
         "availability-reading-invalid",
-        'the availability document has no "generatedAt" string',
-        'Add "generatedAt": "<ISO timestamp>" to the document.',
+        "the availability document has no generatedAt string",
+        "Add generatedAt: an ISO timestamp string to the document.",
       ),
+      warnings: [],
     };
   }
-  if (!Array.isArray(doc["entries"])) {
+  if (!Array.isArray(doc.entries)) {
     return {
       entries: [],
       note: note(
         "availability-reading-invalid",
-        'the availability document "entries" is not an array',
-        'Replace "entries" with an array of { meter, status } objects.',
+        "the availability document entries is not an array",
+        "Replace entries with an array of { meter, status } objects.",
       ),
+      warnings: [],
     };
   }
   const now = options.now ?? new Date();
-  const then = Date.parse(doc["generatedAt"]);
+  const then = Date.parse(doc.generatedAt);
   if (Number.isNaN(then)) {
     return {
       entries: [],
       note: note(
         "availability-reading-invalid",
-        'the availability document "generatedAt" is not a parseable date',
-        'Set "generatedAt" to an ISO timestamp such as "2026-10-01T04:00:00Z".',
+        "the availability document generatedAt is not a parseable date",
+        "Set generatedAt to an ISO timestamp such as 2026-10-01T04:00:00Z.",
       ),
+      warnings: [],
     };
   }
   const ageMs = now.getTime() - then;
@@ -87,8 +90,11 @@ export function parseAvailabilityDocument(
       note: note(
         "availability-reading-stale",
         `the availability document is older than ${options.maxAgeSeconds} seconds`,
-        `Regenerate the document within ${options.maxAgeSeconds} seconds, or raise "availability"."maxAgeSeconds" in config.json.`,
+        "Regenerate the document within " +
+          options.maxAgeSeconds +
+          " seconds, or raise availability.maxAgeSeconds in config.json.",
       ),
+      warnings: [],
     };
   }
   if (ageMs < 0) {
@@ -97,74 +103,151 @@ export function parseAvailabilityDocument(
       note: note(
         "availability-reading-stale",
         "the availability document has a generatedAt in the future",
-        'Fix "generatedAt" to the actual time the document was produced.',
+        "Fix generatedAt to the actual time the document was produced.",
       ),
+      warnings: [],
     };
   }
-  return { entries: extractEntries(doc["entries"]), note: null };
+  return extractEntries(doc.entries);
 }
 
-function extractEntries(items: readonly unknown[]): readonly AvailabilityEntry[] {
-  const out: AvailabilityEntry[] = [];
-  for (const item of items) {
-    if (typeof item !== "object" || item === null || Array.isArray(item)) continue;
+function extractEntries(items: readonly unknown[]): AvailabilityLoad {
+  const kept: AvailabilityEntry[] = [];
+  const warnings: Coded[] = [];
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      warnings.push(
+        entryInvalid(index, "the entry is not a JSON object", "Replace it with an object."),
+      );
+      continue;
+    }
     const entry = item as Record<string, unknown>;
-    const meter = entry["meter"];
-    const status = entry["status"];
-    if (typeof meter !== "string" || meter.length === 0) continue;
-    if (typeof status !== "string" || !VALID_STATUSES.has(status)) continue;
+    if (typeof entry.meter !== "string" || entry.meter.length === 0) {
+      warnings.push(
+        entryInvalid(
+          index,
+          "the entry has no meter string",
+          "Add meter: a non-empty string to the entry.",
+        ),
+      );
+      continue;
+    }
+    if (
+      typeof entry.status !== "string" ||
+      !VALID_STATUSES.has(entry.status as AvailabilityValue)
+    ) {
+      const status = entry.status;
+      const statusText = typeof status === "string" ? JSON.stringify(status) : typeof status;
+      warnings.push(
+        entryInvalid(
+          index,
+          `the entry has no known status (received ${statusText})`,
+          "Set status to ok, projected or exhausted.",
+        ),
+      );
+      continue;
+    }
+    if (
+      "percentRemaining" in entry &&
+      (typeof entry.percentRemaining !== "number" || !Number.isFinite(entry.percentRemaining))
+    ) {
+      warnings.push(
+        entryInvalid(
+          index,
+          `the entry has a percentRemaining of type ${typeof entry.percentRemaining}`,
+          "Set percentRemaining to a finite number, or remove the field.",
+        ),
+      );
+      continue;
+    }
+    if ("resetsAt" in entry) {
+      if (typeof entry.resetsAt !== "string") {
+        warnings.push(
+          entryInvalid(
+            index,
+            `the entry has a resetsAt of type ${typeof entry.resetsAt}`,
+            "Set resetsAt to an ISO timestamp string, or remove the field.",
+          ),
+        );
+        continue;
+      }
+      const parsed = Date.parse(entry.resetsAt);
+      if (Number.isNaN(parsed)) {
+        warnings.push(
+          entryInvalid(
+            index,
+            "the entry has an unparseable resetsAt",
+            "Set resetsAt to an ISO timestamp such as 2026-10-01T04:00:00Z.",
+          ),
+        );
+        continue;
+      }
+    }
+    if ("note" in entry && typeof entry.note !== "string") {
+      warnings.push(
+        entryInvalid(
+          index,
+          `the entry has a note of type ${typeof entry.note}`,
+          "Set note to a string, or remove the field.",
+        ),
+      );
+      continue;
+    }
     const built: {
       meter: string;
-      status: AvailabilityValue;
+      status: AvailabilityEntryStatus;
       percentRemaining?: number;
       resetsAt?: string;
       note?: string;
-    } = { meter, status: status as AvailabilityValue };
-    if (
-      typeof entry["percentRemaining"] === "number" &&
-      Number.isFinite(entry["percentRemaining"])
-    ) {
-      built.percentRemaining = entry["percentRemaining"];
-    }
-    if (typeof entry["resetsAt"] === "string") built.resetsAt = entry["resetsAt"];
-    if (typeof entry["note"] === "string") built.note = entry["note"];
-    out.push(built);
+    } = { meter: entry.meter, status: entry.status as AvailabilityEntryStatus };
+    if (typeof entry.percentRemaining === "number") built.percentRemaining = entry.percentRemaining;
+    if (typeof entry.resetsAt === "string") built.resetsAt = entry.resetsAt;
+    if (typeof entry.note === "string") built.note = entry.note;
+    kept.push(built);
   }
-  return out;
+  return { entries: kept, note: null, warnings };
 }
 
-/** Read an availability document from a path. The function reads the
- * file once and parses it. A missing file or unreadable file fails the
- * load with `availability-file-unreadable`; bad JSON or a wrong top
- * level fails with `availability-reading-invalid`. Staleness is checked
- * here against `maxAgeSeconds` because the document is fully parsed at
- * this point. */
+function entryInvalid(index: number, message: string, fix: string): Coded {
+  return {
+    code: "availability-entry-invalid",
+    field: `$.entries[${index}]`,
+    fix,
+    message,
+  };
+}
+
 export function readAvailabilityFile(
   path: string,
   options: { readonly maxAgeSeconds: number; readonly now?: Date },
 ): AvailabilityLoad {
-  if (!existsSync(path)) {
-    return {
-      entries: [],
-      note: note(
-        "availability-file-unreadable",
-        `the availability file at "${path}" does not exist`,
-        `Make the file "${path}" readable, or pass a different --availability-file path.`,
-      ),
-    };
-  }
   let text: string;
   try {
     text = readFileSync(path, "utf8");
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
+    const code = error instanceof Error ? (error as NodeJS.ErrnoException).code : "";
+    if (code === "ENOENT") {
+      return {
+        entries: [],
+        note: note(
+          "availability-file-unreadable",
+          `the availability file at ${path} does not exist`,
+          `Make the file ${path} readable, or pass a different --availability-file path.`,
+        ),
+        warnings: [],
+      };
+    }
     return {
       entries: [],
       note: note(
         "availability-file-unreadable",
-        `the availability file at "${path}" could not be read: ${reason}`,
-        `Make the file "${path}" readable as a regular file, or pass a different --availability-file path.`,
+        `the availability file at ${path} could not be read`,
+        "Make the file " +
+          path +
+          " readable as a regular file, or pass a different --availability-file path.",
       ),
+      warnings: [],
     };
   }
   let raw: unknown;
@@ -175,21 +258,23 @@ export function readAvailabilityFile(
       entries: [],
       note: note(
         "availability-reading-invalid",
-        `the availability file at "${path}" is not valid JSON`,
+        `the availability file at ${path} is not valid JSON`,
         "Replace the file with valid JSON such as the document a user converter writes.",
       ),
+      warnings: [],
     };
   }
   return parseAvailabilityDocument(raw, options);
 }
 
-/** Run the configured availability command and parse its stdout. The
- * command runs without a shell, with a SIGTERM kill at `timeoutSeconds`.
- * A non-zero exit, a missing command, or a timeout is reported with
- * `availability-command-failed`. */
 export function runAvailabilityCommand(
   command: readonly string[],
-  options: { readonly maxAgeSeconds: number; readonly timeoutSeconds: number; readonly now?: Date },
+  options: {
+    readonly maxAgeSeconds: number;
+    readonly timeoutSeconds: number;
+    readonly maxBuffer?: number;
+    readonly now?: Date;
+  },
 ): AvailabilityLoad {
   if (command.length === 0) {
     return {
@@ -197,17 +282,19 @@ export function runAvailabilityCommand(
       note: note(
         "availability-command-missing",
         "the availability command was empty",
-        'Set "availability"."command" in config.json to a non-empty argv array.',
+        "Set availability.command in config.json to a non-empty argv array.",
       ),
+      warnings: [],
     };
   }
   const [bin, ...argvRest] = command as [string, ...string[]];
+  const maxBuffer = options.maxBuffer ?? EIGHT_MIB;
   let result: ReturnType<typeof spawnSync>;
   try {
     result = spawnSync(bin, argvRest, {
       encoding: "utf8",
       timeout: options.timeoutSeconds * 1000,
-      maxBuffer: 8 * 1024 * 1024,
+      maxBuffer,
     });
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
@@ -215,9 +302,10 @@ export function runAvailabilityCommand(
       entries: [],
       note: note(
         "availability-command-failed",
-        `the availability command did not start: ${reason}`,
+        `the availability command failed to run: ${reason}`,
         "Adjust the command in config.json, or use --availability-file.",
       ),
+      warnings: [],
     };
   }
   const errResult = result as { error?: NodeJS.ErrnoException };
@@ -228,38 +316,55 @@ export function runAvailabilityCommand(
         entries: [],
         note: note(
           "availability-command-failed",
-          `the command "${bin}" was not found`,
+          `the availability command failed to run: ${bin} was not found`,
           "Adjust the command in config.json, or use --availability-file.",
         ),
+        warnings: [],
       };
     }
     if (code === "ETIMEDOUT") {
+      const unit = options.timeoutSeconds === 1 ? "second" : "seconds";
       return {
         entries: [],
         note: note(
           "availability-command-failed",
-          `the availability command was killed after ${options.timeoutSeconds} seconds`,
-          `Lower the work the command does, raise "availability"."timeoutSeconds" in config.json, or use --availability-file.`,
+          `the availability command was killed after ${options.timeoutSeconds} ${unit}`,
+          "Lower the work the command does, raise availability.timeoutSeconds in config.json, or use --availability-file.",
         ),
+        warnings: [],
+      };
+    }
+    if (code === "ENOBUFS") {
+      return {
+        entries: [],
+        note: note(
+          "availability-command-failed",
+          "the availability command output exceeded 8 MiB",
+          "Lower the size of the document or use --availability-file.",
+        ),
+        warnings: [],
       };
     }
     return {
       entries: [],
       note: note(
         "availability-command-failed",
-        `the availability command did not start: ${errResult.error.message}`,
+        `the availability command failed to run: ${errResult.error.message}`,
         "Adjust the command in config.json, or use --availability-file.",
       ),
+      warnings: [],
     };
   }
   if (result.signal !== null && result.signal !== undefined) {
+    const signal = result.signal;
     return {
       entries: [],
       note: note(
         "availability-command-failed",
-        `the availability command was killed after ${options.timeoutSeconds} seconds`,
-        `Lower the work the command does, raise "availability"."timeoutSeconds" in config.json, or use --availability-file.`,
+        `the availability command was killed by signal ${signal}`,
+        "Lower the work the command does, raise availability.timeoutSeconds in config.json, or use --availability-file.",
       ),
+      warnings: [],
     };
   }
   if (result.status !== 0) {
@@ -268,9 +373,14 @@ export function runAvailabilityCommand(
       entries: [],
       note: note(
         "availability-command-failed",
-        `the availability command exited with code ${result.status ?? "null"} (stderr: ${stderrText.trim()})`,
+        "the availability command exited with code " +
+          (result.status ?? "null") +
+          " (stderr: " +
+          stderrText.trim() +
+          ")",
         "Adjust the command in config.json.",
       ),
+      warnings: [],
     };
   }
   const stdout = typeof result.stdout === "string" ? result.stdout : "";
@@ -285,24 +395,22 @@ export function runAvailabilityCommand(
         "the availability command output is not valid JSON",
         "Make the command emit a JSON document that matches availability.schema.json.",
       ),
+      warnings: [],
     };
   }
   return parseAvailabilityDocument(raw, options);
 }
 
-/** Convenience type for the CLI dispatch: the engine does not need this
- * shape directly, but having one keeps the CLI's logic in one place. */
 export interface AvailabilityCliSource {
   readonly command: boolean;
   readonly config: RouterConfigAvailability | undefined;
   readonly file: string | undefined;
 }
 
-/** Resolve the availability source for the CLI. A failure produces a
- * `note` and no document. The function never throws. */
 export function loadAvailabilityForCli(source: AvailabilityCliSource): AvailabilityLoad {
   const maxAgeSeconds = source.config?.maxAgeSeconds ?? 300;
   const timeoutSeconds = source.config?.timeoutSeconds ?? 10;
+  const now = new Date();
   if (source.command) {
     if (source.config?.command === undefined) {
       return {
@@ -310,24 +418,19 @@ export function loadAvailabilityForCli(source: AvailabilityCliSource): Availabil
         note: note(
           "availability-command-missing",
           "--availability was given but availability.command is not set in config.json",
-          'Add "availability"."command" to config.json, or use --availability-file <path>.',
+          "Add availability.command to config.json, or use --availability-file path.",
         ),
+        warnings: [],
       };
     }
-    return runAvailabilityCommand(source.config.command, { maxAgeSeconds, timeoutSeconds });
+    return runAvailabilityCommand(source.config.command, {
+      maxAgeSeconds,
+      timeoutSeconds,
+      now,
+    });
   }
   if (source.file !== undefined) {
-    return readAvailabilityFile(source.file, { maxAgeSeconds });
+    return readAvailabilityFile(source.file, { maxAgeSeconds, now });
   }
-  return { entries: [], note: null };
-}
-
-/** The schema version's typed shape, kept here so callers can name it
- * when writing tests. The document's `entries` survive the type guard. */
-export function isAvailabilityDocument(value: unknown): value is AvailabilityDocument {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const obj = value as Record<string, unknown>;
-  return (
-    obj["format"] === 1 && typeof obj["generatedAt"] === "string" && Array.isArray(obj["entries"])
-  );
+  return { entries: [], note: null, warnings: [] };
 }

@@ -116,7 +116,7 @@ The policy's routes come before the ranked routes, in written order, with `place
 7. Place the policy routes. A route that a hard limit removed stays in `removed` with its hard-limit reason, and a `policy-route-removed` warning names the policy. No route appears twice.
 8. Sort the rest. Clearing routes order by cost (higher rating, so cheaper, first), then the rank in force (the task's `rank` or `router.rank` when no task resolves), then the model's route order, then file order; with `prefer: speed`, response time comes first. Routes below a floor order by the rank in force, then cost, then route order, then file order. `minimums: {}` states no floor explicitly: every route clears and orders by that clearing order. A query naming a task the registry does not declare, with no floor, orders every route most capable first, never cheapest first; with `minimums` floors, it uses the orders above. A missing value sorts below every route that has it.
 9. Resolve effort for each route. The requested level is the policy route's `effort` when stated, else the query's, else the task's, else `effort.default`. The model's `fixedEffort` replaces, `maxEffort` caps (with a warning), and `effort.ceiling` caps last (with a warning).
-10. Apply availability. The engine calls `applyAvailability` on the full ordered list, after the pin and the policy have placed their routes. `availability` carries entries the caller has gathered; the engine skips entries whose meter is not in the registry's `meters` section (with a `meter-undeclared` warning), drops expired entries with `dropExpired`, and runs the rule. Routes marked `exhausted` move to `removed`; routes marked `projected` move below every healthy route unless the route's meter is `spendToZero: true` in the registry, in which case the route keeps its place. An unknown entry preserves the previous availability and place. When every route would be removed, none is: each stays with `exhausted`, and the `availability-exhausted-all` warning is added. The engine emits `meter-no-reading` when a reading was applied and a meter the routes use has none.
+10. Apply availability. The engine calls `applyAvailability` on the full ordered list, after the pin and the policy have placed their routes. `availability` carries entries the caller has gathered; the engine skips entries whose meter is not in the registry's `meters` section (with a `meter-undeclared` warning), then runs the rule. The caller drops expired entries with `dropExpired` before passing them in: `rank` itself does not read the clock. Routes marked `exhausted` move to `removed`; routes marked `projected` move below every healthy route unless the route's meter is `spendToZero: true` in the registry, in which case the route keeps its place.A re-applying call replaces the route's existing `meter-projected`, `meter-projected-spend-to-zero` and `meter-exhausted` reasons with this call's reason. When every route would be removed, none is: each stays with `exhausted`, and the `availability-exhausted-all` warning is added. The engine emits `meter-no-reading` once per meter the routes use with no covering entry, whenever `availability` is passed (an empty array included).
 11. Build the answer: `contract`, `routerVersion`, `registryDigest`, the query as applied, `pin`, the ordered `routes`, `removed`, `warnings`, `availabilityNote` (set by the CLI from a failed availability source), `describe: null`.
 
 Each answer route carries `label`, `model`, `harness`, `modelId`, `provider` (when set), `effort` (when a level is known), `hosted`, `family`, `meter` (when set), `placedBy` (`"pin"`, `"policy"` or `"rank"`), `policy` (the policy's name, only when `placedBy` is `"policy"`), `floor` (`"clears"`, `"below"` or `"skipped"`), `availability` (`ok`, `projected`, `exhausted`, `unknown`, or `unmetered`) and `reasons`. A projected route carries a `meter-projected` reason; a projected route on a spend-to-zero meter keeps its place and carries `meter-projected-spend-to-zero`. Routes below a floor carry one `floor-not-met` reason per failed floor.
@@ -277,18 +277,19 @@ const tasks = listTasks({ registry: "registry.json" });
 // [{ name, description }, ...] in file order, or []
 
 // The library reads availability through the rank option. The caller
-// gathers entries (and runs dropExpired); the engine filters entries
-// whose meter is not in the registry and applies the rule.
-const liveEntries = dropExpired(reading.entries, new Date());
+// gathers entries (and runs dropExpired) before ranking; the engine
+// filters entries whose meter is not in the registry and applies the
+// rule. `rank` never reads the clock: a caller that wants stale entries
+// dropped runs `dropExpired` first.
 const ranked = rank(query, {
   registry: "registry.json",
-  availability: { entries: liveEntries },
+  availability: dropExpired(reading.entries, new Date()),
 });
 
 // graybox and delegate can re-rank a list of routes they already hold,
 // passing the registry's spend-to-zero meter names. Routes with no
 // covering entry keep their availability and place.
-const result = applyAvailability(answer.routes, liveEntries, {
+const result = applyAvailability(answer.routes, reading.entries, {
   spendToZero: ["plan-a"],
 });
 ```

@@ -1,9 +1,15 @@
 import type { AvailabilityEntry, AvailabilityResult, AvailabilityValue, Coded } from "./types.js";
 
+// The set of statuses the engine treats as a reading. An entry whose
+// status is not one of these three values is ignored: it does not cover
+// the meter it names, so the routes for that meter keep the engine's
+// first-pass availability. A `Map` keeps the lookup own-property safe.
+const KNOWN_STATUSES = new Set<AvailabilityValue>(["ok", "projected", "exhausted"]);
+
 /** The order from worst to least: a meter reading's `status` is reduced
  * to one of these so two entries on the same meter can be compared.
- * `unknown` is a no-op and never the worst status, because an entry with
- * status "unknown" cannot move a route. */
+ * `unknown` and `unmetered` are no-ops and never the worst status,
+ * because they do not cover the meter. */
 const WORST_STATUS: Readonly<Record<AvailabilityValue, number>> = {
   ok: 0,
   unmetered: -1,
@@ -12,24 +18,69 @@ const WORST_STATUS: Readonly<Record<AvailabilityValue, number>> = {
   exhausted: 2,
 };
 
-const REASON_PROJECTED: Coded = {
-  code: "meter-projected",
-  fix: "Top the meter back up before the work runs, or remove the meter from the route.",
-  message: "the route's meter is projected to exhaust",
-};
+function reasonMessage(
+  code: string,
+  meter: string,
+  percent: number | undefined,
+  resetsAt: string | undefined,
+): string {
+  const tail =
+    percent !== undefined && resetsAt !== undefined
+      ? ` (${percent}% remaining, resets at ${resetsAt})`
+      : percent !== undefined
+        ? ` (${percent}% remaining)`
+        : resetsAt !== undefined
+          ? ` (resets at ${resetsAt})`
+          : "";
+  if (code === "meter-exhausted") {
+    return `the route's meter "${meter}" is exhausted${tail}`;
+  }
+  if (code === "meter-projected-spend-to-zero") {
+    return `the route's meter "${meter}" is projected to exhaust on a spend-to-zero meter; the route keeps its place${tail}`;
+  }
+  return `the route's meter "${meter}" is projected to exhaust${tail}`;
+}
 
-const REASON_PROJECTED_SPEND_TO_ZERO: Coded = {
-  code: "meter-projected-spend-to-zero",
-  fix: "The route is on a spend-to-zero meter and keeps its place; top the meter back up to clear it.",
-  message:
-    "the route's meter is projected to exhaust on a spend-to-zero meter; the route keeps its place",
-};
+function buildReason(
+  code: string,
+  fix: string,
+  meter: string,
+  percent: number | undefined,
+  resetsAt: string | undefined,
+): Coded {
+  return { code, fix, message: reasonMessage(code, meter, percent, resetsAt) };
+}
 
-const REASON_EXHAUSTED: Coded = {
-  code: "meter-exhausted",
-  fix: "Top the meter back up, or remove the meter from the route.",
-  message: "the route's meter is exhausted",
-};
+const FIX_EXHAUSTED = "Top the meter back up, or remove the meter from the route.";
+const FIX_PROJECTED =
+  "Top the meter back up before the work runs, or remove the meter from the route.";
+const FIX_PROJECTED_SPEND_TO_ZERO =
+  "The route is on a spend-to-zero meter and keeps its place; top the meter back up to clear it.";
+
+const REASON_PROJECTED = (
+  meter: string,
+  percent: number | undefined,
+  resetsAt: string | undefined,
+): Coded => buildReason("meter-projected", FIX_PROJECTED, meter, percent, resetsAt);
+
+const REASON_PROJECTED_SPEND_TO_ZERO = (
+  meter: string,
+  percent: number | undefined,
+  resetsAt: string | undefined,
+): Coded =>
+  buildReason(
+    "meter-projected-spend-to-zero",
+    FIX_PROJECTED_SPEND_TO_ZERO,
+    meter,
+    percent,
+    resetsAt,
+  );
+
+const REASON_EXHAUSTED = (
+  meter: string,
+  percent: number | undefined,
+  resetsAt: string | undefined,
+): Coded => buildReason("meter-exhausted", FIX_EXHAUSTED, meter, percent, resetsAt);
 
 const WARNING_EXHAUSTED_ALL: Coded = {
   code: "availability-exhausted-all",
@@ -37,63 +88,81 @@ const WARNING_EXHAUSTED_ALL: Coded = {
   message: "exhaustion would remove every route; none was removed and each carries exhausted",
 };
 
-/** Combine several entries on one meter into one effective state. The
- * worst status decides, then the lowest `percentRemaining` ties it. The
- * function returns the per-meter state; routes use it to decide their
- * final value. */
+/** Combine several entries on one meter into one effective state. Theworst
+ * status decides, then the lowest `percentRemaining` ties it. An entry
+ * without a percent settles behind an entry with a percent: a partial
+ * reading loses the tie to a complete one when the statuses match. The
+ * deciding entry's percent and resetsAt surface on the reason so the
+ * consumer can see why the route moved. */
 function combineMeterEntries(entries: readonly AvailabilityEntry[]): {
   percentRemaining: number | undefined;
+  resetsAt: string | undefined;
   status: AvailabilityValue;
 } {
   let worstStatus: AvailabilityValue = "ok";
   let worstRank = WORST_STATUS.ok;
   let lowestPercent: number | undefined;
+  let percentSeen = false;
+  let winningResetsAt: string | undefined;
+  let winningPercent: number | undefined;
   let seen = false;
   for (const entry of entries) {
     const entryRank = WORST_STATUS[entry.status];
     if (entryRank === undefined) continue;
     seen = true;
+    const entryPercent =
+      typeof entry.percentRemaining === "number" && Number.isFinite(entry.percentRemaining)
+        ? entry.percentRemaining
+        : undefined;
     if (entryRank > worstRank) {
       worstStatus = entry.status;
       worstRank = entryRank;
-      // The lowest percent that came with the worst status still decides
-      // a same-status tie; an entry that did not set the worst keeps
-      // its percent in reserve only if its status still matches. We
-      // record it below.
-      lowestPercent =
-        typeof entry.percentRemaining === "number" && Number.isFinite(entry.percentRemaining)
-          ? entry.percentRemaining
-          : undefined;
+      lowestPercent = entryPercent;
+      percentSeen = entryPercent !== undefined;
+      winningPercent = entryPercent;
+      winningResetsAt = typeof entry.resetsAt === "string" ? entry.resetsAt : undefined;
     } else if (entryRank === worstRank) {
-      if (
-        typeof entry.percentRemaining === "number" &&
-        Number.isFinite(entry.percentRemaining) &&
-        (lowestPercent === undefined || entry.percentRemaining < lowestPercent)
-      ) {
-        lowestPercent = entry.percentRemaining;
+      if (entryPercent !== undefined && Number.isFinite(entryPercent)) {
+        if (!percentSeen || entryPercent < (lowestPercent ?? Number.POSITIVE_INFINITY)) {
+          lowestPercent = entryPercent;
+          percentSeen = true;
+          winningPercent = entryPercent;
+          winningResetsAt = typeof entry.resetsAt === "string" ? entry.resetsAt : undefined;
+        }
       }
     }
   }
   if (!seen) {
-    return { percentRemaining: undefined, status: "unknown" };
+    return { percentRemaining: undefined, resetsAt: undefined, status: "unknown" };
   }
-  return { percentRemaining: lowestPercent, status: worstStatus };
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  // The deciding entry's percent and resetsAt are what the reason
+  // message surfaces.When the tie broke on an entry with a percent, that
+  // percent and its resetsAt are recorded; when it broke on an entry
+  // without a percent, the message names none. The internal `lowestPercent`
+  // is still the numeric winner for any future numeric consumer.
+  void lowestPercent;
+  return {
+    percentRemaining: winningPercent,
+    resetsAt: winningResetsAt,
+    status: worstStatus,
+  };
 }
 
 /** Group the input entries by meter. Several entries on one meter reduce
- * to one combined state via `combineMeterEntries`. An entry with a status
- * outside `ok`/`projected`/`exhausted` is treated as unknown for that
- * meter (and skipped with no warning - the CLI's reader handles that,
- * and graybox and the engine are expected to filter before calling). */
-function groupByMeter(
-  entries: readonly AvailabilityEntry[],
-): Map<string, { percentRemaining: number | undefined; status: AvailabilityValue }> {
+ * to one combined state via `combineMeterEntries`. An entry whose status
+ * is not one of the three known statuses does not cover the meter: the
+ * route the entry names keeps itsfirst-pass availability. */
+function groupByMeter(entries: readonly AvailabilityEntry[]): Map<
+  string,
+  {
+    percentRemaining: number | undefined;
+    resetsAt: string | undefined;
+    status: AvailabilityValue;
+  }
+> {
   const map = new Map<string, AvailabilityEntry[]>();
   for (const entry of entries) {
+    if (!KNOWN_STATUSES.has(entry.status)) continue;
     if (typeof entry.meter !== "string" || entry.meter.length === 0) continue;
     const list = map.get(entry.meter) ?? [];
     list.push(entry);
@@ -101,7 +170,11 @@ function groupByMeter(
   }
   const out = new Map<
     string,
-    { percentRemaining: number | undefined; status: AvailabilityValue }
+    {
+      percentRemaining: number | undefined;
+      resetsAt: string | undefined;
+      status: AvailabilityValue;
+    }
   >();
   for (const [meter, list] of map) {
     out.set(meter, combineMeterEntries(list));
@@ -129,7 +202,11 @@ function routeState<
   route: R,
   meterStates: ReadonlyMap<
     string,
-    { percentRemaining: number | undefined; status: AvailabilityValue }
+    {
+      percentRemaining: number | undefined;
+      resetsAt: string | undefined;
+      status: AvailabilityValue;
+    }
   >,
   spendToZero: ReadonlySet<string>,
 ): {
@@ -142,26 +219,64 @@ function routeState<
   }
   const meterState = meterStates.get(route.meter);
   if (meterState === undefined) {
-    // Only an entry moves a route: no covering entry, preserve value and
-    // place. The caller passes routes with the engine's first-pass
-    // availability ("unknown" for metered routes); keeping it here
-    // means the route stays in its group and keeps "unknown".
+    // Only an entry moves a route: no covering entry, preserve value and place.
     return { availability: "preserve", group: "kept", reason: undefined };
   }
   if (meterState.status === "exhausted") {
-    return { availability: "exhausted", group: "removed", reason: REASON_EXHAUSTED };
+    return {
+      availability: "exhausted",
+      group: "removed",
+      reason: REASON_EXHAUSTED(route.meter, meterState.percentRemaining, meterState.resetsAt),
+    };
   }
   if (meterState.status === "projected") {
     if (spendToZero.has(route.meter)) {
       return {
         availability: "projected",
         group: "kept",
-        reason: REASON_PROJECTED_SPEND_TO_ZERO,
+        reason: REASON_PROJECTED_SPEND_TO_ZERO(
+          route.meter,
+          meterState.percentRemaining,
+          meterState.resetsAt,
+        ),
       };
     }
-    return { availability: "projected", group: "demoted", reason: REASON_PROJECTED };
+    return {
+      availability: "projected",
+      group: "demoted",
+      reason: REASON_PROJECTED(route.meter, meterState.percentRemaining, meterState.resetsAt),
+    };
   }
   return { availability: "ok", group: "kept", reason: undefined };
+}
+
+/** A route's own availability value, when no entry covers its meter.
+ *The engine's first-pass availability is either "unmetered" (no meter)
+ * or "unknown" (meter, no entry covers it). A re-applying call may pass
+ * routes with availability already set (e.g. "projected" from a prior
+ * walk); the original value survives when the call's decision is
+ * "preserve". */
+void 0;
+
+/** Filter the route's existing meter reasons: a re-applying call that
+ * covers the route's meter replaces the old meter reason with this call's one. Other reasons (such as `floor-not-met`) survive. The function
+ * is pure and reads each reason's `code`. */
+function replaceMeterReasons<R extends { readonly reasons?: readonly Coded[] }>(
+  route: R,
+  next: Coded | undefined,
+): readonly Coded[] | undefined {
+  const existing = route.reasons;
+  const filtered = (existing ?? []).filter(
+    (reason) =>
+      reason.code !== "meter-projected" &&
+      reason.code !== "meter-projected-spend-to-zero" &&
+      reason.code !== "meter-exhausted",
+  );
+  if (next === undefined) {
+    if (existing === undefined && filtered.length === 0) return undefined;
+    return filtered.length === existing?.length ? existing : filtered;
+  }
+  return [...filtered, next];
 }
 
 /**
@@ -179,7 +294,10 @@ function routeState<
  * is removed, every route keeps `exhausted`, and the
  * `availability-exhausted-all` warning is added. The function never
  * throws; a malformed input shape degrades to a no-op the caller can
- * observe in the result.
+ * observe in the result. Re-applying replaces a route's existing
+ * meter reason with this call's one: only one meter reason per route
+ * survives a walk, and other reasons (such as `floor-not-met`) are
+ * kept.
  */
 export function applyAvailability<
   R extends {
@@ -196,6 +314,11 @@ export function applyAvailability<
   const spendToZero = new Set(options?.spendToZero ?? []);
   const meterStates = groupByMeter(entries);
 
+  // First pass: decide each route's fate in input order.  The route's
+  // first-pass availability is preserved on a "preserve" verdict so the
+  // final route carries the engine's "unknown" or "unmetered". A
+  // shallow copy is made only when the final route differs from the
+  // input.
   const decisions: Array<{
     availability: AvailabilityValue | "preserve";
     group: "kept" | "demoted" | "removed";
@@ -215,9 +338,6 @@ export function applyAvailability<
   }
 
   const warnings: Coded[] = [];
-  // The all-exhausted case: nothing is removed, every route keeps
-  // `exhausted` (with the meter-exhausted reason it would have carried),
-  // and the engine-level warning is added.
   const allExhausted = removedCount > 0 && removedCount === routes.length;
   if (allExhausted) {
     warnings.push(WARNING_EXHAUSTED_ALL);
@@ -226,59 +346,73 @@ export function applyAvailability<
   const newRoutes: R[] = [];
   const removedList: { label: string; reason: Coded }[] = [];
 
-  // Two passes in input order: kept first (preserving input order among
-  // themselves), then demoted (also preserving input order). The all-
-  // exhausted case rewrites the demoted/removed routes into the kept
-  // bucket with "exhausted" availability, so this same loop still
-  // produces the right answer.
-  const finalize = (
-    decision: (typeof decisions)[number],
-    newAvailability: AvailabilityValue,
-  ): void => {
+  const finalize = (decision: (typeof decisions)[number], fallback: AvailabilityValue): void => {
     const { route, reason, group } = decision;
+    // "preserve" means: no entry covers this route's meter. The route
+    // keeps its input availability: a fresh engine call sees "unknown"
+    // (meter) or "unmetered" (no meter) here; a re-apply sees whatever
+    // the prior walk set. A route without an own availability (a plain
+    // {label, meter} input) gets the engine's fallback: "unmetered"
+    // without a meter, "unknown" with one. The fallback is unused on
+    // preserve for routes that already carry an availability.
+    const currentAvailability: AvailabilityValue | undefined = route.availability;
+    const newAvailability =
+      decision.availability === "preserve"
+        ? currentAvailability === undefined
+          ? fallback
+          : currentAvailability
+        : decision.availability;
+    void fallback;
     if (group === "removed" && !allExhausted) {
-      removedList.push({ label: route.label, reason: reason ?? REASON_EXHAUSTED });
+      removedList.push({
+        label: route.label,
+        reason: reason ?? REASON_EXHAUSTED(route.meter ?? "", undefined, undefined),
+      });
       return;
     }
-    const reasons = reason === undefined ? undefined : [...(route.reasons ?? []), reason];
+    const reasons = replaceMeterReasons(route, reason);
+    // reasonsChanged is true when the replacement produced a different
+    // list: either the new reason was added, or an old meter reason was
+    // filtered out without a new one. Both cases need the field to be
+    // present on the returned route. A route that had no reasons on
+    // entry and gains none keeps the same object: reasonsChanged only
+    // flips true when the new list is actually different.
+    const reasonsChanged =
+      reasons !== (route.reasons ?? undefined) ||
+      (reasons !== undefined) !== (route.reasons !== undefined);
     const availabilityChanged = route.availability !== newAvailability;
-    // Preserve the caller's object when nothing changes: returning the
-    // same reference is part of the "only an entry moves a route"
-    // contract.
-    if (!availabilityChanged && reasons === undefined) {
+    if (!availabilityChanged && !reasonsChanged) {
       newRoutes.push(route);
       return;
     }
-    const out = isPlainObject(route)
-      ? ({
-          ...route,
-          availability: newAvailability,
-          ...(reasons === undefined ? {} : { reasons }),
-        } as R)
-      : route;
+    const out: R =
+      reasonsChanged && reasons !== undefined && reasons.length > 0
+        ? ({ ...route, availability: newAvailability, reasons } as R)
+        : reasonsChanged && reasons !== undefined && reasons.length === 0
+          ? ({ ...route, availability: newAvailability } as R)
+          : ({ ...route, availability: newAvailability } as R);
     newRoutes.push(out);
   };
 
   for (const decision of decisions) {
     if (decision.group !== "kept") continue;
-    const availability =
-      decision.availability === "preserve" ? decision.route.availability : decision.availability;
-    finalize(decision, availability);
+    finalize(decision, "unknown");
   }
   for (const decision of decisions) {
     if (decision.group !== "demoted") continue;
-    finalize(decision, "projected");
+    finalize(decision, "unknown");
   }
   if (allExhausted) {
     for (const decision of decisions) {
-      if (decision.group === "removed") finalize(decision, "exhausted");
+      if (decision.group === "removed") finalize(decision, "unknown");
     }
   } else {
     for (const decision of decisions) {
       if (decision.group === "removed") {
         removedList.push({
           label: decision.route.label,
-          reason: decision.reason ?? REASON_EXHAUSTED,
+          reason:
+            decision.reason ?? REASON_EXHAUSTED(decision.route.meter ?? "", undefined, undefined),
         });
       }
     }
@@ -295,7 +429,9 @@ export function applyAvailability<
  * function reads `now` from the argument; the engine and consumers pass
  * their own clock. An entry with no `resetsAt` is kept. An entry whose
  * `resetsAt` cannot be parsed is kept too (the CLI reader reports a
- * warning, but the engine treats the document as best-effort data). */
+ * warning, but the engine treats the document as best-effort data). An
+ * entry whose `resetsAt` equals `now` is dropped: the boundary is
+ * inclusive of `now`. */
 export function dropExpired(entries: readonly AvailabilityEntry[], now: Date): AvailabilityEntry[] {
   const out: AvailabilityEntry[] = [];
   const nowMs = now.getTime();

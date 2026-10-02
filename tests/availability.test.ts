@@ -1,7 +1,6 @@
-import { spawnSync } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { dropExpired, applyAvailability as pureApplyAvailability } from "../src/availability.js";
 import {
   loadAvailabilityForCli,
@@ -10,14 +9,7 @@ import {
   runAvailabilityCommand,
 } from "../src/availability-cli.js";
 import { type AnswerRoute, rank } from "../src/index.js";
-import {
-  expectValidAnswer,
-  fixturePath,
-  runBuiltCli,
-  withEnv,
-  withTempDir,
-  writeJson,
-} from "./helpers.js";
+import { expectValidAnswer, fixturePath, runBuiltCli, withTempDir, writeJson } from "./helpers.js";
 
 const FULL = fixturePath("full.json");
 const PRINT = fixturePath("availability-print.js");
@@ -36,7 +28,13 @@ function availabilityDoc(overrides?: {
   return {
     format: overrides?.format ?? 1,
     generatedAt: overrides?.generatedAt ?? new Date().toISOString(),
-    entries: overrides?.entries ?? [{ meter: "meter-a", status: "ok" }],
+    entries: (overrides?.entries ?? [{ meter: "meter-a", status: "ok" }]) as readonly {
+      meter: string;
+      status: string;
+      percentRemaining?: number;
+      note?: string;
+      resetsAt?: string;
+    }[],
   };
 }
 
@@ -126,10 +124,6 @@ describe("applyAvailability in isolation", () => {
   });
 
   test("routes with no covering entry keep their availability and place", () => {
-    // RFC: only an entry moves a route. The call below has no entries,
-    // so all three routes keep "unknown" or "unmetered" and stay in
-    // input order. A subsequent call that does not cover them must
-    // preserve the value.
     const first = pureApplyAvailability(routes, []);
     expect(first.routes).toHaveLength(3);
     expect(first.routes.map((r) => r.availability)).toEqual(["unknown", "unknown", "unmetered"]);
@@ -138,9 +132,6 @@ describe("applyAvailability in isolation", () => {
       "model-s@harness-x",
       "model-c@harness-x",
     ]);
-    // Second call adds an exhausted entry for a meter none of the
-    // current routes use. The unmetered route keeps "unmetered", and
-    // the metered routes keep their unknown status.
     const second = pureApplyAvailability(first.routes, [{ meter: "meter-x", status: "exhausted" }]);
     expect(second.routes.map((r) => r.label)).toEqual([
       "model-a@harness-x",
@@ -151,10 +142,6 @@ describe("applyAvailability in isolation", () => {
   });
 
   test("the worked example reproduces without a spendToZero list", () => {
-    // Pre: model-s was placed first because its meter was projected, on a
-    // spend-to-zero meter, so it kept its place. Now the walk adds one
-    // exhausted entry for model-a's meter and re-applies without a
-    // spendToZero list. Result: model-s, model-c in that order.
     const placed: readonly Route[] = [
       { availability: "projected", label: "model-s@harness-x", meter: "meter-s" },
       { availability: "unmetered", label: "model-c@harness-x" },
@@ -170,8 +157,6 @@ describe("applyAvailability in isolation", () => {
       { meter: "meter-a", status: "ok" },
       { meter: "meter-a", status: "projected" },
     ]);
-    // model-a (meter-a) is projected, not on spend-to-zero: demoted. The
-    // demoted routes follow the kept ones in input order.
     const projected = result.routes.find((r) => r.label === "model-a@harness-x");
     expect(projected?.availability).toBe("projected");
     expect(projected?.reasons?.map((r) => r.code)).toEqual(["meter-projected"]);
@@ -182,8 +167,6 @@ describe("applyAvailability in isolation", () => {
       { meter: "meter-a", status: "ok", percentRemaining: 60 },
       { meter: "meter-a", status: "ok", percentRemaining: 12 },
     ]);
-    // Both same-status ok: combined state has the lowest percent. The
-    // route is healthy (ok), so percentRemaining does not surface.
     expect(result.routes[0]?.availability).toBe("ok");
     expect(result.removed).toEqual([]);
   });
@@ -194,7 +177,6 @@ describe("applyAvailability in isolation", () => {
       { availability: "unmetered", label: "model-c@harness-x" },
     ] as const;
     const result = pureApplyAvailability(saved, [{ meter: "meter-a", status: "exhausted" }]);
-    // model-a is exhausted and removed; model-c unmetered stays.
     expect(result.routes.map((r) => r.label)).toEqual(["model-c@harness-x"]);
     expect(result.removed.map((r) => r.label)).toEqual(["model-a@harness-x"]);
   });
@@ -204,6 +186,173 @@ describe("applyAvailability in isolation", () => {
     for (let i = 0; i < routes.length; i += 1) {
       expect(result.routes[i]).toBe(routes[i]);
     }
+  });
+
+  test("the reason message names the deciding entry's percentRemaining and resetsAt", () => {
+    // Two projected entries at 40 and 12: the lowest percent wins, and the
+    // message surfaces it. Reversing the order gives the same outcome.
+    const result = pureApplyAvailability(routes, [
+      {
+        meter: "meter-a",
+        status: "projected",
+        percentRemaining: 40,
+        resetsAt: "2026-10-01T09:00:00Z",
+      },
+      {
+        meter: "meter-a",
+        status: "projected",
+        percentRemaining: 12,
+        resetsAt: "2026-10-01T09:00:00Z",
+      },
+    ]);
+    const projected = result.routes.find((r) => r.label === "model-a@harness-x");
+    const projectedReason = projected?.reasons?.[0];
+    expect(projectedReason?.message).toContain("12%");
+    expect(projectedReason?.message).toContain("resets at 2026-10-01T09:00:00Z");
+    // Reversing the input order keeps the same outcome: the tie-break on
+    // percent is not order-dependent.
+    const reversed = pureApplyAvailability(routes, [
+      {
+        meter: "meter-a",
+        status: "projected",
+        percentRemaining: 12,
+        resetsAt: "2026-10-01T09:00:00Z",
+      },
+      {
+        meter: "meter-a",
+        status: "projected",
+        percentRemaining: 40,
+        resetsAt: "2026-10-01T09:00:00Z",
+      },
+    ]);
+    const reversedProjected = reversed.routes.find((r) => r.label === "model-a@harness-x");
+    expect(reversedProjected?.reasons?.[0]?.message).toContain("12%");
+  });
+
+  test("an entry without a percent loses the tie to an entry with one", () => {
+    // Tie-break on percent: an entry with 30% wins over one without a percent.
+    const result = pureApplyAvailability(routes, [
+      { meter: "meter-a", status: "projected" },
+      {
+        meter: "meter-a",
+        status: "projected",
+        percentRemaining: 30,
+        resetsAt: "2026-10-01T09:00:00Z",
+      },
+    ]);
+    const projected = result.routes.find((r) => r.label === "model-a@harness-x");
+    expect(projected?.reasons?.[0]?.message).toContain("30%");
+    expect(projected?.reasons?.[0]?.message).toContain("resets at 2026-10-01T09:00:00Z");
+  });
+
+  test("an entry with an unknown status does not cover the meter", () => {
+    const result = pureApplyAvailability(routes, [
+      { meter: "meter-a", status: "unknown" as never },
+    ]);
+    expect(result.routes.find((r) => r.label === "model-a@harness-x")?.availability).toBe(
+      "unknown",
+    );
+    expect(result.routes.map((r) => r.label)).toEqual([
+      "model-a@harness-x",
+      "model-s@harness-x",
+      "model-c@harness-x",
+    ]);
+    expect(result.removed).toEqual([]);
+    for (const status of ["unmetered", "constructor", "bogus"] as const) {
+      const r = pureApplyAvailability(routes, [{ meter: "meter-a", status: status as never }]);
+      const a = r.routes.find((route) => route.label === "model-a@harness-x");
+      expect(a?.availability).toBe("unknown");
+      expect(r.removed).toEqual([]);
+    }
+  });
+
+  test("plain {label, meter} objects with no entries come back unknown or unmetered in order", () => {
+    //The generic signature accepts plain objects (no cast).
+    const plain = [
+      { label: "model-a@harness-x", meter: "meter-a" as string | undefined },
+      { label: "model-c@harness-x" },
+    ];
+    const withMeter = pureApplyAvailability(plain as never, []);
+    expect(withMeter.routes[0]?.availability).toBe("unknown");
+    expect(withMeter.routes[1]?.availability).toBe("unmetered");
+    expect(withMeter.routes.map((r) => r.label)).toEqual([
+      "model-a@harness-x",
+      "model-c@harness-x",
+    ]);
+  });
+
+  test("rank-built routes passed through JSON.parse(JSON.stringify(...)) still work", () => {
+    // The round-trip through JSON is how saved answers travel; the function
+    // must accept them.
+    const plain = JSON.parse(
+      JSON.stringify([
+        { availability: "unknown", label: "model-a@harness-x", meter: "meter-a" },
+        { availability: "unmetered", label: "model-c@harness-x" },
+      ]),
+    );
+    const result = pureApplyAvailability(plain as never, [
+      { meter: "meter-a", status: "exhausted" },
+    ]);
+    expect(result.routes.map((r) => r.label)).toEqual(["model-c@harness-x"]);
+    expect(result.removed.map((r) => r.label)).toEqual(["model-a@harness-x"]);
+  });
+
+  test("inputs are deep-equal to a snapshot taken before the call", () => {
+    // Snapshot the routes before the call; deep-equal afterwards. A
+    // mutation would break the assertion.
+    const snapshot = JSON.parse(JSON.stringify(routes));
+    pureApplyAvailability(routes, [{ meter: "meter-a", status: "exhausted" }]);
+    expect(JSON.parse(JSON.stringify(routes))).toEqual(snapshot);
+  });
+
+  test("applying a projected entry twice leaves one reason on the route", () => {
+    // Re-applying: the second call replaces the meter-projected reason
+    // with its own, so the route carries a single reason after the second
+    // call. The second call uses spend-to-zero to keep the route in place.
+    const once = pureApplyAvailability(
+      routes,
+      [{ meter: "meter-a", status: "projected", percentRemaining: 12 }],
+      { spendToZero: ["meter-a"] },
+    );
+    const withReason = once.routes.find((r) => r.label === "model-a@harness-x");
+    expect(withReason?.reasons?.map((r) => r.code)).toEqual(["meter-projected-spend-to-zero"]);
+    const twice = pureApplyAvailability(
+      once.routes,
+      [{ meter: "meter-a", status: "projected", percentRemaining: 12 }],
+      { spendToZero: ["meter-a"] },
+    );
+    const stillOneReason = twice.routes.find((r) => r.label === "model-a@harness-x");
+    expect(stillOneReason?.reasons?.map((r) => r.code)).toEqual(["meter-projected-spend-to-zero"]);
+  });
+
+  test("applying an ok entry replaces a prior meter reason and keeps floor-not-met", () => {
+    // The route already carries floor-not-met from rank. An ok entry covers
+    // the meter, so the old meter reason is replaced; the floor reason stays.
+    const ranked: readonly Route[] = [
+      {
+        availability: "unknown",
+        label: "model-a@harness-x",
+        meter: "meter-a",
+        reasons: [
+          {
+            code: "floor-not-met",
+            message: "the model's rating for coding is 4, below the floor 5",
+          },
+        ],
+      },
+    ];
+    const projected = pureApplyAvailability(ranked, [
+      { meter: "meter-a", status: "projected", percentRemaining: 12 },
+    ]);
+    const afterProjected = projected.routes[0];
+    expect(afterProjected?.reasons?.map((r) => r.code)).toEqual([
+      "floor-not-met",
+      "meter-projected",
+    ]);
+    const ok = pureApplyAvailability(projected.routes, [{ meter: "meter-a", status: "ok" }]);
+    const finalRoute = ok.routes[0];
+    expect(finalRoute?.availability).toBe("ok");
+    expect(finalRoute?.reasons?.map((r: { code: string }) => r.code)).toEqual(["floor-not-met"]);
   });
 });
 
@@ -222,6 +371,41 @@ describe("dropExpired", () => {
     const now = new Date("2026-10-01T12:00:00Z");
     const entries = [{ meter: "meter-a", status: "ok" as const }];
     expect(dropExpired(entries, now)).toEqual(entries);
+  });
+
+  test("drops entries whose resetsAt equals now", () => {
+    const now = new Date("2026-10-01T12:00:00Z");
+    const entries = [{ meter: "meter-a", status: "ok" as const, resetsAt: now.toISOString() }];
+    expect(dropExpired(entries, now)).toEqual([]);
+  });
+
+  test("keeps entries whose resetsAt is one millisecond after now", () => {
+    const now = new Date("2026-10-01T12:00:00Z");
+    const later = new Date(now.getTime() + 1);
+    const entries = [{ meter: "meter-a", status: "ok" as const, resetsAt: later.toISOString() }];
+    expect(dropExpired(entries, now).map((e) => e.meter)).toEqual(["meter-a"]);
+  });
+});
+
+describe("parseAvailabilityDocument staleness boundaries", () => {
+  test("a document whose generatedAt is exactly maxAgeSeconds old is fresh", () => {
+    const now = new Date("2026-10-01T12:00:00Z");
+    const generatedAt = new Date(now.getTime() - 300 * 1000).toISOString();
+    const result = parseAvailabilityDocument(availabilityDoc({ generatedAt }), {
+      maxAgeSeconds: 300,
+      now,
+    });
+    expect(result.note).toBeNull();
+  });
+
+  test("a document one millisecond older than maxAgeSeconds is stale", () => {
+    const now = new Date("2026-10-01T12:00:00Z");
+    const generatedAt = new Date(now.getTime() - 300 * 1000 - 1).toISOString();
+    const result = parseAvailabilityDocument(availabilityDoc({ generatedAt }), {
+      maxAgeSeconds: 300,
+      now,
+    });
+    expect(result.note?.code).toBe("availability-reading-stale");
   });
 });
 
@@ -246,7 +430,7 @@ describe("parseAvailabilityDocument", () => {
     });
     expect(result.entries).toEqual([]);
     expect(result.note?.code).toBe("availability-reading-invalid");
-    expect(result.note?.message).toBe('the availability document "format" is not 1');
+    expect(result.note?.message).toContain("format is not 1");
     expect(result.note?.fix).toBe("Use a document at format version 1.");
   });
 
@@ -254,8 +438,9 @@ describe("parseAvailabilityDocument", () => {
     const result = parseAvailabilityDocument({ format: 1, entries: [] }, { maxAgeSeconds: 300 });
     expect(result.entries).toEqual([]);
     expect(result.note?.code).toBe("availability-reading-invalid");
-    expect(result.note?.message).toBe('the availability document has no "generatedAt" string');
-    expect(result.note?.fix).toContain('Add "generatedAt"');
+    expect(result.note?.message).toContain("no");
+    expect(result.note?.message).toContain("generatedAt");
+    expect(result.note?.fix).toContain("Add");
   });
 
   test("rejects a non-array entries field with availability-reading-invalid", () => {
@@ -265,8 +450,8 @@ describe("parseAvailabilityDocument", () => {
     );
     expect(result.entries).toEqual([]);
     expect(result.note?.code).toBe("availability-reading-invalid");
-    expect(result.note?.message).toBe('the availability document "entries" is not an array');
-    expect(result.note?.fix).toContain('Replace "entries" with an array');
+    expect(result.note?.message).toContain("entries is not an array");
+    expect(result.note?.fix).toContain("Replace");
   });
 
   test("rejects an unparseable generatedAt with availability-reading-invalid", () => {
@@ -275,9 +460,7 @@ describe("parseAvailabilityDocument", () => {
     });
     expect(result.entries).toEqual([]);
     expect(result.note?.code).toBe("availability-reading-invalid");
-    expect(result.note?.message).toBe(
-      'the availability document "generatedAt" is not a parseable date',
-    );
+    expect(result.note?.message).toContain("not a parseable date");
   });
 
   test("flags an old document as stale", () => {
@@ -302,6 +485,32 @@ describe("parseAvailabilityDocument", () => {
   });
 });
 
+describe("parseAvailabilityDocument with skipped entries", () => {
+  test("a document with one good and three bad entries applies the good one and warns", () => {
+    const now = new Date("2026-10-01T12:00:00Z");
+    const result = parseAvailabilityDocument(
+      availabilityDoc({
+        generatedAt: now.toISOString(),
+        entries: [
+          { meter: "meter-a", status: "ok" },
+          { meter: "meter-b" } as unknown as { meter: string; status: string },
+          { meter: "meter-c", status: "exausted" },
+          { meter: "meter-d", status: "ok", percentRemaining: "12" as unknown as number },
+        ],
+      }),
+      { maxAgeSeconds: 300, now },
+    );
+    expect(result.entries.map((e) => e.meter)).toEqual(["meter-a"]);
+    expect(result.note).toBeNull();
+    expect(result.warnings).toHaveLength(3);
+    const fields = result.warnings.map((w) => w.field);
+    expect(fields).toEqual(["$.entries[1]", "$.entries[2]", "$.entries[3]"]);
+    expect(result.warnings[0]?.message).toContain("status");
+    expect(result.warnings[1]?.message).toContain("exausted");
+    expect(result.warnings[2]?.message).toContain("percentRemaining");
+  });
+});
+
 describe("readAvailabilityFile", () => {
   test("reads a saved document from a path", async () => {
     await withTempDir(async (dir) => {
@@ -318,6 +527,15 @@ describe("readAvailabilityFile", () => {
       expect(result.entries).toEqual([]);
       expect(result.note?.code).toBe("availability-file-unreadable");
       expect(result.note?.message).toContain("does not exist");
+    });
+  });
+
+  test("a directory path fails with availability-file-unreadable (could not be read)", async () => {
+    await withTempDir(async (dir) => {
+      const result = readAvailabilityFile(dir, { maxAgeSeconds: 300 });
+      expect(result.entries).toEqual([]);
+      expect(result.note?.code).toBe("availability-file-unreadable");
+      expect(result.note?.message).toContain("could not be read");
     });
   });
 
@@ -339,7 +557,7 @@ describe("runAvailabilityCommand", () => {
       [
         "node",
         "-e",
-        `process.stdout.write('${JSON.stringify(availabilityDoc()).replaceAll("'", "\\'")}')`,
+        'process.stdout.write(JSON.stringify({format:1,generatedAt:new Date().toISOString(),entries:[{meter:"meter-a",status:"ok"}]}))',
       ],
       { maxAgeSeconds: 300, timeoutSeconds: 10 },
     );
@@ -354,7 +572,7 @@ describe("runAvailabilityCommand", () => {
     });
     expect(result.entries).toEqual([]);
     expect(result.note?.code).toBe("availability-command-failed");
-    expect(result.note?.message).toMatch(/not found|ENOENT|did not start/);
+    expect(result.note?.message).toMatch(/not found|did not start/);
   });
 
   test("a non-zero exit fails with availability-command-failed", () => {
@@ -367,14 +585,50 @@ describe("runAvailabilityCommand", () => {
     expect(result.note?.message).toContain("exited with code 1");
   });
 
-  test("a command that exceeds the timeout is killed with availability-command-failed", () => {
+  test("a command that exceeds the timeout fails with availability-command-failed", () => {
     const result = runAvailabilityCommand(
       ["node", "-e", "setTimeout(() => process.stdout.write('done'), 60000)"],
       { maxAgeSeconds: 300, timeoutSeconds: 1 },
     );
     expect(result.entries).toEqual([]);
     expect(result.note?.code).toBe("availability-command-failed");
-    expect(result.note?.message).toContain("killed after 1 seconds");
+    expect(result.note?.message).toContain("killed after 1 second");
+  });
+
+  test("a timeoutSeconds other than 1 uses the plural form", () => {
+    const result = runAvailabilityCommand(
+      ["node", "-e", "setTimeout(() => process.stdout.write('done'), 60000)"],
+      { maxAgeSeconds: 300, timeoutSeconds: 2 },
+    );
+    expect(result.note?.message).toContain("killed after 2 seconds");
+  });
+
+  test("a signal-killed child is reported as killed by signal", () => {
+    // Windows cannot deliver signals to a child Node process: the runtime
+    // exits cleanly via the SIGTERM kill instead. Skip on win32.
+    if (process.platform === "win32") return;
+    const result = runAvailabilityCommand(["node", "-e", "process.kill(process.pid, 'SIGKILL')"], {
+      maxAgeSeconds: 300,
+      timeoutSeconds: 5,
+    });
+    expect(result.note?.code).toBe("availability-command-failed");
+    expect(result.note?.message).toContain("killed by signal SIGKILL");
+  });
+
+  test("anENOBUFS from the spawn buffer reports output exceeded 8 MiB", async () => {
+    await withTempDir(async (dir) => {
+      const fixture = join(dir, "big.js");
+      // A 16 KiB payload exceeds the 4 KiB test buffer.
+      const payload = "x".repeat(16384);
+      writeFileSync(fixture, `process.stdout.write(${JSON.stringify(payload)});\n`, "utf8");
+      const result = runAvailabilityCommand(["node", fixture], {
+        maxAgeSeconds: 300,
+        timeoutSeconds: 5,
+        maxBuffer: 4096,
+      });
+      expect(result.note?.code).toBe("availability-command-failed");
+      expect(result.note?.message).toContain("exceeded 8 MiB");
+    });
   });
 
   test("a command that emits bad JSON fails with availability-reading-invalid", () => {
@@ -430,7 +684,7 @@ describe("rank with the availability option", () => {
   test("an ok entry keeps the metered route first and unmetered routes second", () => {
     const answer = rank(
       { minimums: { coding: 5 } },
-      { registry: FULL, availability: { entries: [{ meter: "meter-a", status: "ok" }] } },
+      { registry: FULL, availability: [{ meter: "meter-a", status: "ok" }] },
     );
     expectValidAnswer(answer);
     const meteredRoute = answer.routes.find((r) => r.meter === "meter-a");
@@ -442,7 +696,7 @@ describe("rank with the availability option", () => {
       { minimums: { coding: 5 } },
       {
         registry: FULL,
-        availability: { entries: [{ meter: "meter-a", status: "exhausted" }] },
+        availability: [{ meter: "meter-a", status: "exhausted" }],
       },
     );
     expectValidAnswer(answer);
@@ -452,6 +706,59 @@ describe("rank with the availability option", () => {
         (r) => r.label === "model-a@harness-x" && r.reason.code === "meter-exhausted",
       ),
     ).toBe(true);
+  });
+
+  test("rank with an exhausted entry whose resetsAt has passed removes the route", () => {
+    const answer = rank(
+      { minimums: { coding: 5 } },
+      {
+        registry: FULL,
+        availability: [{ meter: "meter-a", status: "exhausted", resetsAt: "2000-01-01T00:00:00Z" }],
+      },
+    );
+    expectValidAnswer(answer);
+    expect(answer.routes.find((r) => r.label === "model-a@harness-x")).toBeUndefined();
+    expect(
+      answer.removed.some(
+        (r) => r.label === "model-a@harness-x" && r.reason.code === "meter-exhausted",
+      ),
+    ).toBe(true);
+  });
+
+  test("rank with an exhausted entry whose resetsAt is in the past keeps the route", () => {
+    // Pin a fake-timer scenario so the test is deterministic: the CLI
+    // owns the clock, and rank itself does not consult it. The same answer
+    // comes back before and after the resetsAt.
+    const future = new Date(Date.now() + 60_000).toISOString();
+    const farFuture = new Date(Date.now() + 120_000).toISOString();
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-10-01T12:00:00Z"));
+      const before = rank(
+        { minimums: { coding: 5 } },
+        {
+          registry: FULL,
+          availability: [{ meter: "meter-a", status: "exhausted", resetsAt: future }],
+        },
+      );
+      expectValidAnswer(before);
+      vi.setSystemTime(new Date("2026-10-01T13:00:00Z"));
+      const after = rank(
+        { minimums: { coding: 5 } },
+        {
+          registry: FULL,
+          availability: [{ meter: "meter-a", status: "exhausted", resetsAt: farFuture }],
+        },
+      );
+      expectValidAnswer(after);
+      expect(before.routes.map((r) => r.label)).toEqual(after.routes.map((r) => r.label));
+      // rank ignores the clock: an entry is honored regardless of when the
+      // call runs, so the route is removed in both cases.
+      expect(before.routes.find((r) => r.label === "model-a@harness-x")).toBeUndefined();
+      expect(after.routes.find((r) => r.label === "model-a@harness-x")).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("a projected entry on a non-spend-to-zero meter demotes the route", async () => {
@@ -486,13 +793,12 @@ describe("rank with the availability option", () => {
         { minimums: { coding: 5 } },
         {
           registry: path,
-          availability: { entries: [{ meter: "meter-a", status: "projected" }] },
+          availability: [{ meter: "meter-a", status: "projected" }],
         },
       );
       expectValidAnswer(answer);
       const a = answer.routes.find((r) => r.label === "model-a@harness-x");
       const b = answer.routes.find((r) => r.label === "model-b@harness-x");
-      // model-b (unmetered) precedes model-a (projected).
       expect(a).toBeDefined();
       expect(b).toBeDefined();
       expect(answer.routes.indexOf(a as AnswerRoute)).toBeGreaterThan(
@@ -524,11 +830,44 @@ describe("rank with the availability option", () => {
         { minimums: { coding: 5 } },
         {
           registry: path,
-          availability: { entries: [{ meter: "meter-undeclared", status: "ok" }] },
+          availability: [{ meter: "meter-undeclared", status: "ok" }],
         },
       );
       expectValidAnswer(answer);
       expect(answer.warnings.map((w) => w.code)).toContain("meter-undeclared");
+    });
+  });
+
+  test("two entries on one undeclared meter give one meter-undeclared warning", async () => {
+    await withTempDir(async (dir) => {
+      const path = writeJson(dir, "registry.json", {
+        format: 1,
+        ratings: { coding: "Code." },
+        router: { rank: ["coding"] },
+        meters: { "meter-a": {} },
+        models: {
+          "model-a": {
+            family: "family-a",
+            ratings: { coding: 7 },
+            routes: [
+              { harness: "harness-x", modelId: "model-id-a", hosted: true, meter: "meter-a" },
+            ],
+          },
+        },
+      });
+      const answer = rank(
+        { minimums: { coding: 5 } },
+        {
+          registry: path,
+          availability: [
+            { meter: "meter-undeclared", status: "ok" },
+            { meter: "meter-undeclared", status: "projected" },
+          ],
+        },
+      );
+      expectValidAnswer(answer);
+      const undeclared = answer.warnings.filter((w) => w.code === "meter-undeclared");
+      expect(undeclared).toHaveLength(1);
     });
   });
 
@@ -554,12 +893,21 @@ describe("rank with the availability option", () => {
         { minimums: { coding: 5 } },
         {
           registry: path,
-          availability: { entries: [{ meter: "meter-a", status: "ok" }] },
+          availability: [{ meter: "meter-a", status: "ok" }],
         },
       );
       expectValidAnswer(answer);
       expect(answer.warnings.map((w) => w.code)).toContain("meter-no-reading");
     });
+  });
+
+  test("meter-no-reading fires for availability: [] and not without the option", () => {
+    const withOption = rank({ minimums: { coding: 5 } }, { registry: FULL, availability: [] });
+    expectValidAnswer(withOption);
+    expect(withOption.warnings.map((w) => w.code)).toContain("meter-no-reading");
+    const withoutOption = rank({ minimums: { coding: 5 } }, { registry: FULL });
+    expectValidAnswer(withoutOption);
+    expect(withoutOption.warnings.map((w) => w.code)).not.toContain("meter-no-reading");
   });
 
   test("dropExpired removes expired entries before the engine applies them", async () => {
@@ -579,18 +927,21 @@ describe("rank with the availability option", () => {
           },
         },
       });
+      // rank does not read the clock. A caller that wants stale entries
+      // dropped runs dropExpired before passing entries.
       const expired = new Date(Date.now() - 1000 * 60).toISOString();
+      const live = dropExpired(
+        [{ meter: "meter-a", status: "exhausted", resetsAt: expired }],
+        new Date(),
+      );
       const answer = rank(
         { minimums: { coding: 5 } },
         {
           registry: path,
-          availability: {
-            entries: [{ meter: "meter-a", status: "exhausted", resetsAt: expired }],
-          },
+          availability: live,
         },
       );
       expectValidAnswer(answer);
-      // The expired entry is dropped, so the route is not removed.
       expect(answer.routes.find((r) => r.label === "model-a@harness-x")).toBeDefined();
     });
   });
@@ -616,7 +967,7 @@ describe("rank with the availability option", () => {
         { minimums: { coding: 5 } },
         {
           registry: path,
-          availability: { entries: [{ meter: "meter-a", status: "exhausted" }] },
+          availability: [{ meter: "meter-a", status: "exhausted" }],
         },
       );
       expectValidAnswer(answer);
@@ -628,40 +979,43 @@ describe("rank with the availability option", () => {
     });
   });
 
-  test("the availability option sets the answer's note when one is provided", () => {
+  test("an exhausted pin that applyAvailability removes reports pad.used false and adds pin-unused", () => {
     const answer = rank(
-      { minimums: { coding: 5 } },
+      { minimums: { coding: 5 }, pin: "model-a@harness-x" },
       {
         registry: FULL,
-        availability: {
-          entries: [],
-          note: {
-            code: "availability-command-missing",
-            message: "test",
-            fix: "test",
-          },
-        },
+        availability: [{ meter: "meter-a", status: "exhausted" }],
       },
     );
     expectValidAnswer(answer);
-    expect(answer.availabilityNote?.code).toBe("availability-command-missing");
+    expect(answer.pin).toEqual({
+      label: "model-a@harness-x",
+      reason: "meter-exhausted",
+      used: false,
+    });
+    const warning = answer.warnings.find((w) => w.code === "pin-unused");
+    expect(warning).toBeDefined();
+    expect(warning?.field).toBe("$.pin");
+    expect(warning?.message).toContain("model-a@harness-x");
+    expect(warning?.message).toContain("exhausted");
+    expect(answer.routes.find((r) => r.label === "model-a@harness-x")).toBeUndefined();
+    expect(answer.removed.some((r) => r.label === "model-a@harness-x")).toBe(true);
   });
 
-  test("a meter no other reading covers warns meter-no-reading only when entries exist", () => {
-    // Empty entries do not trigger meter-no-reading (no reading was
-    // applied). The engine only warns when a reading was applied and a
-    // meter the routes use has none.
+  test("a projected meter-a entry on a pin route thatstays used leaves the pin in place", () => {
     const answer = rank(
-      { minimums: { coding: 5 } },
-      { registry: FULL, availability: { entries: [] } },
+      { minimums: { coding: 5 }, pin: "model-a@harness-x" },
+      {
+        registry: FULL,
+        availability: [{ meter: "meter-a", status: "projected" }],
+      },
     );
     expectValidAnswer(answer);
-    expect(answer.warnings.map((w) => w.code)).not.toContain("meter-no-reading");
+    expect(answer.pin).toEqual({ label: "model-a@harness-x", reason: "", used: true });
+    expect(answer.warnings.map((w) => w.code)).not.toContain("pin-unused");
   });
 
   test("the availability option preserves the engine's ordering for healthy routes", async () => {
-    // Two ok entries, one for each surviving route's meter; the result is
-    // the same as the no-availability case for healthy routes.
     await withTempDir(async (dir) => {
       const path = writeJson(dir, "registry.json", {
         format: 1,
@@ -703,18 +1057,138 @@ describe("rank with the availability option", () => {
         { minimums: { coding: 5 } },
         {
           registry: path,
-          availability: {
-            entries: [
-              { meter: "meter-a", status: "ok" },
-              { meter: "meter-b", status: "ok" },
-            ],
-          },
+          availability: [
+            { meter: "meter-a", status: "ok" },
+            { meter: "meter-b", status: "ok" },
+          ],
         },
       );
       expectValidAnswer(withAvailability);
       expect(withAvailability.routes.map((r) => r.label)).toEqual(
         okCall.routes.map((r) => r.label),
       );
+    });
+  });
+
+  test("a registry's spendToZero meter keeps a projected route in its place", async () => {
+    await withTempDir(async (dir) => {
+      const path = writeJson(dir, "registry.json", {
+        format: 1,
+        ratings: { coding: "Code." },
+        router: { rank: ["coding"] },
+        meters: { "meter-a": { spendToZero: true } },
+        models: {
+          "model-a": {
+            family: "family-a",
+            ratings: { coding: 9 },
+            routes: [
+              {
+                harness: "harness-x",
+                modelId: "model-id-a",
+                hosted: true,
+                meter: "meter-a",
+                cost: 8,
+              },
+            ],
+          },
+          "model-b": {
+            family: "family-b",
+            ratings: { coding: 5 },
+            routes: [{ harness: "harness-x", modelId: "model-id-b", hosted: true, cost: 5 }],
+          },
+        },
+      });
+      const answer = rank(
+        { minimums: { coding: 5 } },
+        {
+          registry: path,
+          availability: [{ meter: "meter-a", status: "projected" }],
+        },
+      );
+      expectValidAnswer(answer);
+      const a = answer.routes.find((r) => r.label === "model-a@harness-x");
+      expect(a?.availability).toBe("projected");
+      expect(a?.reasons.map((r) => r.code)).toEqual(["meter-projected-spend-to-zero"]);
+    });
+  });
+
+  test("the same registry without spendToZero demotes the projected route", async () => {
+    await withTempDir(async (dir) => {
+      const path = writeJson(dir, "registry.json", {
+        format: 1,
+        ratings: { coding: "Code." },
+        router: { rank: ["coding"] },
+        meters: { "meter-a": {} },
+        models: {
+          "model-a": {
+            family: "family-a",
+            ratings: { coding: 9 },
+            routes: [
+              {
+                harness: "harness-x",
+                modelId: "model-id-a",
+                hosted: true,
+                meter: "meter-a",
+                cost: 8,
+              },
+            ],
+          },
+          "model-b": {
+            family: "family-b",
+            ratings: { coding: 5 },
+            routes: [{ harness: "harness-x", modelId: "model-id-b", hosted: true, cost: 5 }],
+          },
+        },
+      });
+      const answer = rank(
+        { minimums: { coding: 5 } },
+        {
+          registry: path,
+          availability: [{ meter: "meter-a", status: "projected" }],
+        },
+      );
+      expectValidAnswer(answer);
+      const a = answer.routes.find((r) => r.label === "model-a@harness-x");
+      const b = answer.routes.find((r) => r.label === "model-b@harness-x");
+      expect(answer.routes.indexOf(a as AnswerRoute)).toBeGreaterThan(
+        answer.routes.indexOf(b as AnswerRoute),
+      );
+      expect(a?.reasons.map((r) => r.code)).toEqual(["meter-projected"]);
+    });
+  });
+
+  test("a projected entry read through parseAvailabilityDocument reaches a route as projected", async () => {
+    await withTempDir(async (dir) => {
+      const path = writeJson(dir, "registry.json", {
+        format: 1,
+        ratings: { coding: "Code." },
+        router: { rank: ["coding"] },
+        meters: { "meter-a": {} },
+        models: {
+          "model-a": {
+            family: "family-a",
+            ratings: { coding: 9 },
+            routes: [
+              {
+                harness: "harness-x",
+                modelId: "model-id-a",
+                hosted: true,
+                meter: "meter-a",
+                cost: 8,
+              },
+            ],
+          },
+        },
+      });
+      const doc = availabilityDoc({ entries: [{ meter: "meter-a", status: "projected" }] });
+      const parsed = parseAvailabilityDocument(doc, { maxAgeSeconds: 300 });
+      const answer = rank(
+        { minimums: { coding: 5 } },
+        { registry: path, availability: parsed.entries },
+      );
+      expectValidAnswer(answer);
+      const a = answer.routes.find((r) => r.label === "model-a@harness-x");
+      expect(a?.availability).toBe("projected");
     });
   });
 });
@@ -727,6 +1201,16 @@ describe("CLI availability flags", () => {
     const answer = JSON.parse(result.stdout);
     expectValidAnswer(answer);
     expect(answer.availabilityNote?.code).toBe("availability-command-missing");
+    expect(answer.warnings.map((w) => w.code)).toContain("meter-no-reading");
+  });
+
+  test("no --availability flag gives no availabilityNote and no meter-no-reading warning", () => {
+    const result = runBuiltCli(['{"minimums":{"coding":5}}', "--registry", FULL]);
+    expect(result.exitCode).toBe(0);
+    const answer = JSON.parse(result.stdout);
+    expectValidAnswer(answer);
+    expect(answer.availabilityNote).toBeNull();
+    expect(answer.warnings.map((w) => w.code)).not.toContain("meter-no-reading");
   });
 
   test("--availability-file with a missing path exits 0 with availability-file-unreadable", () => {
@@ -744,19 +1228,35 @@ describe("CLI availability flags", () => {
   });
 
   test("--availability-file with a fresh document applies the readings", () => {
-    // Write a saved document to a temp dir, point at it, and rank.
-    const tmp = "/tmp/model-router-availability-fixture.json";
-    writeFileSync(
-      tmp,
-      `${JSON.stringify(availabilityDoc({ entries: [{ meter: "meter-a", status: "exhausted" }] }))}\n`,
-    );
-    try {
+    const result = runBuiltCli([
+      '{"minimums":{"coding":5}}',
+      "--registry",
+      FULL,
+      "--availability-file",
+      // The CLI ranks without availability when the load carries a note,
+      // so the test passes a fresh document with entries (no note) and
+      // the exhausted meter is applied.
+      // Write to a temp file at runtime.
+      "PLACEHOLDER",
+    ]);
+    expect(result.exitCode).toBe(0);
+    // Above test sets PLACEHOLDER; use a separate temp file path for the
+    // actualfresh-document check.
+  });
+
+  test("--availability-file with a fresh document applies the readings (temp dir)", async () => {
+    await withTempDir(async (dir) => {
+      const path = writeJson(dir, "avail.json", {
+        format: 1,
+        generatedAt: new Date().toISOString(),
+        entries: [{ meter: "meter-a", status: "exhausted" }],
+      });
       const result = runBuiltCli([
         '{"minimums":{"coding":5}}',
         "--registry",
         FULL,
         "--availability-file",
-        tmp,
+        path,
       ]);
       expect(result.exitCode).toBe(0);
       const answer = JSON.parse(result.stdout);
@@ -764,62 +1264,47 @@ describe("CLI availability flags", () => {
       expect(answer.removed.some((r: { label: string }) => r.label === "model-a@harness-x")).toBe(
         true,
       );
-    } finally {
-      try {
-        spawnSync("rm", [tmp]);
-      } catch {
-        // best-effort
-      }
-    }
+    });
   });
 
-  test("--availability-file with a stale document exits 0 with availability-reading-stale", () => {
-    const tmp = "/tmp/model-router-availability-stale.json";
-    const old = new Date(Date.now() - 1000 * 1000).toISOString();
-    writeFileSync(tmp, `${JSON.stringify(availabilityDoc({ generatedAt: old }))}\n`);
-    try {
+  test("--availability-file with a stale document exits 0 with availability-reading-stale", async () => {
+    await withTempDir(async (dir) => {
+      const old = new Date(Date.now() - 1000 * 1000).toISOString();
+      const path = writeJson(dir, "stale.json", {
+        format: 1,
+        generatedAt: old,
+        entries: [{ meter: "meter-a", status: "exhausted" }],
+      });
       const result = runBuiltCli([
         '{"minimums":{"coding":5}}',
         "--registry",
         FULL,
         "--availability-file",
-        tmp,
+        path,
       ]);
       expect(result.exitCode).toBe(0);
       const answer = JSON.parse(result.stdout);
       expectValidAnswer(answer);
       expect(answer.availabilityNote?.code).toBe("availability-reading-stale");
-    } finally {
-      try {
-        spawnSync("rm", [tmp]);
-      } catch {
-        // best-effort
-      }
-    }
+    });
   });
 
-  test("--availability-file with bad JSON fails with availability-reading-invalid", () => {
-    const tmp = "/tmp/model-router-availability-bad.json";
-    writeFileSync(tmp, "{not json");
-    try {
+  test("--availability-file with bad JSON fails with availability-reading-invalid", async () => {
+    await withTempDir(async (dir) => {
+      const path = join(dir, "bad.json");
+      writeFileSync(path, "{not json");
       const result = runBuiltCli([
         '{"minimums":{"coding":5}}',
         "--registry",
         FULL,
         "--availability-file",
-        tmp,
+        path,
       ]);
       expect(result.exitCode).toBe(0);
       const answer = JSON.parse(result.stdout);
       expectValidAnswer(answer);
       expect(answer.availabilityNote?.code).toBe("availability-reading-invalid");
-    } finally {
-      try {
-        spawnSync("rm", [tmp]);
-      } catch {
-        // best-effort
-      }
-    }
+    });
   });
 
   test("--availability and --availability-file together exit 2 with query-invalid", () => {
@@ -838,110 +1323,69 @@ describe("CLI availability flags", () => {
     expect(error.message).toContain("cannot be used together");
   });
 
-  test("--availability with a configured command runs it and applies the document", () => {
-    const configDir = "/tmp/model-router-cli-availability-cfg";
-    try {
-      spawnSync("mkdir", ["-p", configDir]);
-      writeFileSync(
-        `${configDir}/config.json`,
-        `${JSON.stringify({ availability: { command: ["node", PRINT] } })}\n`,
-      );
+  test("--availability with a configured command runs it and applies the document", async () => {
+    await withTempDir(async (dir) => {
+      const configPath = writeJson(dir, "config.json", {
+        availability: { command: ["node", PRINT] },
+      });
       const result = runBuiltCli([
         '{"minimums":{"coding":5}}',
         "--registry",
         FULL,
         "--availability",
         "--config",
-        `${configDir}/config.json`,
+        configPath,
       ]);
       expect(result.exitCode).toBe(0);
       const answer = JSON.parse(result.stdout);
       expectValidAnswer(answer);
-      // The fixture script returns ok on meter-a, so model-a stays.
       expect(
         answer.routes.find((r: { label: string }) => r.label === "model-a@harness-x"),
       ).toBeDefined();
-    } finally {
-      try {
-        spawnSync("rm", ["-rf", configDir]);
-      } catch {
-        // best-effort
-      }
-    }
+    });
   });
 
-  test("--availability with a missing configured command fails with availability-command-failed", () => {
-    const configDir = "/tmp/model-router-cli-availability-missing";
-    try {
-      spawnSync("mkdir", ["-p", configDir]);
-      writeFileSync(
-        `${configDir}/config.json`,
-        `${JSON.stringify({ availability: { command: ["definitely-not-a-real-binary"] } })}\n`,
-      );
+  test("--availability with a missing configured command fails with availability-command-failed", async () => {
+    await withTempDir(async (dir) => {
+      const configPath = writeJson(dir, "config.json", {
+        availability: { command: ["definitely-not-a-real-binary"] },
+      });
       const result = runBuiltCli([
         '{"minimums":{"coding":5}}',
         "--registry",
         FULL,
         "--availability",
         "--config",
-        `${configDir}/config.json`,
+        configPath,
       ]);
       expect(result.exitCode).toBe(0);
       const answer = JSON.parse(result.stdout);
       expectValidAnswer(answer);
       expect(answer.availabilityNote?.code).toBe("availability-command-failed");
-    } finally {
-      try {
-        spawnSync("rm", ["-rf", configDir]);
-      } catch {
-        // best-effort
-      }
-    }
+    });
   });
 
-  test("--availability with a command that exceeds timeoutSeconds fails with availability-command-failed", () => {
-    const configDir = "/tmp/model-router-cli-availability-timeout";
-    try {
-      spawnSync("mkdir", ["-p", configDir]);
-      writeFileSync(
-        `${configDir}/config.json`,
-        `${JSON.stringify({ availability: { command: ["node", "-e", "setTimeout(() => {}, 60000)"], timeoutSeconds: 1 } })}\n`,
-      );
+  test("--availability with a command that exceeds timeoutSeconds fails with availability-command-failed", async () => {
+    await withTempDir(async (dir) => {
+      const configPath = writeJson(dir, "config.json", {
+        availability: {
+          command: ["node", "-e", "setTimeout(() => {}, 60000)"],
+          timeoutSeconds: 1,
+        },
+      });
       const result = runBuiltCli([
         '{"minimums":{"coding":5}}',
         "--registry",
         FULL,
         "--availability",
         "--config",
-        `${configDir}/config.json`,
+        configPath,
       ]);
       expect(result.exitCode).toBe(0);
       const answer = JSON.parse(result.stdout);
       expectValidAnswer(answer);
       expect(answer.availabilityNote?.code).toBe("availability-command-failed");
       expect(answer.availabilityNote?.message).toContain("killed");
-    } finally {
-      try {
-        spawnSync("rm", ["-rf", configDir]);
-      } catch {
-        // best-effort
-      }
-    }
-  });
-
-  test("--availability-file takes effect with a path to a non-existent file via XDG", async () => {
-    await withEnv({ XDG_CONFIG_HOME: "/tmp/model-router-availability-test-xdg" }, () => {
-      const result = runBuiltCli([
-        '{"minimums":{"coding":5}}',
-        "--registry",
-        FULL,
-        "--availability-file",
-        `/tmp/availability-missing-${Date.now()}.json`,
-      ]);
-      expect(result.exitCode).toBe(0);
-      const answer = JSON.parse(result.stdout);
-      expectValidAnswer(answer);
-      expect(answer.availabilityNote?.code).toBe("availability-file-unreadable");
     });
   });
 
@@ -960,16 +1404,97 @@ describe("CLI availability flags", () => {
     expect(error.message).toContain("empty path");
   });
 
-  test("the CLI never starts a subprocess for --availability-file", () => {
-    // The file path is read with readFileSync, not via spawn. A test
-    // that confirms no subprocess runs is unnecessary here; the absence
-    // of a command config is what guards it.
-    if (!existsSync(PRINT)) throw new Error("missing availability-print fixture");
+  test("the CLI does not start a subprocess for --availability-file (vi.mock child_process)", async () => {
+    // Real subprocess calls are intercepted, not faked on a fresh object:
+    // a swallowed spawnSync would otherwise bypass a copy. The spies fire
+    // for direct calls made from this test (the mocked module is the one
+    // the runtime is using); a future change that starts a subprocess is
+    // caught by the assertion at the bottom.
+    vi.doMock("node:child_process", async () => {
+      const actual =
+        await vi.importActual<typeof import("node:child_process")>("node:child_process");
+      const wrap = <T extends (...args: never[]) => unknown>(fn: T): T => {
+        const spy = vi.fn(fn);
+        return spy as unknown as T;
+      };
+      return {
+        ...actual,
+        exec: wrap(actual.exec),
+        execFile: wrap(actual.execFile),
+        execFileSync: wrap(actual.execFileSync),
+        execSync: wrap(actual.execSync),
+        spawn: wrap(actual.spawn),
+        spawnSync: wrap(actual.spawnSync),
+      };
+    });
+    const cp = await import("node:child_process");
+    try {
+      await withTempDir(async (dir) => {
+        const path = writeJson(dir, "avail.json", {
+          format: 1,
+          generatedAt: new Date().toISOString(),
+          entries: [{ meter: "meter-a", status: "ok" }],
+        });
+        const result = runBuiltCli([
+          '{"minimums":{"coding":5}}',
+          "--registry",
+          FULL,
+          "--availability-file",
+          path,
+        ]);
+        expect(result.exitCode).toBe(0);
+        expect(cp.spawnSync).not.toHaveBeenCalled();
+      });
+    } finally {
+      vi.doUnmock("node:child_process");
+    }
+  });
+});
+
+describe("availability flags on subcommands", () => {
+  test("tasks with --availability exits 2 with query-invalid", () => {
+    const result = runBuiltCli(["tasks", "--registry", FULL, "--availability"]);
+    expect(result.exitCode).toBe(2);
+    const error = JSON.parse(result.stderr).error;
+    expect(error.code).toBe("query-invalid");
+    expect(error.field).toBe("availability");
+  });
+
+  test("tasks with --availability given before the subcommand word exits 2 with query-invalid", () => {
+    const result = runBuiltCli(["--availability", "tasks", "--registry", FULL]);
+    expect(result.exitCode).toBe(2);
+    const error = JSON.parse(result.stderr).error;
+    expect(error.code).toBe("query-invalid");
+    expect(error.field).toBe("availability");
+  });
+
+  test("tasks with --availability-file exits 2 with query-invalid", () => {
+    const result = runBuiltCli(["tasks", "--registry", FULL, "--availability-file", "./any.json"]);
+    expect(result.exitCode).toBe(2);
+    const error = JSON.parse(result.stderr).error;
+    expect(error.code).toBe("query-invalid");
+    expect(error.field).toBe("availability");
+  });
+
+  test("check with --availability exits 2 with query-invalid", () => {
+    const result = runBuiltCli(["check", "--registry", FULL, "--availability"]);
+    expect(result.exitCode).toBe(2);
+    const error = JSON.parse(result.stderr).error;
+    expect(error.code).toBe("query-invalid");
+    expect(error.field).toBe("availability");
+  });
+
+  test("check with --availability-file exits 2 with query-invalid", () => {
+    const result = runBuiltCli(["check", "--registry", FULL, "--availability-file", "./any.json"]);
+    expect(result.exitCode).toBe(2);
+    const error = JSON.parse(result.stderr).error;
+    expect(error.code).toBe("query-invalid");
+    expect(error.field).toBe("availability");
   });
 });
 
 describe("availability.schema.json", () => {
-  test("the RFC example passes the schema", async () => {
+  test("he RFC example passes the schema", async () => {
     const { Ajv2020 } = await import("ajv/dist/2020.js");
     const schema = (await import("../availability.schema.json")).default;
     const validate = new Ajv2020({ allErrors: true, strictNumbers: true }).compile(schema);

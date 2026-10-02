@@ -8,6 +8,7 @@ export type {
   AppliedQuery,
   AvailabilityDocument,
   AvailabilityEntry,
+  AvailabilityEntryStatus,
   AvailabilityResult,
   AvailabilityValue,
   Coded,
