@@ -122,6 +122,22 @@ export interface TaskEntry {
   readonly rank: readonly string[];
 }
 
+/** One policy route validated from the registry's policy section. */
+export interface PolicyRoute {
+  readonly effort?: string;
+  readonly route: string;
+}
+
+/** A policy entry validated from the registry's policy section. A policy
+ * without `spec` applies whatever the query's spec is. */
+export interface PolicyEntry {
+  readonly name: string;
+  readonly routes: readonly PolicyRoute[];
+  readonly spec?: Spec;
+  readonly stakes: readonly Stakes[];
+  readonly task: string;
+}
+
 /** One task summary returned by listTasks. */
 export interface TaskSummary {
   readonly description: string;
@@ -130,6 +146,7 @@ export interface TaskSummary {
 
 /** The router section shape from the registry file, after validation. */
 export interface RouterSections {
+  readonly policies: Readonly<Record<string, PolicyEntry>>;
   readonly rank: readonly string[];
   readonly tasks: Readonly<Record<string, TaskEntry>>;
 }

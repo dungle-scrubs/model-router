@@ -16,12 +16,15 @@ describe("rank with a known task", () => {
     expectValidAnswer(low);
     // task.minimums.low requires coding >= 6.
     // model-a coding=7 (clears, no repo), model-b coding=7 (clears, no repo), model-c coding=8 (clears, repo yes)
-    // policy-a places model-b (rejected by hard limit) and model-c (placed).
+    // policy-a places model-b (rejected by hard limit, kept in removed with
+    // its hard-limit reason and named by a warning) and model-c (placed).
     expect(
-      low.removed
-        .filter((entry) => entry.reason.code === "policy-route-removed")
-        .map((entry) => entry.label),
-    ).toEqual(["model-b@harness-x"]);
+      low.warnings
+        .filter((entry) => entry.code === "policy-route-removed")
+        .map((entry) => entry.message),
+    ).toEqual([
+      'the policy "policy-a" names the route "model-b@harness-x", which a hard limit removed',
+    ]);
     expect(low.routes.map((entry) => entry.label)).toEqual(["model-c@harness-x"]);
 
     const high = rank({ task: "task-a", stakes: "high" }, { registry: loaded });
@@ -29,10 +32,12 @@ describe("rank with a known task", () => {
     // task.minimums.high requires coding >= 8.
     // model-c (8 >= 8) is the only candidate.
     expect(
-      high.removed
-        .filter((entry) => entry.reason.code === "policy-route-removed")
-        .map((entry) => entry.label),
-    ).toEqual(["model-b@harness-x"]);
+      high.warnings
+        .filter((entry) => entry.code === "policy-route-removed")
+        .map((entry) => entry.message),
+    ).toEqual([
+      'the policy "policy-a" names the route "model-b@harness-x", which a hard limit removed',
+    ]);
     expect(high.routes.map((entry) => entry.label)).toEqual(["model-c@harness-x"]);
   });
 
@@ -60,9 +65,21 @@ describe("rank with a known task", () => {
     // task.needs=repo-access, plus inline needs=browser.
     // No model has both: model-c has repo-access but not browser.
     expect(answer.routes).toEqual([]);
-    expect(answer.removed.map((entry) => entry.reason.code)).toEqual(
-      expect.arrayContaining(["needs-not-satisfied", "policy-route-removed"]),
-    );
+    expect(answer.removed.map((entry) => entry.reason.code)).toEqual([
+      "needs-not-satisfied",
+      "needs-not-satisfied",
+      "needs-not-satisfied",
+    ]);
+    // Both of policy-a's routes were removed by the hard limit, so both
+    // are named by policy-route-removed warnings.
+    expect(
+      answer.warnings
+        .filter((entry) => entry.code === "policy-route-removed")
+        .map((entry) => entry.message),
+    ).toEqual([
+      'the policy "policy-a" names the route "model-b@harness-x", which a hard limit removed',
+      'the policy "policy-a" names the route "model-c@harness-x", which a hard limit removed',
+    ]);
   });
 
   test("inline effort replaces the task's effort on the applied query", () => {
@@ -90,7 +107,7 @@ describe("rank with a misspelled task", () => {
     expectValidAnswer(answer);
     expect(answer.warnings.map((entry) => entry.code)).toEqual(["task-unranked"]);
     expect(answer.warnings[0]?.message).toBe(
-      'the task "ghost" was not ranked; this release ranks by router.rank only',
+      'the task "ghost" is not declared in the registry\'s tasks section; ranking by router.rank',
     );
     expect(answer.routes.map((entry) => entry.label)).toEqual([
       "model-c@harness-x",
@@ -130,6 +147,71 @@ describe("rank under spec: settled", () => {
     );
   });
 
+  test("a spec: settled query takes a policy without spec when no settled policy matches", () => {
+    const loaded = tasks();
+    // Keep only the unconditional policy-a: a policy without spec applies
+    // whatever the query's spec is, so the settled query still places it.
+    const onlyUnconditional = {
+      ...loaded,
+      sections: {
+        ...loaded.sections,
+        policy: {
+          "policy-a": {
+            task: "task-a",
+            stakes: ["low", "normal", "high"],
+            routes: [
+              { route: "model-b@harness-x", effort: "medium" },
+              { route: "model-c@harness-x" },
+            ],
+            reason: "Cheap code routes run first.",
+          },
+        },
+      },
+    };
+    const answer = rank(
+      { task: "task-a", stakes: "normal", spec: "settled" },
+      { registry: onlyUnconditional },
+    );
+    expectValidAnswer(answer);
+    expect(answer.routes[0]?.label).toBe("model-c@harness-x");
+    expect(answer.routes[0]?.placedBy).toBe("policy");
+    expect(answer.warnings.map((entry) => entry.code)).not.toContain("policy-none");
+  });
+
+  test("an open query takes a spec: open policy over a specless one, and the file stays valid", () => {
+    const loaded = tasks();
+    // Two policies on task-b, overlapping stakes, different spec conditions:
+    // not a tie. A policy with spec beats one without, so the specless
+    // policy's route (model-a) is not placed.
+    const openBeatsSpecless = {
+      ...loaded,
+      sections: {
+        ...loaded.sections,
+        policy: {
+          "policy-any": {
+            task: "task-b",
+            stakes: ["low", "normal", "high"],
+            routes: [{ route: "model-a@harness-x" }],
+            reason: "Any spec.",
+          },
+          "policy-open": {
+            task: "task-b",
+            stakes: ["low", "normal", "high"],
+            spec: "open",
+            routes: [{ route: "model-c@harness-x" }],
+            reason: "Open specs prefer the capable route.",
+          },
+        },
+      },
+    };
+    const answer = rank({ task: "task-b", stakes: "normal" }, { registry: openBeatsSpecless });
+    expectValidAnswer(answer);
+    expect(answer.routes[0]?.label).toBe("model-c@harness-x");
+    expect(answer.routes[0]?.placedBy).toBe("policy");
+    expect(answer.routes[1]?.label).toBe("model-b@harness-x");
+    expect(answer.routes[1]?.placedBy).toBe("rank");
+  });
+
   test("a spec: open query never matches a spec: settled policy", () => {
     const loaded = tasks();
     const answer = rank({ task: "task-a", stakes: "normal" }, { registry: loaded });
@@ -142,19 +224,19 @@ describe("rank under spec: settled", () => {
 });
 
 describe("rank places a policy's routes first", () => {
-  test("a policy route that a hard limit removed lands in removed with a policy warning", () => {
+  test("a policy route removed by a hard limit keeps its removal reason and adds a warning naming the policy", () => {
     const loaded = tasks();
     const answer = rank({ task: "task-a", stakes: "normal" }, { registry: loaded });
     expectValidAnswer(answer);
-    // policy-a has routes [model-b@harness-x, model-c@harness-x].
-    // model-b lacks repo-access; policy route is removed with policy-route-removed code.
-    const removedPolicy = answer.removed.filter(
-      (entry) => entry.reason.code === "policy-route-removed",
-    );
-    expect(removedPolicy.map((entry) => entry.label)).toEqual(["model-b@harness-x"]);
-    expect(removedPolicy[0]?.reason.field).toBe('$.policy["policy-a"].routes');
-    expect(removedPolicy[0]?.reason.message).toContain("policy-a");
-    expect(removedPolicy[0]?.reason.message).toContain("model-b@harness-x");
+    // policy-a has routes [model-b@harness-x, model-c@harness-x]. model-b
+    // lacks repo-access, so the needs hard limit removed it: one removal
+    // entry with that reason, plus a warning naming the policy that wanted it.
+    const modelBRemovals = answer.removed.filter((entry) => entry.label === "model-b@harness-x");
+    expect(modelBRemovals).toHaveLength(1);
+    expect(modelBRemovals[0]?.reason.code).toBe("needs-not-satisfied");
+    const warning = answer.warnings.find((entry) => entry.code === "policy-route-removed");
+    expect(warning?.message).toContain("policy-a");
+    expect(warning?.message).toContain("model-b@harness-x");
   });
 
   test("the policy routes appear with placedBy=policy and floor=skipped in written order", () => {

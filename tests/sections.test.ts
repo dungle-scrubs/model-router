@@ -1068,13 +1068,114 @@ describe("validateRouterSections tasks and policy", () => {
     const tie = error.problems.find((problem) => problem.code === "policy-tie");
     expect(tie?.message).toContain("policy-1");
     expect(tie?.message).toContain("policy-2");
+    expect(tie?.message).toContain("no spec");
+  });
+
+  // (Helper) the fixtures every tie case shares: one task, one route.
+  const tieTasks = {
+    "task-a": {
+      description: "Code.",
+      minimums: { low: { coding: 6 }, normal: { coding: 7 }, high: { coding: 8 } },
+      rank: ["coding"],
+    },
+  };
+  const tieModels = {
+    "model-a": {
+      family: "family-a",
+      ratings: { coding: 7 },
+      routes: [{ harness: "harness-x", modelId: "model-id-a", hosted: true }],
+    },
+  };
+  const tieOptions = { tasks: tieTasks, models: tieModels };
+  const tiePolicy = (extra: Record<string, unknown>) => ({
+    task: "task-a",
+    stakes: ["normal"],
+    routes: [{ route: "model-a@harness-x" }],
+    reason: "r",
+    ...extra,
+  });
+
+  function expectTie(policies: Record<string, unknown>): void {
+    const error = withPolicy(policies, tieOptions);
+    expect(error.problems.map((problem) => problem.code)).toContain("policy-tie");
+  }
+
+  function expectNoTie(policies: Record<string, unknown>): void {
+    // No tie: the whole registry validates without throwing.
+    validateRouterSections(
+      loadRegistry({
+        path: writeJson(dir, "registry.json", {
+          format: 1,
+          ratings: { coding: "Writes and changes code to a spec." },
+          router: { rank: ["coding"] },
+          tasks: tieTasks,
+          models: tieModels,
+          policy: policies,
+        }),
+      }),
+    );
+  }
+
+  test("two settled policies that overlap on task and stakes are tied", () => {
+    expectTie({
+      "policy-1": tiePolicy({ spec: "settled" }),
+      "policy-2": tiePolicy({ spec: "settled" }),
+    });
+  });
+
+  test("two open policies that overlap on task and stakes are tied", () => {
+    expectTie({ "policy-1": tiePolicy({ spec: "open" }), "policy-2": tiePolicy({ spec: "open" }) });
+  });
+
+  test("a specless and an open policy are not a tie: spec beats no spec", () => {
+    expectNoTie({ "policy-1": tiePolicy({}), "policy-2": tiePolicy({ spec: "open" }) });
+  });
+
+  test("a specless and a settled policy are not a tie: settled beats no spec", () => {
+    expectNoTie({ "policy-1": tiePolicy({}), "policy-2": tiePolicy({ spec: "settled" }) });
+  });
+
+  test("open and settled policies never tie: they cannot match one query", () => {
+    expectNoTie({
+      "policy-1": tiePolicy({ spec: "open" }),
+      "policy-2": tiePolicy({ spec: "settled" }),
+    });
+  });
+
+  test("policies on disjoint stakes never tie", () => {
+    expectNoTie({
+      "policy-1": tiePolicy({ stakes: ["low"] }),
+      "policy-2": tiePolicy({ stakes: ["high"] }),
+    });
+  });
+
+  test("policies on different tasks never tie", () => {
+    validateRouterSections(
+      loadRegistry({
+        path: writeJson(dir, "registry.json", {
+          format: 1,
+          ratings: { coding: "Writes and changes code to a spec." },
+          router: { rank: ["coding"] },
+          tasks: { ...tieTasks, "task-b": { ...tieTasks["task-a"] } },
+          models: tieModels,
+          policy: {
+            "policy-1": tiePolicy({}),
+            "policy-2": tiePolicy({ task: "task-b", stakes: ["normal"] }),
+          },
+        }),
+      }),
+    );
   });
 });
 
 describe("validateRouterSections", () => {
   test("a valid router section returns its rank list", () => {
     const loaded = loadRegistry({ path: FULL });
-    expect(validateRouterSections(loaded)).toEqual({ rank: ["coding", "intelligence"], tasks: {} });
+    expect(validateRouterSections(loaded)).toEqual({
+      policies: {},
+      rank: ["coding", "intelligence"],
+      tasks: {},
+    });
   });
 
   test("a registry without a router section fails with the line to add", async () => {
@@ -1330,6 +1431,7 @@ describe("validateRouterSections", () => {
       expect(
         validateRouterSections(withQuestions({ browser: "Does the work need a browser?" })),
       ).toEqual({
+        policies: {},
         rank: ["coding"],
         tasks: {},
       });

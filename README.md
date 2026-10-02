@@ -36,10 +36,10 @@ The answer is one JSON line on stdout, also when no route survives. `model-route
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `task` | string | none | a name declared in `registry.tasks`; an unknown task warns `task-unranked` |
+| `task` | string | none | a name declared in `registry.tasks`; a task the registry does not declare warns `task-unranked` and ranks by `router.rank` |
 | `minimums` | rating name to number | none | inline floors that replace per rating at the query's stakes; `minimums: {}` states no floor explicitly |
 | `needs` | list of strings | `[]` | adds to the task's needs when a task is named |
-| `effort` | string | none | without a task, parses; this release warns `effort-unapplied`. With a task, replaces the task's level |
+| `effort` | string | none | parses; this release does not resolve effort levels. Without a task it warns `effort-unapplied`; with a task the query's effort replaces the task's level when effort resolution ships |
 | `pin` | route label | none | parses; this release warns `pin-unapplied` |
 | `stakes` | `low`, `normal`, `high` | `normal` | selects the task's floor set; no effect on an inline-only need |
 | `prefer` | `cost`, `speed` | `cost` | how clearing routes are ordered |
@@ -61,9 +61,9 @@ The order list is the task's `rank`. A misspelled task in the registry falls thr
 
 ### Resolving the policy
 
-At most one policy applies to a query. A policy whose `task` matches, whose `stakes` include the query's, and whose `spec` matches the query's `spec` is a candidate. A policy with `spec: "settled"` applies only to a `spec: "settled"` query; a policy with no `spec` matches any query. Two candidates for the same query resolve to the one whose `spec` is the most specific. `"settled"` beats no `spec`. `open` and `settled` do not both match because they disagree on the query's `spec`.
+At most one policy applies to a query. A policy is a candidate when its `task` is the query's task, its `stakes` include the query's, and its `spec` condition holds: a policy without `spec` applies whatever the query's `spec` is; a policy with `spec: "settled"` applies only to a `spec: "settled"` query; a policy with `spec: "open"` applies only to a `spec: "open"` query. When two candidates remain, the one with an explicit `spec` wins (open and settled never both match one query). Two policies that could match the same query at the same level - the same task, an overlapping stakes level, the same spec condition - make the file invalid (`policy-tie`).
 
-The policy's routes follow the rank in written order, with `placedBy: "policy"` and `floor: "skipped"`. A policy route that a hard limit removed is in `removed` with `policy-route-removed`, naming the policy.
+The policy's routes follow the rank in written order, with `placedBy: "policy"` and `floor: "skipped"`. No route appears twice. A policy route that a hard limit removed stays in `removed` with its hard-limit reason, and a `policy-route-removed` warning names the policy.
 
 ## The ranking
 
@@ -71,9 +71,9 @@ The policy's routes follow the rank in written order, with `placedBy: "policy"` 
 2. Validate the query.
 3. Resolve the task. Apply inline `minimums` over the task's floor at the query's stakes. Apply inline `needs` over the task's needs. Inline `effort` replaces the task's level.
 4. Apply the hard limits in order: `privacy: secret` (routes without `privacyEligible: true`), `excludeFamilies`, `needs`. A removed route lands in `removed` with one reason.
-5. Place the policy routes. A route that a hard limit removed is in `removed` with `policy-route-removed`. No route appears twice.
+5. Place the policy routes. A route that a hard limit removed stays in `removed` with its hard-limit reason, and a `policy-route-removed` warning names the policy. No route appears twice.
 6. Apply the floors: a route whose model meets every floor in `minimums` clears; everything else is below. A model with no value for a floor's rating counts as below.
-7. Sort. Clearing routes order by cost (higher rating, so cheaper, first), then the rank in force (the task's `rank` or `router.rank` when no task resolves), then the model's route order, then file order; with `prefer: speed`, response time comes first. Routes below a floor order by the rank in force, then cost, then route order, then file order. `minimums: {}` states no floor explicitly: every route clears and orders by that clearing order. A query naming a task this release does not rank, with no floor, orders every route most capable first, never cheapest first; with `minimums` floors, it uses the orders above. A missing value sorts below every route that has it.
+7. Sort. Clearing routes order by cost (higher rating, so cheaper, first), then the rank in force (the task's `rank` or `router.rank` when no task resolves), then the model's route order, then file order; with `prefer: speed`, response time comes first. Routes below a floor order by the rank in force, then cost, then route order, then file order. `minimums: {}` states no floor explicitly: every route clears and orders by that clearing order. A query naming a task the registry does not declare, with no floor, orders every route most capable first, never cheapest first; with `minimums` floors, it uses the orders above. A missing value sorts below every route that has it.
 8. Build the answer: `contract`, `routerVersion`, `registryDigest`, the query as applied, `pin: null`, the ordered `routes`, `removed`, `warnings`, `availabilityNote: null`, `describe: null`.
 
 Each answer route carries `label`, `model`, `harness`, `modelId`, `provider` (when set), `hosted`, `family`, `meter` (when set), `placedBy` (`"pin"`, `"policy"` or `"rank"`), `floor` (`"clears"`, `"below"` or `"skipped"`), `availability` (`unknown` for metered routes, `unmetered` otherwise, because this release reads no availability document) and `reasons`. Routes below a floor carry one `floor-not-met` reason per failed floor.
@@ -86,7 +86,7 @@ The RFC names the error codes; these warning and reason codes are this package's
 
 | Code | Where | Meaning |
 |---|---|---|
-| `task-unranked` | warnings | the query names a task this release does not rank |
+| `task-unranked` | warnings | the query names a task the registry's tasks section does not declare; ranking falls through to `router.rank` |
 | `rating-unknown` | warnings | a minimum names a rating the registry does not declare |
 | `capability-unknown` | warnings | a need names a capability the registry does not declare |
 | `family-unknown` | warnings | an excluded family is not in the registry |
@@ -94,10 +94,10 @@ The RFC names the error codes; these warning and reason codes are this package's
 | `pin-unapplied` | warnings | the query names a pin this release does not place |
 | `policy-none` | warnings | `spec: settled` found no matching policy |
 | `local-or-nothing` | warnings | `privacy: secret` removed every route; the work runs locally or not at all |
+| `policy-route-removed` | warnings | a hard limit removed a route the matching policy names; the warning names the policy and the route |
 | `privacy-secret-not-eligible` | removed reasons | the route is not `privacyEligible` under `privacy: secret` |
 | `family-excluded-by-query` | removed reasons | the route's family is in `excludeFamilies` |
 | `needs-not-satisfied` | removed reasons | the route lacks a needed capability |
-| `policy-route-removed` | removed reasons | a policy route a hard limit removed; the reason names the policy |
 | `floor-not-met` | route reasons | the model's rating is below a floor, or absent |
 
 ## Registry-section problem codes

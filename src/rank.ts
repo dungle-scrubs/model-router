@@ -13,6 +13,7 @@ import type {
   AvailabilityValue,
   Coded,
   PlacedBy,
+  PolicyEntry,
   Query,
   RankOptions,
   Removed,
@@ -228,22 +229,25 @@ function buildAnswerRoute(
   };
 }
 
-interface PolicyEntry {
-  readonly name: string;
-  readonly spec: string;
-  readonly stakes: readonly string[];
-  readonly task: string;
-  readonly routes: readonly { readonly effort?: string; readonly route: string }[];
+function matchPolicy(
+  sections: RouterSections,
+  applied: ReturnType<typeof applyQueryDefaults>,
+): PolicyEntry | undefined {
+  let fallback: PolicyEntry | undefined;
+  for (const policy of Object.values(sections.policies)) {
+    if (policy.task !== applied.task) continue;
+    if (!policy.stakes.includes(applied.stakes)) continue;
+    // A policy without spec applies whatever the query's spec is. A policy
+    // with an explicit spec matches only that spec.
+    if (policy.spec !== undefined && policy.spec !== applied.spec) continue;
+    // A policy with spec beats one without. Open and settled never both
+    // match one query, so the first explicit-spec candidate is the winner.
+    if (policy.spec !== undefined) return policy;
+    fallback = policy;
+  }
+  return fallback;
 }
-
-interface PolicyMatch {
-  readonly name: string;
-  readonly routes: readonly { readonly effort?: string; readonly route: string }[];
-  readonly spec: string;
-}
-
 interface TaskResolution {
-  readonly effort?: string;
   readonly needs: readonly string[];
   readonly rank: readonly string[];
   readonly task: TaskEntry | undefined;
@@ -255,7 +259,10 @@ function resolveTask(
   applied: ReturnType<typeof applyQueryDefaults>,
 ): TaskResolution | undefined {
   if (applied.task === undefined) return undefined;
-  const task = sections.tasks[applied.task];
+  // Own-property read: a name such as "toString" is not a declared task.
+  const task = Object.hasOwn(sections.tasks, applied.task)
+    ? sections.tasks[applied.task]
+    : undefined;
   if (task === undefined) {
     return {
       needs: applied.needs,
@@ -264,11 +271,7 @@ function resolveTask(
       unknown: true,
     };
   }
-  const inlineEffort = applied.effort;
-  const effectiveEffort =
-    inlineEffort !== undefined && inlineEffort !== "" ? inlineEffort : task.effort;
   return {
-    ...(effectiveEffort === undefined ? {} : { effort: effectiveEffort }),
     needs: dedupe([...task.needs, ...applied.needs]),
     rank: task.rank,
     task,
@@ -316,57 +319,6 @@ function resolveFloors(
   return { floors, everyRouteBelow };
 }
 
-function loadPolicies(loaded: LoadedRegistry): readonly PolicyEntry[] {
-  const raw = loaded.sections.policy;
-  if (!isPlainObject(raw)) return [];
-  const out: PolicyEntry[] = [];
-  for (const [name, value] of Object.entries(raw)) {
-    if (!isPlainObject(value)) continue;
-    const routes = Array.isArray(value.routes) ? value.routes : [];
-    const routesEntries: { effort?: string; route: string }[] = [];
-    for (const entry of routes) {
-      if (isPlainObject(entry) && typeof entry.route === "string") {
-        routesEntries.push({
-          route: entry.route,
-          ...(typeof entry.effort === "string" ? { effort: entry.effort } : {}),
-        });
-      }
-    }
-    const stakes = Array.isArray(value.stakes)
-      ? value.stakes.filter((entry): entry is string => typeof entry === "string")
-      : [];
-    const spec = typeof value.spec === "string" ? value.spec : "open";
-    const task = typeof value.task === "string" ? value.task : "";
-    out.push({ name, routes, stakes, spec, task });
-  }
-  return out;
-}
-
-function matchPolicy(
-  policies: readonly PolicyEntry[],
-  applied: ReturnType<typeof applyQueryDefaults>,
-): PolicyMatch | undefined {
-  const candidates: PolicyMatch[] = [];
-  for (const policy of policies) {
-    if (policy.task !== applied.task) continue;
-    if (!policy.stakes.includes(applied.stakes)) continue;
-    if (policy.spec === "settled" && applied.spec !== "settled") continue;
-    if (policy.spec === "open" && applied.spec !== "open") continue;
-    candidates.push({ name: policy.name, routes: policy.routes, spec: policy.spec });
-  }
-  if (candidates.length === 0) return undefined;
-  // spec: settled beats unconditional (no spec). spec: open and
-  // spec: settled never both match because spec and open are mutually exclusive.
-  candidates.sort((a, b) => policySpecRank(b.spec) - policySpecRank(a.spec));
-  return candidates[0];
-}
-
-function policySpecRank(spec: string): number {
-  if (spec === "settled") return 2;
-  if (spec === "open") return 1;
-  return 0;
-}
-
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -410,11 +362,11 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
 
   const resolvedTask = resolveTask(sections, applied);
 
-  if (resolvedTask !== undefined && resolvedTask.unknown) {
+  if (resolvedTask?.unknown) {
     warnings.push({
       code: "task-unranked",
-      message: `the task "${applied.task}" was not ranked; this release ranks by router.rank only`,
-      fix: "State minimums for inline floors; ranking by task arrives in a later release.",
+      message: `the task "${applied.task}" is not declared in the registry's tasks section; ranking by router.rank`,
+      fix: "Correct the task name, or add the task to the registry's tasks section.",
     });
   }
 
@@ -454,8 +406,8 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
 
   // Effort resolution is out of scope: when the query names an effort and no
   // task is named, the value is parsed but unapplied. A task's effort is
-  // always applied; an inline effort is the level the router would resolve
-  // in step 7 (effort resolution is a later release).
+  // validated and parsed but likewise unapplied until effort resolution
+  // ships (a later release).
   if (applied.effort !== undefined && resolvedTask === undefined) {
     warnings.push({
       code: "effort-unapplied",
@@ -472,13 +424,12 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
     });
   }
 
-  const policies = loadPolicies(loaded);
-  const policyMatch = matchPolicy(policies, applied);
+  const policyMatch = matchPolicy(sections, applied);
   if (applied.spec === "settled" && policyMatch === undefined) {
     warnings.push({
       code: "policy-none",
       message: 'the spec "settled" matched no policy; normal ranking was used',
-      fix: "Remove spec from the query, or add a matching policy when policies ship.",
+      fix: "Remove spec from the query, or add a policy matching the task, stakes and spec.",
     });
   }
 
@@ -531,14 +482,14 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
       const label = policyRoute.route;
       const entry = flatByLabel.get(label);
       if (entry === undefined) {
-        removed.push({
-          label,
-          reason: {
-            code: "policy-route-removed",
-            field: `$.policy[${JSON.stringify(policyMatch.name)}].routes`,
-            message: `the policy "${policyMatch.name}" named a route "${label}" a hard limit removed`,
-            fix: `Adjust the policy "${policyMatch.name}" to a route that survives the hard limits, or relax them.`,
-          },
+        // Validation guarantees the label exists, so a hard limit removed it:
+        // the removal keeps its hard-limit reason, and a warning names the
+        // policy that wanted the route.
+        warnings.push({
+          code: "policy-route-removed",
+          field: `$.policy[${JSON.stringify(policyMatch.name)}].routes`,
+          message: `the policy "${policyMatch.name}" names the route "${label}", which a hard limit removed`,
+          fix: `Adjust the policy "${policyMatch.name}" to a route that survives the hard limits, or relax them.`,
         });
         continue;
       }

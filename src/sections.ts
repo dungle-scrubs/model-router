@@ -1,7 +1,14 @@
 import type { LoadedRegistry } from "@dungle-scrubs/model-registry";
 import { EFFORT_LADDER } from "@dungle-scrubs/model-registry";
 import { RouterError } from "./error.js";
-import type { RouterProblem, RouterSections } from "./types.js";
+import type {
+  PolicyEntry,
+  PolicyRoute,
+  RouterProblem,
+  RouterSections,
+  Spec,
+  Stakes,
+} from "./types.js";
 
 function pathJoin(parent: string, child: string): string {
   return `${parent}[${JSON.stringify(child)}]`;
@@ -144,17 +151,18 @@ export function validateRouterSections(loaded: LoadedRegistry): RouterSections {
   const tasksMap = validateTasks(tasksSection, loaded, problems);
 
   const policySection = loaded.sections.policy;
-  validatePolicy(policySection, loaded, tasksMap, problems);
+  const policiesMap = validatePolicy(policySection, loaded, tasksMap, problems);
 
   if (problems.length > 0) {
     const [first, ...rest] = problems as [RouterProblem, ...RouterProblem[]];
     throw sectionsError(first, rest);
   }
 
-  return { rank, tasks: tasksMap };
+  return { policies: policiesMap, rank, tasks: tasksMap };
 }
 
-type TasksMap = Readonly<Record<string, import("./types.js").TaskEntry>>;
+type TasksMap = RouterSections["tasks"];
+type PoliciesMap = RouterSections["policies"];
 
 function validateTasks(raw: unknown, loaded: LoadedRegistry, problems: RouterProblem[]): TasksMap {
   if (raw === undefined) return {};
@@ -172,7 +180,6 @@ function validateTasks(raw: unknown, loaded: LoadedRegistry, problems: RouterPro
   const declaredRatings = loaded.registry.ratings ?? {};
   const declaredCapabilities = loaded.registry.capabilities ?? {};
   const tasksMap: Record<string, import("./types.js").TaskEntry> = {};
-
   for (const [taskName, taskRaw] of Object.entries(raw)) {
     const taskField = pathJoin(sectionField, taskName);
     if (!isPlainObject(taskRaw)) {
@@ -406,22 +413,13 @@ function readTaskEffort(raw: unknown): string | undefined {
   return typeof raw === "string" ? raw : undefined;
 }
 
-interface PolicyShape {
-  readonly effort?: string;
-  readonly name: string;
-  readonly routes: readonly string[];
-  readonly spec: string;
-  readonly stakes: readonly string[];
-  readonly task: string;
-}
-
 function validatePolicy(
   raw: unknown,
   loaded: LoadedRegistry,
   tasksMap: TasksMap,
   problems: RouterProblem[],
-): void {
-  if (raw === undefined) return;
+): PoliciesMap {
+  if (raw === undefined) return {};
   const sectionField = '$["policy"]';
   if (!isPlainObject(raw)) {
     problems.push({
@@ -430,12 +428,12 @@ function validatePolicy(
       message: "the policy section must be a JSON object",
       fix: 'Replace the policy section with an object such as "policy": { "name": { ... } }.',
     });
-    return;
+    return {};
   }
 
   const declaredRoutes = loaded.routes;
   const modelsByRoute = collectModelsByRoute(loaded);
-  const seen: PolicyShape[] = [];
+  const policiesMap: Record<string, PolicyEntry> = {};
 
   for (const [policyName, policyRaw] of Object.entries(raw)) {
     const policyField = pathJoin(sectionField, policyName);
@@ -496,6 +494,7 @@ function validatePolicy(
     }
 
     const routes = policyRaw.routes;
+    const routeEntries: PolicyRoute[] = [];
     if (routes === undefined) {
       problems.push({
         code: "policy-routes-missing",
@@ -530,14 +529,22 @@ function validatePolicy(
             message: `the policy "${policyName}" route at index ${index} is missing a label`,
             fix: `Set the "route" of the policy "${policyName}" route at index ${index} to a label.`,
           });
-        } else if (!Object.hasOwn(declaredRoutes, routeLabel)) {
-          problems.push({
-            code: "policy-route-label-unknown",
-            field: pathJoin(field, "route"),
-            message: `the label "${routeLabel}" is not declared by any route`,
-            fix: `Add the route "${routeLabel}" to the models section, or remove it from "${policyName}".`,
-          });
         } else {
+          routeEntries.push(
+            typeof entry.effort === "string"
+              ? { effort: entry.effort, route: routeLabel }
+              : { route: routeLabel },
+          );
+          if (!Object.hasOwn(declaredRoutes, routeLabel)) {
+            problems.push({
+              code: "policy-route-label-unknown",
+              field: pathJoin(field, "route"),
+              message: `the label "${routeLabel}" is not declared by any route`,
+              fix: `Add the route "${routeLabel}" to the models section, or remove it from "${policyName}".`,
+            });
+          }
+        }
+        if (typeof routeLabel === "string" && Object.hasOwn(declaredRoutes, routeLabel)) {
           const modelKey = modelsByRoute.get(routeLabel);
           if (modelKey !== undefined) {
             const model = loaded.registry.models[modelKey];
@@ -610,7 +617,7 @@ function validatePolicy(
       });
     }
 
-    let spec: string = "open";
+    let spec: Spec | undefined;
     if (Object.hasOwn(policyRaw, "spec")) {
       const policySpec = policyRaw.spec;
       if (typeof policySpec !== "string" || !SPEC_VALUES.includes(policySpec)) {
@@ -621,7 +628,7 @@ function validatePolicy(
           fix: `Set the spec of "${policyName}" to open or settled, or remove it.`,
         });
       } else {
-        spec = policySpec;
+        spec = policySpec as Spec;
       }
     }
 
@@ -648,52 +655,45 @@ function validatePolicy(
     }
 
     if (Array.isArray(stakes)) {
-      const policyEffortValue = typeof policyRaw.effort === "string" ? policyRaw.effort : undefined;
-      const shape: PolicyShape = {
+      policiesMap[policyName] = {
         name: policyName,
-        routes: collectRouteLabels(routes),
-        stakes: stakes.filter((entry): entry is string => typeof entry === "string"),
-        spec,
+        routes: routeEntries,
+        stakes: stakes.filter(
+          (entry): entry is Stakes =>
+            typeof entry === "string" && STAKES_VALUES.includes(entry as Stakes),
+        ),
+        ...(spec === undefined ? {} : { spec }),
         task: typeof task === "string" ? task : "",
-        ...(policyEffortValue === undefined ? {} : { effort: policyEffortValue }),
       };
-      seen.push(shape);
     }
   }
 
-  detectPolicyTies(seen, problems);
+  detectPolicyTies(policiesMap, problems);
+  return policiesMap;
 }
 
-function collectRouteLabels(raw: unknown): readonly string[] {
-  if (!Array.isArray(raw)) return [];
-  const labels: string[] = [];
-  for (const entry of raw) {
-    if (isPlainObject(entry) && typeof entry.route === "string") {
-      labels.push(entry.route);
-    }
-  }
-  return labels;
-}
-
-function detectPolicyTies(policies: readonly PolicyShape[], problems: RouterProblem[]): void {
-  for (let i = 0; i < policies.length; i++) {
-    for (let j = i + 1; j < policies.length; j++) {
-      const a = policies[i];
-      const b = policies[j];
+function detectPolicyTies(policies: PoliciesMap, problems: RouterProblem[]): void {
+  const entries = Object.values(policies);
+  for (let i = 0; i < entries.length; i++) {
+    for (let j = i + 1; j < entries.length; j++) {
+      const a = entries[i];
+      const b = entries[j];
       if (a === undefined || b === undefined) continue;
       if (a.task !== b.task) continue;
-      const overlap = a.stakes.some((stake) => b.stakes.includes(stake));
-      if (!overlap) continue;
-      if (a.spec === b.spec) {
-        problems.push({
-          code: "policy-tie",
-          field: '$["policy"]',
-          message: `policies "${a.name}" and "${b.name}" both cover task "${a.task}" at stakes ${a.stakes.filter((stake) => b.stakes.includes(stake)).join(", ")} with spec "${a.spec}"`,
-          fix: `Adjust one of the policies so only one applies to each query, or rename a task.`,
-        });
-      }
-      // spec:settled beats unconditional; an unconditional and a settled
-      // with the same task and overlapping stakes is the chosen order, not a tie.
+      const shared = a.stakes.filter((stake) => b.stakes.includes(stake));
+      if (shared.length === 0) continue;
+      // A tie is two policies that match the same query at the same level:
+      // the same task, an overlapping stakes level, the same spec condition.
+      // A policy with spec beats one without, so a specless policy and one
+      // with an explicit spec never tie, whatever their spec values.
+      if (a.spec !== b.spec) continue;
+      const specText = a.spec === undefined ? "no spec" : `spec "${a.spec}"`;
+      problems.push({
+        code: "policy-tie",
+        field: '$["policy"]',
+        message: `policies "${a.name}" and "${b.name}" both cover task "${a.task}" at stakes ${shared.join(", ")} with ${specText}`,
+        fix: "Adjust one of the policies so only one applies to each query, or rename a task.",
+      });
     }
   }
 }
