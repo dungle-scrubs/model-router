@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dungle-scrubs.github.io/model-router/query.schema.json",
+  "title": "model-router query, contract version 1",
+  "description": "The query shape accepted by model-router contract 1. Input is strict: a field the contract does not define is invalid. A query must carry at least one of task or minimums, which also covers the rule that a pin needs one of them.",
+  "type": "object",
+  "properties": {
+    "task": {
+      "type": "string",
+      "description": "A work need declared in the registry's tasks section."
+    },
+    "minimums": {
+      "type": "object",
+      "description": "Inline floors: a rating name to a minimum number. A rating the registry does not declare makes every route count as below that floor, with a warning.",
+      "additionalProperties": {
+        "type": "number"
+      }
+    },
+    "needs": {
+      "type": "array",
+      "description": "Capabilities every route must list.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "effort": {
+      "type": "string",
+      "description": "A requested effort level. This release accepts any string and applies none; the ladder is checked when effort resolution ships."
+    },
+    "pin": {
+      "type": "string",
+      "description": "A route label the caller wants first; needs task or minimums alongside it."
+    },
+    "stakes": {
+      "type": "string",
+      "description": "Selects a task's floor set; no effect on an inline-only need.",
+      "enum": ["low", "normal", "high"]
+    },
+    "prefer": {
+      "type": "string",
+      "description": "How clearing routes are ordered.",
+      "enum": ["cost", "speed"]
+    },
+    "privacy": {
+      "type": "string",
+      "description": "Secret removes every route that is not privacyEligible.",
+      "enum": ["normal", "secret"]
+    },
+    "excludeFamilies": {
+      "type": "array",
+      "description": "Families removed as a hard limit.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "spec": {
+      "type": "string",
+      "description": "Settled triggers the matching policy when one exists.",
+      "enum": ["open", "settled"]
+    }
+  },
+  "additionalProperties": false,
+  "anyOf": [{ "required": ["task"] }, { "required": ["minimums"] }]
+}
