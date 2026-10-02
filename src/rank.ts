@@ -7,7 +7,7 @@ import {
   type Model,
   type Route,
 } from "@dungle-scrubs/model-registry";
-import { applyAvailability } from "./availability.js";
+import { applyAvailability, isUsableAvailabilityEntry } from "./availability.js";
 import {
   defaultConfig as defaultRouterConfig,
   type LoadedConfig,
@@ -859,13 +859,13 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
     }
     const seenUndeclared = new Set<string>();
     for (const entry of entries) {
-      if (typeof entry.meter !== "string" || entry.meter.length === 0) continue;
+      if (!isUsableAvailabilityEntry(entry)) continue;
       if (!declaredMeters.has(entry.meter)) {
         if (!seenUndeclared.has(entry.meter)) {
           seenUndeclared.add(entry.meter);
           warnings.push({
             code: "meter-undeclared",
-            field: `$.entries[${JSON.stringify(entry.meter)}]`,
+            field: "$.entries",
             message: `the meter "${entry.meter}" is not declared in the registry's meters section`,
             fix: `Declare "${entry.meter}" in the registry's meters section, or remove the entry from the availability document.`,
           });

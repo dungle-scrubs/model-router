@@ -14,6 +14,16 @@ const VALID_AVAILABILITY = new Set<AvailabilityValue>([
 
 const KNOWN_STATUSES = new Set<AvailabilityValue>(["ok", "projected", "exhausted"]);
 
+/** The shared engine usability rule, before grouping or warning about a meter. */
+export function isUsableAvailabilityEntry(entry: AvailabilityEntry): boolean {
+  return (
+    typeof entry.meter === "string" &&
+    entry.meter.length > 0 &&
+    Object.hasOwn(entry, "status") &&
+    KNOWN_STATUSES.has(entry.status)
+  );
+}
+
 /** The order from worst to least: a meter reading's `status` is reduced
  * to one of these so two entries on the same meter can be compared.
  * `unknown` and `unmetered` are no-ops and never the worst status,
@@ -170,8 +180,7 @@ function groupByMeter(entries: readonly AvailabilityEntry[]): Map<
 > {
   const map = new Map<string, AvailabilityEntry[]>();
   for (const entry of entries) {
-    if (!KNOWN_STATUSES.has(entry.status)) continue;
-    if (typeof entry.meter !== "string" || entry.meter.length === 0) continue;
+    if (!isUsableAvailabilityEntry(entry)) continue;
     const list = map.get(entry.meter) ?? [];
     list.push(entry);
     map.set(entry.meter, list);
