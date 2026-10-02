@@ -65,6 +65,97 @@ describe("askJev key handling", () => {
       expect(error.message).not.toMatch(/~|\//);
     });
   });
+
+  test("a key with a line break is refused before any call", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a\nX" }, async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
+      const error = await rejected(askJev("state", QUESTIONS, { sleep: never }));
+      expect(error.code).toBe("MISSING_KEY");
+      expect(error.message).toBe(
+        "TYPESAFE_API_KEY is set but is not a usable key: it holds a space, a line break or another character outside printable ASCII. Set it to the key alone and run the command again.",
+      );
+      expect(fetchSpy).not.toHaveBeenCalled();
+      fetchSpy.mockRestore();
+    }));
+
+  test("a key with an inner space is refused the same way", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a X" }, async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
+      const error = await rejected(askJev("state", QUESTIONS, { sleep: never }));
+      expect(error.code).toBe("MISSING_KEY");
+      expect(error.message).toBe(
+        "TYPESAFE_API_KEY is set but is not a usable key: it holds a space, a line break or another character outside printable ASCII. Set it to the key alone and run the command again.",
+      );
+      expect(fetchSpy).not.toHaveBeenCalled();
+      fetchSpy.mockRestore();
+    }));
+
+  test("a key with a non-ASCII character is refused the same way", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a\u00e9" }, async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
+      const error = await rejected(askJev("state", QUESTIONS, { sleep: never }));
+      expect(error.code).toBe("MISSING_KEY");
+      expect(error.message).toBe(
+        "TYPESAFE_API_KEY is set but is not a usable key: it holds a space, a line break or another character outside printable ASCII. Set it to the key alone and run the command again.",
+      );
+      expect(fetchSpy).not.toHaveBeenCalled();
+      fetchSpy.mockRestore();
+    }));
+});
+
+describe("askJev key redaction", () => {
+  test("a fetch error that echoes the key has every occurrence redacted", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockRejectedValue(new Error("echo Bearer key-a and key-a again"));
+      const error = await rejected(askJev("state", QUESTIONS, { sleep: never }));
+      expect(error.code).toBe("UNREACHABLE");
+      expect(error.message).toBe(
+        `could not reach ${ENDPOINT}: echo Bearer [redacted] and [redacted] again`,
+      );
+      fetchSpy.mockRestore();
+    }));
+
+  test("an error body that echoes the key has it redacted", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(new Response("denied key-a", { status: 500 }));
+      const error = await rejected(askJev("state", QUESTIONS, { sleep: never }));
+      expect(error.code).toBe("SERVICE_ERROR");
+      expect(error.message).toBe(`${ENDPOINT} returned HTTP 500: denied [redacted]`);
+      fetchSpy.mockRestore();
+    }));
+
+  test("a failed error-body read that echoes the key has it redacted", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const broken = {
+        ok: false,
+        status: 502,
+        headers: { get: () => null },
+        text: () => Promise.reject(new Error("stream reset while reading key-a")),
+      } as unknown as Response;
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(broken);
+      const error = await rejected(askJev("state", QUESTIONS, { sleep: never }));
+      expect(error.code).toBe("SERVICE_ERROR");
+      expect(error.message).toBe(
+        `${ENDPOINT} returned HTTP 502: the error body could not be read: stream reset while reading [redacted]`,
+      );
+      fetchSpy.mockRestore();
+    }));
+
+  test("a 200 body that echoes the key is never printed with it", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(new Response("key-a", { status: 200 }));
+      const error = await rejected(askJev("state", QUESTIONS, { sleep: never }));
+      expect(error.code).toBe("BAD_RESPONSE");
+      expect(error.message).not.toContain("key-a");
+      expect(error.message).toContain("[redacted]");
+      fetchSpy.mockRestore();
+    }));
 });
 
 describe("askJev request shape", () => {

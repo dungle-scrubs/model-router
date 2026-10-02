@@ -388,6 +388,33 @@ describe("--describe failures", () => {
     });
   });
 
+  test("the built CLI refuses a malformed key before any request and never prints it", async () => {
+    await withTempDir(async (dir) => {
+      const { writeFileSync } = await import("node:fs");
+      const file = join(dir, "work.txt");
+      writeFileSync(file, "some work");
+      // The line break reaches the child through the env option, never a
+      // shell, and the shape check runs before any fetch can leave.
+      const result = runBuiltCli(
+        ["--describe", file, "--registry", FIXTURE, '{"privacy":"normal"}'],
+        { TYPESAFE_API_KEY: "key-a\nX" },
+      );
+      expect(result.exitCode).toBe(5);
+      expect(result.stderr).not.toContain("key-a");
+      const parsed = JSON.parse(result.stderr) as {
+        error: { code: string; fix: string; message: string };
+      };
+      expect(parsed.error.code).toBe("describe-failed");
+      expect(parsed.error.fix).toBe(
+        'Set TYPESAFE_API_KEY in the environment, or pass "task" or "minimums" in the query so the describe step needs no Jev answer.',
+      );
+      expect(parsed.error.message).toBe(
+        "the describe step needed a task from Jev and the call failed (MISSING_KEY): " +
+          "TYPESAFE_API_KEY is set but is not a usable key: it holds a space, a line break or another character outside printable ASCII. Set it to the key alone and run the command again.",
+      );
+    });
+  });
+
   test("a choice answer without probabilities exits 5, not 1", async () =>
     withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
       await withDescriptionFile("some work", async (file) => {

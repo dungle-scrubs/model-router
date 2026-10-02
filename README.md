@@ -128,7 +128,7 @@ The describe block in the answer: `model` (what answered, `null` when Jev failed
 
 | JevError code | Cause |
 |---|---|
-| `MISSING_KEY` | `TYPESAFE_API_KEY` is not set in the environment |
+| `MISSING_KEY` | `TYPESAFE_API_KEY` is not set, or holds a character outside printable ASCII |
 | `UNREACHABLE` | the request to the endpoint failed at the network level |
 | `SERVICE_ERROR` | the endpoint returned a status the client does not retry |
 | `RATE_LIMITED` | every retry attempt came back retryable |

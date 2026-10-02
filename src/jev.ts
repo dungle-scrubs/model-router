@@ -284,14 +284,33 @@ function retryDelay(header: string | null, attempt: number, base: number): numbe
 }
 
 /** Read the key, or throw the error that names how to supply it. The message
- * names only the variable: no credential tool, no path. */
+ * names only the variable: no credential tool, no path. A set key that
+ * holds a space, a line break or another character outside printable ASCII
+ * is refused the same way: it is almost never the key itself but a wrapper
+ * pasted around it, and the header it builds is rejected before any
+ * connection. */
 function requireKey(environment: NodeJS.ProcessEnv = process.env): string {
   const key = environment[KEY_VARIABLE];
-  if (typeof key === "string" && key.length > 0) return key;
+  if (typeof key === "string" && key.length > 0) {
+    if (![...key].every((character) => character >= "!" && character <= "~")) {
+      throw new JevError(
+        "MISSING_KEY",
+        `${KEY_VARIABLE} is set but is not a usable key: it holds a space, a line break or another character outside printable ASCII. Set it to the key alone and run the command again.`,
+      );
+    }
+    return key;
+  }
   throw new JevError(
     "MISSING_KEY",
     `${KEY_VARIABLE} is not set. Set it in the environment and run the command again.`,
   );
+}
+
+/** Replace every occurrence of the key in a message built from foreign
+ * text (a fetch error, a body-read failure, the error body), so an echo of
+ * the Authorization header never prints the credential. */
+function redact(message: string, key: string): string {
+  return message.split(key).join("[redacted]");
 }
 
 /**
@@ -340,7 +359,10 @@ export async function askJev(
       }
       throw new JevError(
         "UNREACHABLE",
-        `could not reach ${ENDPOINT}: ${error instanceof Error ? error.message : String(error)}`,
+        `could not reach ${ENDPOINT}: ${redact(
+          error instanceof Error ? error.message : String(error),
+          key,
+        )}`,
       );
     }
 
@@ -350,11 +372,13 @@ export async function askJev(
         parsed = await response.json();
       } catch (error) {
         // A 200 whose body is not JSON is an unusable answer, not a crash.
+        // The parser quotes the body, so the key is redacted from its text.
         throw new JevError(
           "BAD_RESPONSE",
-          `${ENDPOINT} returned HTTP 200 with a body that is not JSON: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
+          `${ENDPOINT} returned HTTP 200 with a body that is not JSON: ${redact(
+            error instanceof Error ? error.message : String(error),
+            key,
+          )}`,
         );
       }
       return validateResponse(parsed, questions);
@@ -366,11 +390,15 @@ export async function askJev(
       // read stays a SERVICE_ERROR carrying the status.
       let errorText: string;
       try {
-        errorText = await response.text();
+        const read = await response.text();
+        errorText = redact(read, key);
       } catch (error) {
-        errorText = `the error body could not be read: ${
-          error instanceof Error ? error.message : String(error)
-        }`;
+        errorText = redact(
+          `the error body could not be read: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          key,
+        );
       }
       throw new JevError(
         "SERVICE_ERROR",
