@@ -1447,6 +1447,31 @@ describe("validateRouterSections tasks and policy", () => {
       }),
     );
   });
+
+  test("a policy route named twice is invalid with policy-route-duplicate", () => {
+    // Two entries with the same route label have no meaning: a policy
+    // cannot place the same route in two different orders, and the
+    // first-vs-last effort disagreement is a real bug the validator now
+    // closes. The duplicate-route check fires per policy: it is a
+    // shape problem on the policy's own routes array, not a cross-policy
+    // tie.
+    const error = withPolicy({
+      "policy-a": {
+        task: "task-a",
+        stakes: ["normal"],
+        routes: [
+          { route: "model-a@harness-x", effort: "low" },
+          { route: "model-a@harness-x", effort: "high" },
+        ],
+        reason: "r",
+      },
+    });
+    expect(error.code).toBe("registry-sections-invalid");
+    const duplicate = error.problems.find((problem) => problem.code === "policy-route-duplicate");
+    expect(duplicate).toBeDefined();
+    expect(duplicate?.message).toContain("policy-a");
+    expect(duplicate?.message).toContain("model-a@harness-x");
+  });
 });
 
 describe("validateRouterSections", () => {

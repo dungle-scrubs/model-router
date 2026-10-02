@@ -185,6 +185,7 @@ A `registry-sections-invalid` error carries one problem per finding in `problems
 | `policy-route-effort-fixed-mismatch` | a `policy` route's `effort` differs from the model's `fixedEffort` |
 | `policy-route-effort-above-max` | a `policy` route's `effort` is above the model's `maxEffort` |
 | `policy-route-field-unknown` | a `policy` route carries a field other than `route` and `effort` |
+| `policy-route-duplicate` | a `policy` route names the same label more than once |
 | `policy-reason-missing` | a `policy` entry has no `reason` |
 | `policy-reason-not-string` | a `policy` entry's `reason` is not a string |
 | `policy-spec-invalid` | a `policy` entry's `spec` is not `settled` |

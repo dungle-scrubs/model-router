@@ -697,8 +697,33 @@ function validatePolicy(
     }
   }
 
+  detectDuplicateRoutes(policiesMap, problems);
   detectPolicyTies(policiesMap, problems);
   return policiesMap;
+}
+
+/** A policy that names the same route label twice has no meaning: the
+ * registry has one route per label, so a second entry can only conflict
+ * with the first. Effort on the second entry silently overrides the
+ * first, so the first-vs-last disagreement is a real bug. The check
+ * fires once per duplicate label per policy, naming the policy and the
+ * label so the caller knows which entry to remove. */
+function detectDuplicateRoutes(policies: PoliciesMap, problems: RouterProblem[]): void {
+  for (const policy of Object.values(policies)) {
+    const seen = new Set<string>();
+    for (const route of policy.routes) {
+      if (!seen.has(route.route)) {
+        seen.add(route.route);
+        continue;
+      }
+      problems.push({
+        code: "policy-route-duplicate",
+        field: pathJoin(pathJoin('$["policy"]', policy.name), "routes"),
+        message: `the policy "${policy.name}" names the route "${route.route}" more than once`,
+        fix: `Remove the duplicate entry from the policy "${policy.name}"; each route label appears at most once.`,
+      });
+    }
+  }
 }
 
 function detectPolicyTies(policies: PoliciesMap, problems: RouterProblem[]): void {
