@@ -395,9 +395,10 @@ describe("the describe step when Jev fails", () => {
         describeStep("some work", '{"privacy":"normal"}', { registry: FIXTURE }),
       );
       expect(error.code).toBe("describe-failed");
-      expect(error.message).toContain("MISSING_KEY");
-      expect(error.message).toContain("TYPESAFE_API_KEY");
-      expect(error.message).not.toMatch(/opchain|1password|op:\/\//i);
+      expect(error.message).toBe(
+        "the describe step needed a task from Jev and the call failed (MISSING_KEY): " +
+          "TYPESAFE_API_KEY is not set. Set it in the environment and run the command again.",
+      );
       expect(fetchSpy).not.toHaveBeenCalled();
       fetchSpy.mockRestore();
     }));

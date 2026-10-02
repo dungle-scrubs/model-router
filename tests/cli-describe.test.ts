@@ -294,9 +294,10 @@ describe("--describe failures", () => {
         expect(result.exitCode).toBe(5);
         const error = await errorEnvelope(result.stderr);
         expect(error.code).toBe("describe-failed");
-        expect(error.message).toContain("TYPESAFE_API_KEY");
-        expect(error.message).toContain("MISSING_KEY");
-        expect(String(error.message)).not.toMatch(/opchain|1password|op:\/\//i);
+        expect(error.message).toBe(
+          "the describe step needed a task from Jev and the call failed (MISSING_KEY): " +
+            "TYPESAFE_API_KEY is not set. Set it in the environment and run the command again.",
+        );
       });
     }));
 

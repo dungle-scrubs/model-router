@@ -49,8 +49,9 @@ describe("askJev key handling", () => {
   test("the missing-key message names only TYPESAFE_API_KEY", async () => {
     await withEnv({ TYPESAFE_API_KEY: undefined }, async () => {
       const error = await rejected(askJev("state", QUESTIONS, { sleep: never }));
-      expect(error.message).toContain("TYPESAFE_API_KEY");
-      expect(error.message).not.toMatch(/opchain|1password|op:\/\//i);
+      expect(error.message).toBe(
+        "TYPESAFE_API_KEY is not set. Set it in the environment and run the command again.",
+      );
       expect(error.message).not.toMatch(/~|\//);
     });
   });
