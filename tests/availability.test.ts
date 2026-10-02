@@ -275,7 +275,7 @@ describe("applyAvailability in isolation", () => {
   });
 
   test("plain {label, meter} objects with no entries come back unknown or unmetered in order", () => {
-    //The generic signature accepts plain objects (no cast).
+    // The generic signature accepts plain objects (no cast).
     const plain = [
       { label: "model-a@harness-x", meter: "meter-a" },
       { label: "model-c@harness-x" },
@@ -626,7 +626,7 @@ describe("runAvailabilityCommand", () => {
     },
   );
 
-  test("anENOBUFS from the spawn buffer reports output exceeded 8 MiB", async () => {
+  test("an ENOBUFS from the spawn buffer reports output exceeded 8 MiB", async () => {
     await withTempDir(async (dir) => {
       const fixture = join(dir, "big.js");
       // A 16 KiB payload exceeds the 4 KiB test buffer.
@@ -1266,7 +1266,7 @@ describe("CLI availability flags", () => {
     ]);
     expect(result.exitCode).toBe(0);
     // Above test sets PLACEHOLDER; use a separate temp file path for the
-    // actualfresh-document check.
+    // actual fresh-document check.
   });
 
   test("--availability-file with a fresh document applies the readings (temp dir)", async () => {

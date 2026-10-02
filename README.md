@@ -155,8 +155,8 @@ The describe block in the answer: `model` (what answered, `null` when Jev failed
 7. Place the policy routes. A route that a hard limit removed stays in `removed` with its hard-limit reason, and a `policy-route-removed` warning names the policy. No route appears twice.
 8. Sort the rest. Clearing routes order by cost (higher rating, so cheaper, first), then the rank in force (the task's `rank` or `router.rank` when no task resolves), then the model's route order, then file order; with `prefer: speed`, response time comes first. Routes below a floor order by the rank in force, then cost, then route order, then file order. `minimums: {}` states no floor explicitly: every route clears and orders by that clearing order. A query naming a task the registry does not declare, with no floor, orders every route most capable first, never cheapest first; with `minimums` floors, it uses the orders above. A missing value sorts below every route that has it.
 9. Resolve effort for each route. The requested level is the policy route's `effort` when stated, else the query's, else the task's, else `effort.default`. The model's `fixedEffort` replaces, `maxEffort` caps (with a warning), and `effort.ceiling` caps last (with a warning).
-10. Apply availability. The engine calls `applyAvailability` on the full ordered list, after the pin and the policy have placed their routes. `availability` carries entries the caller has gathered; the engine skips entries whose meter is not in the registry's `meters` section (with a `meter-undeclared` warning), then runs the rule. The caller drops expired entries with `dropExpired` before passing them in: `rank` itself does not read the clock. Routes marked `exhausted` move to `removed`; routes marked `projected` move below every healthy route unless the route's meter is `spendToZero: true` in the registry, in which case the route keeps its place.A re-applying call replaces the route's existing `meter-projected`, `meter-projected-spend-to-zero` and `meter-exhausted` reasons with this call's reason. When every route would be removed, none is: each stays with `exhausted`, and the `availability-exhausted-all` warning is added. The engine emits `meter-no-reading` once per meter the routes use with no covering entry, whenever `availability` is passed (an empty array included).
-11. Build the answer: `contract`, `routerVersion`, `registryDigest`, the query as applied, `pin`, the ordered `routes`, `removed`, `warnings`, `availabilityNote` (set by the CLI from a failed availability source), `describe: null`.
+10. Apply availability. The engine calls `applyAvailability` on the full ordered list, after the pin and the policy have placed their routes. `availability` carries entries the caller has gathered; the engine skips entries whose meter is not in the registry's `meters` section (with a `meter-undeclared` warning), then runs the rule. The caller drops expired entries with `dropExpired` before passing them in: `rank` itself does not read the clock. Routes marked `exhausted` move to `removed`; routes marked `projected` move below every healthy route unless the route's meter is `spendToZero: true` in the registry, in which case the route keeps its place. A re-applying call replaces the route's existing `meter-projected`, `meter-projected-spend-to-zero` and `meter-exhausted` reasons with this call's reason. When every route would be removed, none is: each stays with `exhausted`, and the `availability-exhausted-all` warning is added. The engine emits `meter-no-reading` once per meter the routes use with no covering entry, whenever `availability` is passed (an empty array included).
+11. Build the answer: `contract`, `routerVersion`, `registryDigest`, the query as applied, `pin`, the ordered `routes`, `removed`, `warnings`, `availabilityNote` (set by the CLI from a failed availability source), `describe: null` (the describe block arrives only through the describe step, which the CLI merges).
 
 Each answer route carries `label`, `model`, `harness`, `modelId`, `provider` (when set), `effort` (when a level is known), `hosted`, `family`, `meter` (when set), `placedBy` (`"pin"`, `"policy"` or `"rank"`), `policy` (the policy's name, only when `placedBy` is `"policy"`), `floor` (`"clears"`, `"below"` or `"skipped"`), `availability` (`ok`, `projected`, `exhausted`, `unknown`, or `unmetered`) and `reasons`. A projected route carries a `meter-projected` reason; a projected route on a spend-to-zero meter keeps its place and carries `meter-projected-spend-to-zero`. Routes below a floor carry one `floor-not-met` reason per failed floor.
 
@@ -182,7 +182,7 @@ The RFC names the error codes; these warning and reason codes are this package's
 | `local-or-nothing` | warnings | `privacy: secret` removed every route; the work runs locally or not at all |
 | `policy-route-removed` | warnings | a hard limit removed a route the matching policy names; the warning names the policy and the route |
 | `availability-exhausted-all` | warnings | exhaustion would remove every route; none is removed and each carries `exhausted` |
-| `availability-entry-invalid` | warnings | the CLI's reader skipped an entry (missing `meter`, missing `status`, or an unknown status); other entries still apply |
+| `availability-entry-invalid` | warnings | the CLI's reader skips any entry the shipped schema rejects, or a `resetsAt` that does not parse; other entries still apply |
 | `meter-undeclared` | warnings | an entry names a meter the registry does not declare |
 | `meter-no-reading` | warnings | a reading was applied and a meter the routes use has no entry |
 | `task-uncertain` | warnings | Jev's task is below `describe.taskGate`; the guess is kept and the fix says to pass `task` |
@@ -264,7 +264,7 @@ A `config-invalid` error carries one problem per finding in `problems[]`. These 
 | Code | Cause |
 |---|---|
 | `config-not-object` | the file is not a JSON object |
-| `config-key-unknown` | a top-level field other than `effort`, `availability` and `$schema` |
+| `config-key-unknown` | a top-level field other than `effort`, `availability`, `describe` and `$schema` |
 | `config-effort-not-object` | `effort` is not a JSON object |
 | `config-effort-ceiling-invalid` | `effort.ceiling` is not a ladder level |
 | `config-effort-default-invalid` | `effort.default` is not a ladder level |
@@ -285,7 +285,7 @@ A `config-invalid` error carries one problem per finding in `problems[]`. These 
 
 ## Availability codes
 
-A failed availability source on the CLI does not fail ranking; the engine fills `availabilityNote` with one of these codes and ranks without availability:
+A failed availability source on the CLI does not fail ranking; the CLI fills `availabilityNote` with one of these codes and ranks without availability:
 
 | Code | Cause |
 |---|---|

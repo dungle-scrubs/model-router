@@ -119,3 +119,25 @@ describe("README problem codes", () => {
     }
   });
 });
+
+describe("availability documentation", () => {
+  test("describes the CLI merge and every config key and invalid-entry cause", () => {
+    const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
+    expect(readme).toContain(
+      "`describe: null` (the describe block arrives only through the describe step, which the CLI merges)",
+    );
+    expect(readme).toContain("the CLI fills `availabilityNote`");
+    expect(readme).toContain("other than `effort`, `availability`, `describe` and `$schema`");
+    expect(readme).toContain(
+      "any entry the shipped schema rejects, or a `resetsAt` that does not parse",
+    );
+    expect(readme).toContain("keeps its place. A re-applying");
+  });
+
+  test("generatedAt documents stale and invalid separately", () => {
+    const schema = JSON.parse(readFileSync(join(repoRoot, "availability.schema.json"), "utf8"));
+    expect(schema.properties.generatedAt.description).toBe(
+      "When the document was produced. Older than `maxAgeSeconds` or later than the read is `availability-reading-stale`; unparseable is `availability-reading-invalid`. The CLI fills `availabilityNote`.",
+    );
+  });
+});

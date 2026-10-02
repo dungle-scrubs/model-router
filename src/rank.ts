@@ -845,7 +845,7 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
   // Two warnings the engine emits on top of applyAvailability's own
   // warnings: an entry whose meter the registry does not declare, and a
   // reading that was applied while a meter the routes use has none.
-  // meter-no-reading fires once per undeclared meter (not per entry).
+  // meter-no-reading fires once per uncovered meter (not per route).
   // meter-undeclared fires once per undeclared meter name, deduped over
   // the entries. The pin report is rewritten when the pin label lands in
   // the result's removed list: the route's meter was exhausted.
@@ -875,7 +875,7 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
       filtered.push(entry);
     }
     if (metersUsedByRoutes.size > 0) {
-      // meter-no-reading fires whenever the option is passed,  even with an
+      // meter-no-reading fires whenever the option is passed, even with an
       // empty array: the caller's empty `entries` means no meter is
       // covered. The undeclared-meter filter above is irrelevant: the
       // loop over metersUsedByRoutes already only includes declared meters.
@@ -903,7 +903,7 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
     }
     // Pin update: the pin label was removed by an exhausted entry.
     // The all-exhausted case is the exception: nothing was removed, so the
-    // pin stays used.The warning field names `$.pin` per the contract.
+    // pin stays used. The warning field names `$.pin` per the contract.
     if (
       pinReport !== null &&
       pinReport.used === true &&
@@ -918,7 +918,7 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
       warnings.push({
         code: "pin-unused",
         field: "$.pin",
-        fix: `Adjust the pin "${pinReport.label}" to a route whose meter is not exhausted, ortop the meter's quota back up.`,
+        fix: `Adjust the pin "${pinReport.label}" to a route whose meter is not exhausted, or top the meter's quota back up.`,
         message: `the pin "${pinReport.label}" was not used; its meter is exhausted`,
       });
       return {

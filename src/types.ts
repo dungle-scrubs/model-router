@@ -201,8 +201,8 @@ export interface AvailabilityResult<R extends { readonly label: string; readonly
 
 /** Options the rank entry point accepts. `registry` is a path or a loaded
  * registry. `config` is a path string or a plain settings object. The
- * library has no pre-loaded config shortcut: callers that already ran the
- * loader must pass the path string it consumed. `availability` passes
+ * library accepts validated settings from callers that already ran the
+ * config loader, avoiding a second file read. `availability` passes
  * entries the caller has already gathered (and `dropExpired`'d); the
  * library reads the spend-to-zero meter names from the registry, so
  * nothing about the spend-to-zero list is taken from the option. The

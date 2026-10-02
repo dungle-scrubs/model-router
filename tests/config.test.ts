@@ -61,6 +61,12 @@ describe("validateConfigObjectInput", () => {
       expect((error as RouterError).code).toBe("config-invalid");
       const problems = (error as RouterError).problems.map((problem) => problem.code);
       expect(problems).toContain("config-key-unknown");
+      expect(
+        (error as RouterError).problems.find((problem) => problem.code === "config-key-unknown")
+          ?.fix,
+      ).toBe(
+        'Remove the field "mystery"; the config accepts only "effort", "availability", "describe" and "$schema".',
+      );
     }
   });
 

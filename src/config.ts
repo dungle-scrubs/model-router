@@ -192,7 +192,7 @@ function validateConfigObject(raw: unknown): {
     });
     return { problems, config: defaultConfig() };
   }
-  // The closed-schema check: every top-level key beyond effort is a problem,
+  // The closed-schema check: every unrecognized top-level key is a problem,
   // and $schema is allowed for editor support. Own-property reads only:
   // an inherited name such as "constructor" is not a problem here.
   for (const key of Object.keys(raw)) {
@@ -200,7 +200,7 @@ function validateConfigObject(raw: unknown): {
     problems.push({
       code: "config-key-unknown",
       field: pathJoin("$", key),
-      fix: `Remove the field "${key}"; the config accepts only "effort", "describe" and "$schema".`,
+      fix: `Remove the field "${key}"; the config accepts only "effort", "availability", "describe" and "$schema".`,
       message: `the field "${key}" is not defined by the config schema`,
     });
   }

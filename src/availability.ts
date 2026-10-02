@@ -1,9 +1,5 @@
 import type { AvailabilityEntry, AvailabilityResult, AvailabilityValue, Coded } from "./types.js";
 
-// The set of statuses the engine treats as a reading. An entry whose
-// status is not one of these three values is ignored: it does not cover
-// the meter it names, so the routes for that meter keep the engine's
-// first-pass availability. A `Map` keeps the lookup own-property safe.
 const VALID_AVAILABILITY = new Set<AvailabilityValue>([
   "ok",
   "projected",
@@ -106,7 +102,7 @@ const WARNING_EXHAUSTED_ALL: Coded = {
   message: "exhaustion would remove every route; none was removed and each carries exhausted",
 };
 
-/** Combine several entries on one meter into one effective state. Theworst
+/** Combine several entries on one meter into one effective state. The worst
  * status decides, then the lowest `percentRemaining` ties it. An entry
  * without a percent settles behind an entry with a percent: a partial
  * reading loses the tie to a complete one when the statuses match. The
@@ -119,8 +115,6 @@ function combineMeterEntries(entries: readonly AvailabilityEntry[]): {
 } {
   let worstStatus: AvailabilityValue = "ok";
   let worstRank = WORST_STATUS.ok;
-  let lowestPercent: number | undefined;
-  let percentSeen = false;
   let winningResetsAt: string | undefined;
   let winningPercent: number | undefined;
   let seen = false;
@@ -135,15 +129,11 @@ function combineMeterEntries(entries: readonly AvailabilityEntry[]): {
     if (entryRank > worstRank) {
       worstStatus = entry.status;
       worstRank = entryRank;
-      lowestPercent = entryPercent;
-      percentSeen = entryPercent !== undefined;
       winningPercent = entryPercent;
       winningResetsAt = typeof entry.resetsAt === "string" ? entry.resetsAt : undefined;
     } else if (entryRank === worstRank) {
       if (entryPercent !== undefined && Number.isFinite(entryPercent)) {
-        if (!percentSeen || entryPercent < (lowestPercent ?? Number.POSITIVE_INFINITY)) {
-          lowestPercent = entryPercent;
-          percentSeen = true;
+        if (winningPercent === undefined || entryPercent < winningPercent) {
           winningPercent = entryPercent;
           winningResetsAt = typeof entry.resetsAt === "string" ? entry.resetsAt : undefined;
         }
@@ -153,12 +143,6 @@ function combineMeterEntries(entries: readonly AvailabilityEntry[]): {
   if (!seen) {
     return { percentRemaining: undefined, resetsAt: undefined, status: "unknown" };
   }
-  // The deciding entry's percent and resetsAt are what the reason
-  // message surfaces.When the tie broke on an entry with a percent, that
-  // percent and its resetsAt are recorded; when it broke on an entry
-  // without a percent, the message names none. The internal `lowestPercent`
-  // is still the numeric winner for any future numeric consumer.
-  void lowestPercent;
   return {
     percentRemaining: winningPercent,
     resetsAt: winningResetsAt,
@@ -169,7 +153,7 @@ function combineMeterEntries(entries: readonly AvailabilityEntry[]): {
 /** Group the input entries by meter. Several entries on one meter reduce
  * to one combined state via `combineMeterEntries`. An entry whose status
  * is not one of the three known statuses does not cover the meter: the
- * route the entry names keeps itsfirst-pass availability. */
+ * route the entry names keeps its first-pass availability. */
 function groupByMeter(entries: readonly AvailabilityEntry[]): Map<
   string,
   {
