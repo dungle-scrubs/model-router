@@ -116,6 +116,24 @@ describe("the describe step's privacy gate", () => {
       fetchSpy.mockRestore();
     }));
 
+  test("a non-string work description is query-invalid on text and makes no request", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockRejectedValue(new Error("no request was expected"));
+      const error = await catchRouterError(
+        describeStep(42 as unknown as string, '{"privacy":"normal"}', { registry: FIXTURE }),
+      );
+      expect(error.code).toBe("query-invalid");
+      expect(error.field).toBe("text");
+      expect(error.message).toBe("the work description must be a string");
+      expect(error.fix).toBe(
+        "Pass the work description as text; the describe step sends it to Jev as the state.",
+      );
+      expect(fetchSpy).not.toHaveBeenCalled();
+      fetchSpy.mockRestore();
+    }));
+
   test("a partial query with an unknown field is query-invalid before any request", async () =>
     withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
       const fetchSpy = vi.spyOn(globalThis, "fetch");
