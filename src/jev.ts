@@ -30,6 +30,10 @@ const RETRYABLE = new Set([429, 529]);
  * not retried. */
 const DEFAULT_TIMEOUT_MS = 15000;
 
+/** The largest delay a timer holds: above it, Node fires the timeout at
+ * once or refuses the delay, so `timeoutMs` is capped here. */
+const MAX_TIMEOUT_MS = 2147483647;
+
 /** A retry delay above this, from `Retry-After` or the backoff, stops the
  * retries at once with RATE_LIMITED: an early retry into the same 429 is
  * worse than giving up. */
@@ -330,8 +334,13 @@ function checkOptions(options: AskJevOptions): void {
   if (maxAttempts !== undefined && (!Number.isInteger(maxAttempts) || maxAttempts < 1)) {
     throw new RangeError('askJev option "maxAttempts" must be a positive integer');
   }
-  if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs < 1)) {
-    throw new RangeError('askJev option "timeoutMs" must be a positive integer');
+  if (
+    timeoutMs !== undefined &&
+    (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_TIMEOUT_MS)
+  ) {
+    throw new RangeError(
+      `askJev option "timeoutMs" must be a positive integer of at most ${MAX_TIMEOUT_MS}`,
+    );
   }
   if (backoffMs !== undefined && (!Number.isFinite(backoffMs) || backoffMs < 0)) {
     throw new RangeError('askJev option "backoffMs" must be a finite number of at least 0');

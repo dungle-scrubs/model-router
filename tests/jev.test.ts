@@ -229,19 +229,19 @@ describe("askJev option checks", () => {
   test("timeoutMs -1 is refused", () =>
     rejectsRangeError(
       () => askJev("state", QUESTIONS, { timeoutMs: -1 }),
-      'askJev option "timeoutMs" must be a positive integer',
+      'askJev option "timeoutMs" must be a positive integer of at most 2147483647',
     ));
 
   test("timeoutMs 0 is refused", () =>
     rejectsRangeError(
       () => askJev("state", QUESTIONS, { timeoutMs: 0 }),
-      'askJev option "timeoutMs" must be a positive integer',
+      'askJev option "timeoutMs" must be a positive integer of at most 2147483647',
     ));
 
   test("timeoutMs 1.5 is refused", () =>
     rejectsRangeError(
       () => askJev("state", QUESTIONS, { timeoutMs: 1.5 }),
-      'askJev option "timeoutMs" must be a positive integer',
+      'askJev option "timeoutMs" must be a positive integer of at most 2147483647',
     ));
 
   test("backoffMs -1 is refused", () =>
@@ -254,6 +254,18 @@ describe("askJev option checks", () => {
     rejectsRangeError(
       () => askJev("state", QUESTIONS, { backoffMs: Number.NaN }),
       'askJev option "backoffMs" must be a finite number of at least 0',
+    ));
+
+  test("timeoutMs one above the timer bound is refused with no request", () =>
+    rejectsRangeError(
+      () => askJev("state", QUESTIONS, { timeoutMs: 2147483648 }),
+      'askJev option "timeoutMs" must be a positive integer of at most 2147483647',
+    ));
+
+  test("timeoutMs far above the timer bound is refused the same way", () =>
+    rejectsRangeError(
+      () => askJev("state", QUESTIONS, { timeoutMs: Number.MAX_SAFE_INTEGER }),
+      'askJev option "timeoutMs" must be a positive integer of at most 2147483647',
     ));
 
   test("the boundary values are accepted: maxAttempts 1, timeoutMs 1, backoffMs 0", async () =>
@@ -272,6 +284,23 @@ describe("askJev option checks", () => {
         sleep: never,
       });
       expect(result.model).toBe("m");
+      fetchSpy.mockRestore();
+    }));
+
+  test("timeoutMs exactly at the timer bound is accepted and returns the answer", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        ok({
+          model: "m",
+          answers: { urgent: { type: "noul", noul: 0.5 } },
+          usage: { input_tokens: 1, output_tokens: 1 },
+        }),
+      );
+      const result = await askJev("state", QUESTIONS, {
+        timeoutMs: 2147483647,
+        sleep: never,
+      });
+      expect(result.answers.urgent).toEqual({ type: "noul", noul: 0.5 });
       fetchSpy.mockRestore();
     }));
 });
