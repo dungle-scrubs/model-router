@@ -20,6 +20,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - name: Grant git access to the private model-registry dependency
+        shell: bash
         run: git config --global url."https://x-access-token:${MODEL_REGISTRY_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
         env:
           MODEL_REGISTRY_READ_TOKEN: ${{ secrets.MODEL_REGISTRY_READ_TOKEN }}
@@ -36,6 +37,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - name: Grant git access to the private model-registry dependency
+        shell: bash
         run: git config --global url."https://x-access-token:${MODEL_REGISTRY_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
         env:
           MODEL_REGISTRY_READ_TOKEN: ${{ secrets.MODEL_REGISTRY_READ_TOKEN }}
