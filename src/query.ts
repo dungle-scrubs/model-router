@@ -12,11 +12,8 @@ const AJV_OPTIONS = { allErrors: true, strictNumbers: true } as const;
  * package entry. */
 export const QUERY_FIELDS: readonly string[] = Object.keys(querySchema.properties);
 
-const lastQueryField = QUERY_FIELDS.at(-1);
-const QUERY_FIELD_LIST =
-  lastQueryField === undefined
-    ? ""
-    : `${QUERY_FIELDS.slice(0, -1).join(", ")} and ${lastQueryField}`;
+// The schema always has fields, so the list needs no empty case.
+const QUERY_FIELD_LIST = `${QUERY_FIELDS.slice(0, -1).join(", ")} and ${QUERY_FIELDS.slice(-1).join("")}`;
 
 const validateQueryShape = new Ajv2020(AJV_OPTIONS).compile(querySchema);
 
