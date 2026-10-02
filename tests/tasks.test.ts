@@ -1,6 +1,7 @@
+import { loadRegistry } from "@dungle-scrubs/model-registry";
 import { describe, expect, test } from "vitest";
 import { listTasks, RouterError, rank } from "../src/index.js";
-import { expectValidAnswer, fixturePath, loadLoaded } from "./helpers.js";
+import { expectValidAnswer, fixturePath, loadLoaded, withTempDir, writeJson } from "./helpers.js";
 
 const TASKS = fixturePath("tasks.json");
 const EMPTY = fixturePath("empty-models.json");
@@ -12,74 +13,136 @@ const policyBroken = () => loadLoaded(POLICY_BROKEN);
 describe("rank with a known task", () => {
   test("a task query at each stakes level uses that level's floors", () => {
     const loaded = tasks();
-    const low = rank({ task: "task-a", stakes: "low" }, { registry: loaded });
+    // task-b floors taste by stakes (low 3, normal 5, high 7) and needs
+    // nothing, so the level's floors alone decide clearing. Ratings:
+    // model-a taste 5, model-b taste 6, model-c taste 4. Clearing order is
+    // cost first: model-b (cost 9), model-a (cost 8), model-c (no cost).
+    // Below order is the task's rank, taste: model-b, model-a, model-c.
+    const low = rank({ task: "task-b", stakes: "low" }, { registry: loaded });
     expectValidAnswer(low);
-    // task.minimums.low requires coding >= 6.
-    // model-a coding=7 (clears, no repo), model-b coding=7 (clears, no repo), model-c coding=8 (clears, repo yes)
-    // policy-a places model-b (rejected by hard limit, kept in removed with
-    // its hard-limit reason and named by a warning) and model-c (placed).
-    expect(
-      low.warnings
-        .filter((entry) => entry.code === "policy-route-removed")
-        .map((entry) => entry.message),
-    ).toEqual([
-      'the policy "policy-a" names the route "model-b@harness-x", which a hard limit removed',
+    expect(low.routes.map((entry) => [entry.label, entry.floor])).toEqual([
+      ["model-b@harness-x", "clears"],
+      ["model-a@harness-x", "clears"],
+      ["model-c@harness-x", "clears"], // taste 4 >= 3
     ]);
-    expect(low.routes.map((entry) => entry.label)).toEqual(["model-c@harness-x"]);
 
-    const high = rank({ task: "task-a", stakes: "high" }, { registry: loaded });
-    expectValidAnswer(high);
-    // task.minimums.high requires coding >= 8.
-    // model-c (8 >= 8) is the only candidate.
-    expect(
-      high.warnings
-        .filter((entry) => entry.code === "policy-route-removed")
-        .map((entry) => entry.message),
-    ).toEqual([
-      'the policy "policy-a" names the route "model-b@harness-x", which a hard limit removed',
+    const normal = rank({ task: "task-b", stakes: "normal" }, { registry: loaded });
+    expectValidAnswer(normal);
+    expect(normal.routes.map((entry) => [entry.label, entry.floor])).toEqual([
+      ["model-b@harness-x", "clears"],
+      ["model-a@harness-x", "clears"],
+      ["model-c@harness-x", "below"], // taste 4 < 5
     ]);
-    expect(high.routes.map((entry) => entry.label)).toEqual(["model-c@harness-x"]);
+
+    const high = rank({ task: "task-b", stakes: "high" }, { registry: loaded });
+    expectValidAnswer(high);
+    // Below-floor order follows the task's rank (taste), not router.rank
+    // (coding, taste), which would put model-c (coding 8) first.
+    expect(high.routes.map((entry) => [entry.label, entry.floor])).toEqual([
+      ["model-b@harness-x", "below"], // taste 6 < 7
+      ["model-a@harness-x", "below"], // taste 5 < 7
+      ["model-c@harness-x", "below"], // taste 4 < 7
+    ]);
   });
 
   test("a task query with inline minimums replaces the task floor per rating", () => {
     const loaded = tasks();
-    const answer = rank(
-      { task: "task-a", stakes: "normal", minimums: { coding: 9 } },
+    // Inline taste 3 replaces task-b's normal floor (taste 5) for that
+    // rating: model-c (taste 4) now clears instead of falling below.
+    const lowered = rank(
+      { task: "task-b", stakes: "normal", minimums: { taste: 3 } },
       { registry: loaded },
     );
-    expectValidAnswer(answer);
-    // Inline coding=9 replaces task's coding=7 at normal stakes. No model clears.
-    // policy-a still places model-c with floor=skipped.
-    expect(answer.routes.map((entry) => entry.label)).toEqual(["model-c@harness-x"]);
-    expect(answer.routes[0]?.floor).toBe("skipped");
-    expect(answer.routes[0]?.placedBy).toBe("policy");
+    expectValidAnswer(lowered);
+    expect(lowered.routes.map((entry) => [entry.label, entry.floor])).toEqual([
+      ["model-b@harness-x", "clears"],
+      ["model-a@harness-x", "clears"],
+      ["model-c@harness-x", "clears"],
+    ]);
+
+    // Inline coding 9 names a rating the task does not floor: the task's
+    // taste 5 floor stays, and the coding floor applies alongside it, so
+    // every route falls below.
+    const added = rank(
+      { task: "task-b", stakes: "normal", minimums: { coding: 9 } },
+      { registry: loaded },
+    );
+    expectValidAnswer(added);
+    expect(added.routes.map((entry) => [entry.label, entry.floor])).toEqual([
+      ["model-b@harness-x", "below"],
+      ["model-a@harness-x", "below"],
+      ["model-c@harness-x", "below"],
+    ]);
+    // model-b fails only the coding floor; its taste 6 meets the task's
+    // taste 5 floor, which the inline minimums left in place.
+    expect(added.routes[0]?.reasons).toEqual([
+      {
+        code: "floor-not-met",
+        field: '$.minimums["coding"]',
+        message: 'the model\'s rating for "coding" is 7, below the floor 9',
+      },
+    ]);
   });
 
-  test("inline needs add to the task's needs", () => {
-    const loaded = tasks();
-    const answer = rank(
-      { task: "task-a", stakes: "normal", needs: ["browser"] },
-      { registry: loaded },
-    );
-    expectValidAnswer(answer);
-    // task.needs=repo-access, plus inline needs=browser.
-    // No model has both: model-c has repo-access but not browser.
-    expect(answer.routes).toEqual([]);
-    expect(answer.removed.map((entry) => entry.reason.code)).toEqual([
-      "needs-not-satisfied",
-      "needs-not-satisfied",
-      "needs-not-satisfied",
-    ]);
-    // Both of policy-a's routes were removed by the hard limit, so both
-    // are named by policy-route-removed warnings.
-    expect(
-      answer.warnings
-        .filter((entry) => entry.code === "policy-route-removed")
-        .map((entry) => entry.message),
-    ).toEqual([
-      'the policy "policy-a" names the route "model-b@harness-x", which a hard limit removed',
-      'the policy "policy-a" names the route "model-c@harness-x", which a hard limit removed',
-    ]);
+  test("inline needs add to the task's needs", async () => {
+    await withTempDir(async (dir) => {
+      // task-a needs repo-access. model-all lists both repo-access and
+      // browser; model-browser lists only browser. Inline needs browser adds
+      // to the task's needs, so only model-all satisfies both. If the inline
+      // list replaced the task's needs, model-browser would survive too.
+      const loaded = loadRegistry({
+        path: writeJson(dir, "registry.json", {
+          format: 1,
+          ratings: { coding: "Writes and changes code to a spec." },
+          capabilities: {
+            browser: "Can drive a web browser.",
+            "repo-access": "Can read and change files in the workspace.",
+          },
+          router: { rank: ["coding"] },
+          tasks: {
+            "task-a": {
+              description: "Code.",
+              minimums: { low: { coding: 5 }, normal: { coding: 5 }, high: { coding: 5 } },
+              rank: ["coding"],
+              needs: ["repo-access"],
+            },
+          },
+          models: {
+            "model-all": {
+              family: "family-a",
+              ratings: { coding: 7 },
+              routes: [
+                {
+                  harness: "harness-x",
+                  modelId: "model-id-all",
+                  hosted: true,
+                  capabilities: ["repo-access", "browser"],
+                },
+              ],
+            },
+            "model-browser": {
+              family: "family-b",
+              ratings: { coding: 7 },
+              routes: [
+                {
+                  harness: "harness-x",
+                  modelId: "model-id-browser",
+                  hosted: true,
+                  capabilities: ["browser"],
+                },
+              ],
+            },
+          },
+        }),
+      });
+      const answer = rank(
+        { task: "task-a", stakes: "normal", needs: ["browser"] },
+        { registry: loaded },
+      );
+      expectValidAnswer(answer);
+      expect(answer.routes.map((entry) => entry.label)).toEqual(["model-all@harness-x"]);
+      expect(answer.removed.map((entry) => entry.label)).toEqual(["model-browser@harness-x"]);
+    });
   });
 
   test("inline effort replaces the task's effort on the applied query", () => {
@@ -237,6 +300,32 @@ describe("rank places a policy's routes first", () => {
     const warning = answer.warnings.find((entry) => entry.code === "policy-route-removed");
     expect(warning?.message).toContain("policy-a");
     expect(warning?.message).toContain("model-b@harness-x");
+  });
+
+  test("every policy route a hard limit removed gets its own warning", () => {
+    const loaded = tasks();
+    // Adding browser to task-a's needs removes every route, so both of
+    // policy-a's routes are named, in written order.
+    const answer = rank(
+      { task: "task-a", stakes: "normal", needs: ["browser"] },
+      { registry: loaded },
+    );
+    expectValidAnswer(answer);
+    expect(answer.routes).toEqual([]);
+    expect(answer.removed).toHaveLength(3);
+    expect(answer.removed.map((entry) => entry.reason.code)).toEqual([
+      "needs-not-satisfied",
+      "needs-not-satisfied",
+      "needs-not-satisfied",
+    ]);
+    expect(
+      answer.warnings
+        .filter((entry) => entry.code === "policy-route-removed")
+        .map((entry) => entry.message),
+    ).toEqual([
+      'the policy "policy-a" names the route "model-b@harness-x", which a hard limit removed',
+      'the policy "policy-a" names the route "model-c@harness-x", which a hard limit removed',
+    ]);
   });
 
   test("the policy routes appear with placedBy=policy and floor=skipped in written order", () => {
