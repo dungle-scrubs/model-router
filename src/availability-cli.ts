@@ -223,13 +223,33 @@ export function runAvailabilityCommand(
   const errResult = result as { error?: NodeJS.ErrnoException };
   if (errResult.error !== undefined) {
     const code = errResult.error.code;
-    const reason =
-      code === "ENOENT"
-        ? `the command "${bin}" was not found`
-        : `the availability command did not start: ${errResult.error.message}`;
+    if (code === "ENOENT") {
+      return {
+        entries: [],
+        note: note(
+          "availability-command-failed",
+          `the command "${bin}" was not found`,
+          "Adjust the command in config.json, or use --availability-file.",
+        ),
+      };
+    }
+    if (code === "ETIMEDOUT") {
+      return {
+        entries: [],
+        note: note(
+          "availability-command-failed",
+          `the availability command was killed after ${options.timeoutSeconds} seconds`,
+          `Lower the work the command does, raise "availability"."timeoutSeconds" in config.json, or use --availability-file.`,
+        ),
+      };
+    }
     return {
       entries: [],
-      note: note("availability-command-failed", reason, "Adjust the command in config.json."),
+      note: note(
+        "availability-command-failed",
+        `the availability command did not start: ${errResult.error.message}`,
+        "Adjust the command in config.json, or use --availability-file.",
+      ),
     };
   }
   if (result.signal !== null && result.signal !== undefined) {

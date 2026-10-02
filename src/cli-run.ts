@@ -106,7 +106,7 @@ interface AvailabilityOptionState {
 function addAvailabilityOptions(command: Command): Command {
   command
     .option("--availability", "run availability.command from config.json", false)
-    .option("--availability-file <path>", "read an availability document from <path>", "");
+    .option("--availability-file <path>", "read an availability document from <path>");
   return command;
 }
 
@@ -115,18 +115,25 @@ function readAvailabilityOptionState(
   field: string,
 ): AvailabilityOptionState {
   const fromCommand = options.availability === true;
-  const file = typeof options.availabilityFile === "string" ? options.availabilityFile : "";
-  if (fromCommand && file !== "") {
+  const fileRaw = options.availabilityFile;
+  if (fromCommand && fileRaw !== undefined) {
     throw queryInvalid(
       field,
       "--availability and --availability-file cannot be used together.",
       "Pass only one of --availability or --availability-file <path>.",
     );
   }
-  if (file === "") {
-    return { file: undefined, fromCommand };
+  if (fileRaw === "") {
+    throw queryInvalid(
+      field,
+      "the --availability-file option was given an empty path.",
+      "Give --availability-file a non-empty path to an availability document.",
+    );
   }
-  return { file, fromCommand };
+  if (typeof fileRaw === "string") {
+    return { file: fileRaw, fromCommand };
+  }
+  return { file: undefined, fromCommand };
 }
 
 function queryInvalid(field: string, message: string, fix: string): RouterError {

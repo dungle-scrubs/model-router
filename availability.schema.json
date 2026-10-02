@@ -11,7 +11,6 @@
     },
     "generatedAt": {
       "type": "string",
-      "format": "date-time",
       "description": "When the document was produced. Older than `maxAgeSeconds` (or unparseable) is stale and the CLI fills `availabilityNote`."
     },
     "entries": {
@@ -37,7 +36,6 @@
         },
         "resetsAt": {
           "type": "string",
-          "format": "date-time",
           "description": "When the limiting window ends. After this, `dropExpired` removes the entry."
         },
         "percentRemaining": {

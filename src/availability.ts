@@ -133,7 +133,7 @@ function routeState<
   >,
   spendToZero: ReadonlySet<string>,
 ): {
-  availability: AvailabilityValue;
+  availability: AvailabilityValue | "preserve";
   group: "kept" | "demoted" | "removed";
   reason: Coded | undefined;
 } {
@@ -146,7 +146,7 @@ function routeState<
     // place. The caller passes routes with the engine's first-pass
     // availability ("unknown" for metered routes); keeping it here
     // means the route stays in its group and keeps "unknown".
-    return { availability: route.availability, group: "kept", reason: undefined };
+    return { availability: "preserve", group: "kept", reason: undefined };
   }
   if (meterState.status === "exhausted") {
     return { availability: "exhausted", group: "removed", reason: REASON_EXHAUSTED };
@@ -197,6 +197,7 @@ export function applyAvailability<
   const meterStates = groupByMeter(entries);
 
   const decisions: Array<{
+    availability: AvailabilityValue | "preserve";
     group: "kept" | "demoted" | "removed";
     reason: Coded | undefined;
     route: R;
@@ -204,7 +205,12 @@ export function applyAvailability<
   let removedCount = 0;
   for (const route of routes) {
     const decision = routeState(route, meterStates, spendToZero);
-    decisions.push({ group: decision.group, reason: decision.reason, route });
+    decisions.push({
+      availability: decision.availability,
+      group: decision.group,
+      reason: decision.reason,
+      route,
+    });
     if (decision.group === "removed") removedCount += 1;
   }
 
@@ -225,38 +231,56 @@ export function applyAvailability<
   // exhausted case rewrites the demoted/removed routes into the kept
   // bucket with "exhausted" availability, so this same loop still
   // produces the right answer.
-  const finalize = (decision: (typeof decisions)[number]): void => {
+  const finalize = (
+    decision: (typeof decisions)[number],
+    newAvailability: AvailabilityValue,
+  ): void => {
     const { route, reason, group } = decision;
     if (group === "removed" && !allExhausted) {
       removedList.push({ label: route.label, reason: reason ?? REASON_EXHAUSTED });
       return;
     }
-    const availability: AvailabilityValue =
-      group === "removed"
-        ? "exhausted"
-        : group === "demoted"
-          ? "projected"
-          : reason?.code === "meter-projected-spend-to-zero"
-            ? "projected"
-            : // `ok`, `unmetered`, or preserved (unknown): keep the
-              // route's first-pass availability.
-              route.availability;
     const reasons = reason === undefined ? undefined : [...(route.reasons ?? []), reason];
+    const availabilityChanged = route.availability !== newAvailability;
+    // Preserve the caller's object when nothing changes: returning the
+    // same reference is part of the "only an entry moves a route"
+    // contract.
+    if (!availabilityChanged && reasons === undefined) {
+      newRoutes.push(route);
+      return;
+    }
     const out = isPlainObject(route)
-      ? ({ ...route, availability, ...(reasons === undefined ? {} : { reasons }) } as R)
+      ? ({
+          ...route,
+          availability: newAvailability,
+          ...(reasons === undefined ? {} : { reasons }),
+        } as R)
       : route;
     newRoutes.push(out);
   };
 
   for (const decision of decisions) {
-    if (decision.group === "kept") finalize(decision);
+    if (decision.group !== "kept") continue;
+    const availability =
+      decision.availability === "preserve" ? decision.route.availability : decision.availability;
+    finalize(decision, availability);
   }
   for (const decision of decisions) {
-    if (decision.group === "demoted") finalize(decision);
+    if (decision.group !== "demoted") continue;
+    finalize(decision, "projected");
   }
   if (allExhausted) {
     for (const decision of decisions) {
-      if (decision.group === "removed") finalize(decision);
+      if (decision.group === "removed") finalize(decision, "exhausted");
+    }
+  } else {
+    for (const decision of decisions) {
+      if (decision.group === "removed") {
+        removedList.push({
+          label: decision.route.label,
+          reason: decision.reason ?? REASON_EXHAUSTED,
+        });
+      }
     }
   }
 
