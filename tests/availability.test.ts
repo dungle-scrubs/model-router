@@ -1504,6 +1504,9 @@ describe("availability flags on subcommands", () => {
     const error = JSON.parse(result.stderr).error;
     expect(error.code).toBe("query-invalid");
     expect(error.field).toBe("availability");
+    expect(error.message).toBe("the --availability option does not apply to the tasks subcommand.");
+    // check rejects the flag too, so the fix cannot name it.
+    expect(error.fix).toBe("Run model-router '<query>' to use --availability.");
   });
 
   test("tasks with --availability given before the subcommand word exits 2 with query-invalid", () => {
@@ -1512,6 +1515,8 @@ describe("availability flags on subcommands", () => {
     const error = JSON.parse(result.stderr).error;
     expect(error.code).toBe("query-invalid");
     expect(error.field).toBe("availability");
+    expect(error.message).toBe("the --availability option does not apply to the tasks subcommand.");
+    expect(error.fix).toBe("Run model-router '<query>' to use --availability.");
   });
 
   test("tasks with --availability-file exits 2 with query-invalid", () => {
@@ -1520,6 +1525,10 @@ describe("availability flags on subcommands", () => {
     const error = JSON.parse(result.stderr).error;
     expect(error.code).toBe("query-invalid");
     expect(error.field).toBe("availability");
+    expect(error.message).toBe(
+      "the --availability-file option does not apply to the tasks subcommand.",
+    );
+    expect(error.fix).toBe("Run model-router '<query>' to use --availability.");
   });
 
   test("check with --availability exits 2 with query-invalid", () => {
@@ -1528,6 +1537,8 @@ describe("availability flags on subcommands", () => {
     const error = JSON.parse(result.stderr).error;
     expect(error.code).toBe("query-invalid");
     expect(error.field).toBe("availability");
+    expect(error.message).toBe("the --availability option does not apply to the check subcommand.");
+    expect(error.fix).toBe("Run model-router '<query>' to use --availability.");
   });
 
   test("check with --availability-file exits 2 with query-invalid", () => {
@@ -1536,6 +1547,10 @@ describe("availability flags on subcommands", () => {
     const error = JSON.parse(result.stderr).error;
     expect(error.code).toBe("query-invalid");
     expect(error.field).toBe("availability");
+    expect(error.message).toBe(
+      "the --availability-file option does not apply to the check subcommand.",
+    );
+    expect(error.fix).toBe("Run model-router '<query>' to use --availability.");
   });
 });
 

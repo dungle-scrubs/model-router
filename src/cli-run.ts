@@ -265,7 +265,7 @@ export function runCli(argv: readonly string[], io: Partial<CliIo> = {}): number
         options.availability === true
           ? "the --availability option does not apply to the tasks subcommand."
           : "the --availability-file option does not apply to the tasks subcommand.",
-        "Run model-router check or model-router '<query>' to use --availability.",
+        "Run model-router '<query>' to use --availability.",
       );
     }
     const configValues = options.config ?? [];
