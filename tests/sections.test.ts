@@ -361,6 +361,34 @@ describe("validateRouterSections", () => {
     });
   });
 
+  test("an invalid rank still collects the independent problems", async () => {
+    await withTempDir(async (dir) => {
+      const loaded = loadRegistry({
+        path: writeJson(dir, "registry.json", {
+          format: 1,
+          ratings: { coding: "Writes and changes code to a spec." },
+          capabilities: { browser: "Can drive a web browser." },
+          router: { rank: [], matrix: true, questions: { telepathy: 7 } },
+          models: {
+            "model-a": {
+              family: "family-a",
+              routes: [{ harness: "harness-x", modelId: "model-id-a", hosted: true }],
+            },
+          },
+        }),
+      });
+      const error = catchSectionsError(() => validateRouterSections(loaded));
+      expect(error.code).toBe("registry-sections-invalid");
+      expect(error.problems.map((problem) => problem.code)).toEqual([
+        "router-rank-invalid",
+        "router-question-capability-unknown",
+        "router-question-not-string",
+        "router-field-unknown",
+      ]);
+      expect(error.message).toBe("the router section has 4 problems");
+    });
+  });
+
   test("a rank list of only undeclared ratings has no usable rank", async () => {
     await withTempDir(async (dir) => {
       const loaded = loadRegistry({

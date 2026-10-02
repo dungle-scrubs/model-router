@@ -23,6 +23,7 @@ function rankLine(loaded: LoadedRegistry): string {
 export function validateRouterSections(loaded: LoadedRegistry): RouterSections {
   const section = loaded.sections.router;
   const problems: RouterProblem[] = [];
+  const rank: string[] = [];
 
   if (section === undefined) {
     throw sectionsError(
@@ -50,52 +51,44 @@ export function validateRouterSections(loaded: LoadedRegistry): RouterSections {
 
   const rankField = section.rank;
   if (rankField === undefined) {
-    throw sectionsError(
-      {
-        code: "router-rank-missing",
-        field: pathJoin('$["router"]', "rank"),
-        message: "the router section has no rank list, which model-router requires",
-        fix: `Add "rank": ["${sampleRating(loaded)}"] inside the router section, with the ratings that order routes.`,
-      },
-      [],
-    );
+    problems.push({
+      code: "router-rank-missing",
+      field: pathJoin('$["router"]', "rank"),
+      message: "the router section has no rank list, which model-router requires",
+      fix: `Add "rank": ["${sampleRating(loaded)}"] inside the router section, with the ratings that order routes.`,
+    });
+  } else if (!Array.isArray(rankField) || rankField.length === 0) {
+    problems.push({
+      code: "router-rank-invalid",
+      field: pathJoin('$["router"]', "rank"),
+      message: "the router rank must be a non-empty array of rating names",
+      fix: `Set "rank" to a non-empty array of declared rating names, such as ["${sampleRating(loaded)}"].`,
+    });
+  } else {
+    const declaredRatings = loaded.registry.ratings ?? {};
+    rankField.forEach((entry, index) => {
+      const field = `$["router"]["rank"][${index}]`;
+      if (typeof entry !== "string") {
+        problems.push({
+          code: "router-rank-entry-not-string",
+          field,
+          message: `the router rank entry at index ${index} must be a string`,
+          fix: `Set the rank entry at index ${index} to a declared rating name.`,
+        });
+        return;
+      }
+      if (!Object.hasOwn(declaredRatings, entry)) {
+        problems.push({
+          code: "router-rank-unknown",
+          field,
+          message: `the rating "${entry}" is not declared in the ratings section`,
+          fix: `Add "${entry}" to the ratings section, or remove it from "router"."rank".`,
+        });
+        return;
+      }
+      rank.push(entry);
+    });
   }
-  if (!Array.isArray(rankField) || rankField.length === 0) {
-    throw sectionsError(
-      {
-        code: "router-rank-invalid",
-        field: pathJoin('$["router"]', "rank"),
-        message: "the router rank must be a non-empty array of rating names",
-        fix: `Set "rank" to a non-empty array of declared rating names, such as ["${sampleRating(loaded)}"].`,
-      },
-      [],
-    );
-  }
-
-  const declaredRatings = loaded.registry.ratings ?? {};
-  const rank: string[] = [];
-  rankField.forEach((entry, index) => {
-    const field = `$["router"]["rank"][${index}]`;
-    if (typeof entry !== "string") {
-      problems.push({
-        code: "router-rank-entry-not-string",
-        field,
-        message: `the router rank entry at index ${index} must be a string`,
-        fix: `Set the rank entry at index ${index} to a declared rating name.`,
-      });
-      return;
-    }
-    if (!Object.hasOwn(declaredRatings, entry)) {
-      problems.push({
-        code: "router-rank-unknown",
-        field,
-        message: `the rating "${entry}" is not declared in the ratings section`,
-        fix: `Add "${entry}" to the ratings section, or remove it from "router"."rank".`,
-      });
-      return;
-    }
-    rank.push(entry);
-  });
 
   const questions = section.questions;
   if (questions !== undefined) {
