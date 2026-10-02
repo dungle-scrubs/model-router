@@ -1,0 +1,59 @@
+{
+  "name": "@dungle-scrubs/model-router",
+  "version": "0.1.0",
+  "description": "Rank model routes for a structured query against a versioned model registry.",
+  "type": "module",
+  "private": true,
+  "packageManager": "pnpm@11.28.2",
+  "engines": {
+    "node": ">=22.14.0"
+  },
+  "bin": {
+    "model-router": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./query.schema.json": "./query.schema.json",
+    "./answer.schema.json": "./answer.schema.json"
+  },
+  "files": [
+    "dist",
+    "query.schema.json",
+    "answer.schema.json",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "test": "pnpm build && vitest run",
+    "test:watch": "vitest",
+    "test:mutation": "stryker run",
+    "verify": "pnpm lint && pnpm typecheck && pnpm test",
+    "hooks:install": "lefthook install",
+    "prepack": "pnpm verify"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14",
+    "@stryker-mutator/core": "10.0.0",
+    "@stryker-mutator/typescript-checker": "10.0.0",
+    "@stryker-mutator/vitest-runner": "10.0.0",
+    "@types/node": "22.18.6",
+    "ajv": "8.20.0",
+    "esbuild": "0.28.2",
+    "lefthook": "2.1.15",
+    "typescript": "5.9.3",
+    "vitest": "4.1.0"
+  },
+  "dependencies": {
+    "@dungle-scrubs/model-registry": "github:dungle-scrubs/model-registry#78ef6f961e072553917272be644b0713e758dc62",
+    "commander": "15.0.0"
+  }
+}

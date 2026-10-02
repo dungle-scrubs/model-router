@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "packageManager": "pnpm",
+  "plugins": ["@stryker-mutator/vitest-runner", "@stryker-mutator/typescript-checker"],
+  "testRunner": "vitest",
+  "checkers": ["typescript"],
+  "tsconfigFile": "tsconfig.json",
+  "buildCommand": "node scripts/build.mjs",
+  "mutate": ["src/**/*.ts", "!src/index.ts", "!src/types.ts"],
+  "reporters": ["html", "clear-text", "progress"],
+  "concurrency": "50%",
+  "incremental": true,
+  "incrementalFile": "reports/stryker-incremental.json",
+  "thresholds": {
+    "high": 80,
+    "low": 75,
+    "break": 75
+  }
+}

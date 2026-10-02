@@ -1,0 +1,5 @@
+saveExact: true
+allowBuilds:
+  esbuild: true
+  lefthook: true
+  "@dungle-scrubs/model-registry@git+https://github.com/dungle-scrubs/model-registry.git#78ef6f961e072553917272be644b0713e758dc62": true
