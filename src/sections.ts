@@ -1,4 +1,5 @@
 import type { LoadedRegistry } from "@dungle-scrubs/model-registry";
+import { EFFORT_LADDER } from "@dungle-scrubs/model-registry";
 import { RouterError } from "./error.js";
 import type { RouterProblem, RouterSections } from "./types.js";
 
@@ -14,11 +15,17 @@ function rankLine(loaded: LoadedRegistry): string {
   return `"router": { "rank": ["${sampleRating(loaded)}"] }`;
 }
 
+const TASK_FIELDS: readonly string[] = ["description", "minimums", "rank", "needs", "effort"];
+const POLICY_FIELDS: readonly string[] = ["task", "stakes", "routes", "reason", "since", "spec"];
+const STAKES_VALUES: readonly string[] = ["low", "normal", "high"];
+const SPEC_VALUES: readonly string[] = ["open", "settled"];
+
 /**
  * Read and validate the router's section of the registry file. The loader
  * passes it through untouched in `loaded.sections`; this module is the one
- * place that knows its shape. Returns the validated `rank` list; throws a
- * RouterError with `registry-sections-invalid` on any problem.
+ * place that knows its shape. Returns the validated `rank` list, plus the
+ * tasks and policy maps; throws a RouterError with
+ * `registry-sections-invalid` on any problem.
  */
 export function validateRouterSections(loaded: LoadedRegistry): RouterSections {
   const section = loaded.sections.router;
@@ -133,12 +140,585 @@ export function validateRouterSections(loaded: LoadedRegistry): RouterSections {
     }
   }
 
+  const tasksSection = loaded.sections.tasks;
+  const tasksMap = validateTasks(tasksSection, loaded, problems);
+
+  const policySection = loaded.sections.policy;
+  validatePolicy(policySection, loaded, tasksMap, problems);
+
   if (problems.length > 0) {
     const [first, ...rest] = problems as [RouterProblem, ...RouterProblem[]];
     throw sectionsError(first, rest);
   }
 
-  return { rank };
+  return { rank, tasks: tasksMap };
+}
+
+type TasksMap = Readonly<Record<string, import("./types.js").TaskEntry>>;
+
+function validateTasks(raw: unknown, loaded: LoadedRegistry, problems: RouterProblem[]): TasksMap {
+  if (raw === undefined) return {};
+  const sectionField = '$["tasks"]';
+  if (!isPlainObject(raw)) {
+    problems.push({
+      code: "tasks-section-not-object",
+      field: sectionField,
+      message: "the tasks section must be a JSON object",
+      fix: 'Replace the tasks section with an object such as "tasks": { "task-a": { ... } }.',
+    });
+    return {};
+  }
+
+  const declaredRatings = loaded.registry.ratings ?? {};
+  const declaredCapabilities = loaded.registry.capabilities ?? {};
+  const tasksMap: Record<string, import("./types.js").TaskEntry> = {};
+  const seen = new Set<string>();
+
+  for (const [taskName, taskRaw] of Object.entries(raw)) {
+    if (!seen.add(taskName)) {
+      // Already validated below; no-op here.
+    }
+    const taskField = pathJoin(sectionField, taskName);
+    if (!isPlainObject(taskRaw)) {
+      problems.push({
+        code: "tasks-entry-not-object",
+        field: taskField,
+        message: `the task "${taskName}" must be a JSON object`,
+        fix: `Replace the task "${taskName}" with an object that has description, minimums and rank.`,
+      });
+      continue;
+    }
+
+    const description = taskRaw.description;
+    if (description === undefined) {
+      problems.push({
+        code: "tasks-description-missing",
+        field: pathJoin(taskField, "description"),
+        message: `the task "${taskName}" has no description, which model-router requires`,
+        fix: `Add a one-line description to the task "${taskName}".`,
+      });
+    } else if (typeof description !== "string") {
+      problems.push({
+        code: "tasks-description-not-string",
+        field: pathJoin(taskField, "description"),
+        message: `the task "${taskName}" description must be a string`,
+        fix: `Set the description of "${taskName}" to a one-line sentence.`,
+      });
+    }
+
+    const minimums = taskRaw.minimums;
+    if (minimums === undefined) {
+      problems.push({
+        code: "tasks-minimums-missing",
+        field: pathJoin(taskField, "minimums"),
+        message: `the task "${taskName}" has no minimums, which model-router requires`,
+        fix: `Add a minimums map with low, normal and high entries to the task "${taskName}".`,
+      });
+    } else if (!isPlainObject(minimums)) {
+      problems.push({
+        code: "tasks-minimums-not-object",
+        field: pathJoin(taskField, "minimums"),
+        message: `the task "${taskName}" minimums must be a JSON object`,
+        fix: `Replace the minimums of "${taskName}" with an object mapping stakes to rating floors.`,
+      });
+    } else {
+      for (const stakes of STAKES_VALUES) {
+        const stakeField = pathJoin(`${pathJoin(taskField, "minimums")}`, stakes);
+        if (!Object.hasOwn(minimums, stakes)) {
+          problems.push({
+            code: "tasks-minimums-stake-missing",
+            field: stakeField,
+            message: `the task "${taskName}" minimums is missing the "${stakes}" stakes`,
+            fix: `Add "${stakes}" to the minimums of "${taskName}".`,
+          });
+          continue;
+        }
+        const stakeFloors = minimums[stakes];
+        if (!isPlainObject(stakeFloors)) {
+          problems.push({
+            code: "tasks-minimums-stake-not-object",
+            field: stakeField,
+            message: `the task "${taskName}" minimums["${stakes}"] must be a JSON object`,
+            fix: `Replace the "${stakes}" entry of "${taskName}" minimums with a rating object.`,
+          });
+          continue;
+        }
+        for (const [rating, value] of Object.entries(stakeFloors)) {
+          const ratingField = pathJoin(stakeField, rating);
+          if (!Object.hasOwn(declaredRatings, rating)) {
+            problems.push({
+              code: "tasks-minimums-rating-unknown",
+              field: ratingField,
+              message: `the rating "${rating}" is not declared in the ratings section`,
+              fix: `Add "${rating}" to the ratings section, or remove it from "${taskName}" minimums.`,
+            });
+            continue;
+          }
+          if (typeof value !== "number" || !Number.isFinite(value)) {
+            problems.push({
+              code: "tasks-minimums-rating-not-number",
+              field: ratingField,
+              message: `the floor for "${rating}" in "${taskName}" minimums["${stakes}"] must be a finite number`,
+              fix: `Set the floor for "${rating}" in "${taskName}" minimums["${stakes}"] to a number.`,
+            });
+          }
+        }
+      }
+    }
+
+    const rankList = taskRaw.rank;
+    if (rankList === undefined) {
+      problems.push({
+        code: "tasks-rank-missing",
+        field: pathJoin(taskField, "rank"),
+        message: `the task "${taskName}" has no rank list, which model-router requires`,
+        fix: `Add a non-empty rank list of declared rating names to the task "${taskName}".`,
+      });
+    } else if (!Array.isArray(rankList) || rankList.length === 0) {
+      problems.push({
+        code: "tasks-rank-invalid",
+        field: pathJoin(taskField, "rank"),
+        message: `the task "${taskName}" rank must be a non-empty array of rating names`,
+        fix: `Set the rank of "${taskName}" to a non-empty array of declared rating names.`,
+      });
+    } else {
+      rankList.forEach((entry, index) => {
+        const field = pathJoin(pathJoin(taskField, "rank"), String(index));
+        if (typeof entry !== "string") {
+          problems.push({
+            code: "tasks-rank-entry-not-string",
+            field,
+            message: `the task "${taskName}" rank entry at index ${index} must be a string`,
+            fix: `Set the rank entry of "${taskName}" at index ${index} to a declared rating name.`,
+          });
+          return;
+        }
+        if (!Object.hasOwn(declaredRatings, entry)) {
+          problems.push({
+            code: "tasks-rank-rating-unknown",
+            field,
+            message: `the rating "${entry}" is not declared in the ratings section`,
+            fix: `Add "${entry}" to the ratings section, or remove it from "${taskName}" rank.`,
+          });
+        }
+      });
+    }
+
+    if (Object.hasOwn(taskRaw, "needs")) {
+      const needs = taskRaw.needs;
+      if (!Array.isArray(needs)) {
+        problems.push({
+          code: "tasks-needs-not-array",
+          field: pathJoin(taskField, "needs"),
+          message: `the task "${taskName}" needs must be a list of declared capability names`,
+          fix: `Replace the needs of "${taskName}" with a list of declared capability names.`,
+        });
+      } else {
+        needs.forEach((entry, index) => {
+          const field = pathJoin(pathJoin(taskField, "needs"), String(index));
+          if (typeof entry !== "string") {
+            problems.push({
+              code: "tasks-needs-entry-not-string",
+              field,
+              message: `the task "${taskName}" needs entry at index ${index} must be a string`,
+              fix: `Set the needs entry of "${taskName}" at index ${index} to a declared capability name.`,
+            });
+            return;
+          }
+          if (!Object.hasOwn(declaredCapabilities, entry)) {
+            problems.push({
+              code: "tasks-needs-capability-unknown",
+              field,
+              message: `the capability "${entry}" is not declared in the capabilities section`,
+              fix: `Add "${entry}" to the capabilities section, or remove it from "${taskName}" needs.`,
+            });
+          }
+        });
+      }
+    }
+
+    if (Object.hasOwn(taskRaw, "effort")) {
+      const effort = taskRaw.effort;
+      if (typeof effort !== "string" || !(EFFORT_LADDER as readonly string[]).includes(effort)) {
+        problems.push({
+          code: "tasks-effort-invalid",
+          field: pathJoin(taskField, "effort"),
+          message: `the task "${taskName}" effort must be one of ${EFFORT_LADDER.join(", ")}`,
+          fix: `Set the effort of "${taskName}" to one of ${EFFORT_LADDER.join(", ")}.`,
+        });
+      }
+    }
+
+    for (const name of Object.keys(taskRaw)) {
+      if (!TASK_FIELDS.includes(name)) {
+        problems.push({
+          code: "tasks-field-unknown",
+          field: pathJoin(taskField, name),
+          message: `the field "${name}" is not part of the task "${taskName}"`,
+          fix: `Remove the field "${name}" from the task "${taskName}".`,
+        });
+      }
+    }
+
+    const taskMinimums = readTaskMinimums(minimums);
+    const taskRank = readTaskRank(rankList);
+    const taskNeeds = readTaskNeeds(taskRaw.needs);
+    const taskEffort = readTaskEffort(taskRaw.effort);
+
+    tasksMap[taskName] = {
+      description: typeof description === "string" ? description : "",
+      ...(taskEffort === undefined ? {} : { effort: taskEffort }),
+      minimums: taskMinimums,
+      needs: taskNeeds,
+      rank: taskRank,
+    };
+  }
+
+  return tasksMap;
+}
+
+function readTaskMinimums(
+  raw: unknown,
+): Readonly<Record<string, Readonly<Record<string, number>>>> {
+  if (!isPlainObject(raw)) return {};
+  const out: Record<string, Record<string, number>> = {};
+  for (const stake of STAKES_VALUES) {
+    const stakeFloors = raw[stake];
+    if (!isPlainObject(stakeFloors)) continue;
+    const inner: Record<string, number> = {};
+    for (const [rating, value] of Object.entries(stakeFloors)) {
+      if (typeof value === "number" && Number.isFinite(value)) {
+        inner[rating] = value;
+      }
+    }
+    if (Object.keys(inner).length > 0) out[stake] = inner;
+  }
+  return out;
+}
+
+function readTaskRank(raw: unknown): readonly string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((entry): entry is string => typeof entry === "string");
+}
+
+function readTaskNeeds(raw: unknown): readonly string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((entry): entry is string => typeof entry === "string");
+}
+
+function readTaskEffort(raw: unknown): string | undefined {
+  return typeof raw === "string" ? raw : undefined;
+}
+
+interface PolicyShape {
+  readonly effort?: string;
+  readonly name: string;
+  readonly routes: readonly string[];
+  readonly spec: string;
+  readonly stakes: readonly string[];
+  readonly task: string;
+}
+
+function validatePolicy(
+  raw: unknown,
+  loaded: LoadedRegistry,
+  tasksMap: TasksMap,
+  problems: RouterProblem[],
+): void {
+  if (raw === undefined) return;
+  const sectionField = '$["policy"]';
+  if (!isPlainObject(raw)) {
+    problems.push({
+      code: "policy-section-not-object",
+      field: sectionField,
+      message: "the policy section must be a JSON object",
+      fix: 'Replace the policy section with an object such as "policy": { "name": { ... } }.',
+    });
+    return;
+  }
+
+  const declaredRoutes = loaded.routes;
+  const modelsByRoute = collectModelsByRoute(loaded);
+  const seen: PolicyShape[] = [];
+
+  for (const [policyName, policyRaw] of Object.entries(raw)) {
+    const policyField = pathJoin(sectionField, policyName);
+    if (!isPlainObject(policyRaw)) {
+      problems.push({
+        code: "policy-entry-not-object",
+        field: policyField,
+        message: `the policy "${policyName}" must be a JSON object`,
+        fix: `Replace the policy "${policyName}" with an object that has task, stakes, routes and reason.`,
+      });
+      continue;
+    }
+
+    const task = policyRaw.task;
+    if (task === undefined) {
+      problems.push({
+        code: "policy-task-missing",
+        field: pathJoin(policyField, "task"),
+        message: `the policy "${policyName}" has no task, which model-router requires`,
+        fix: `Add a task name to the policy "${policyName}".`,
+      });
+    } else if (typeof task !== "string" || !Object.hasOwn(tasksMap, task)) {
+      problems.push({
+        code: "policy-task-unknown",
+        field: pathJoin(policyField, "task"),
+        message: `the task "${task}" is not declared in the tasks section`,
+        fix: `Add "${task}" to the tasks section, or correct the policy "${policyName}" task.`,
+      });
+    }
+
+    const stakes = policyRaw.stakes;
+    if (stakes === undefined) {
+      problems.push({
+        code: "policy-stakes-missing",
+        field: pathJoin(policyField, "stakes"),
+        message: `the policy "${policyName}" has no stakes list, which model-router requires`,
+        fix: `Add a stakes list to the policy "${policyName}".`,
+      });
+    } else if (!Array.isArray(stakes) || stakes.length === 0) {
+      problems.push({
+        code: "policy-stakes-invalid",
+        field: pathJoin(policyField, "stakes"),
+        message: `the policy "${policyName}" stakes must be a non-empty array of stakes levels`,
+        fix: `Set the stakes of "${policyName}" to a non-empty list of low, normal or high.`,
+      });
+    } else {
+      stakes.forEach((entry, index) => {
+        const field = pathJoin(pathJoin(policyField, "stakes"), String(index));
+        if (typeof entry !== "string" || !STAKES_VALUES.includes(entry)) {
+          problems.push({
+            code: "policy-stakes-entry-invalid",
+            field,
+            message: `the policy "${policyName}" stakes entry at index ${index} must be low, normal or high`,
+            fix: `Set the stakes entry of "${policyName}" at index ${index} to low, normal or high.`,
+          });
+        }
+      });
+    }
+
+    const routes = policyRaw.routes;
+    if (routes === undefined) {
+      problems.push({
+        code: "policy-routes-missing",
+        field: pathJoin(policyField, "routes"),
+        message: `the policy "${policyName}" has no routes list, which model-router requires`,
+        fix: `Add a routes list to the policy "${policyName}".`,
+      });
+    } else if (!Array.isArray(routes) || routes.length === 0) {
+      problems.push({
+        code: "policy-routes-invalid",
+        field: pathJoin(policyField, "routes"),
+        message: `the policy "${policyName}" routes must be a non-empty array`,
+        fix: `Set the routes of "${policyName}" to a non-empty array of route entries.`,
+      });
+    } else {
+      routes.forEach((entry, index) => {
+        const field = pathJoin(pathJoin(policyField, "routes"), String(index));
+        if (!isPlainObject(entry)) {
+          problems.push({
+            code: "policy-route-not-object",
+            field,
+            message: `the policy "${policyName}" route at index ${index} must be a JSON object`,
+            fix: `Set the route at index ${index} of "${policyName}" to an object with "route".`,
+          });
+          return;
+        }
+        const routeLabel = entry.route;
+        if (typeof routeLabel !== "string") {
+          problems.push({
+            code: "policy-route-label-missing",
+            field: pathJoin(field, "route"),
+            message: `the policy "${policyName}" route at index ${index} is missing a label`,
+            fix: `Set the "route" of the policy "${policyName}" route at index ${index} to a label.`,
+          });
+        } else if (!Object.hasOwn(declaredRoutes, routeLabel)) {
+          problems.push({
+            code: "policy-route-label-unknown",
+            field: pathJoin(field, "route"),
+            message: `the label "${routeLabel}" is not declared by any route`,
+            fix: `Add the route "${routeLabel}" to the models section, or remove it from "${policyName}".`,
+          });
+        } else {
+          const modelKey = modelsByRoute.get(routeLabel);
+          if (modelKey !== undefined) {
+            const model = loaded.registry.models[modelKey];
+            if (model !== undefined) {
+              const modelMax = model.maxEffort;
+              const modelFixed = model.fixedEffort;
+              const policyEffort = entry.effort;
+              if (typeof policyEffort === "string") {
+                if (!(EFFORT_LADDER as readonly string[]).includes(policyEffort)) {
+                  problems.push({
+                    code: "policy-route-effort-invalid",
+                    field: pathJoin(field, "effort"),
+                    message: `the policy "${policyName}" route "${routeLabel}" effort must be one of ${EFFORT_LADDER.join(", ")}`,
+                    fix: `Set the effort of the policy "${policyName}" route "${routeLabel}" to one of ${EFFORT_LADDER.join(", ")}.`,
+                  });
+                } else if (modelFixed !== undefined && policyEffort !== modelFixed) {
+                  problems.push({
+                    code: "policy-route-effort-fixed-mismatch",
+                    field: pathJoin(field, "effort"),
+                    message: `the policy "${policyName}" route "${routeLabel}" effort "${policyEffort}" differs from the model's fixedEffort "${modelFixed}"`,
+                    fix: `Remove the policy route's effort, or set it to "${modelFixed}".`,
+                  });
+                } else if (modelMax !== undefined && exceedsLadder(policyEffort, modelMax)) {
+                  problems.push({
+                    code: "policy-route-effort-above-max",
+                    field: pathJoin(field, "effort"),
+                    message: `the policy "${policyName}" route "${routeLabel}" effort "${policyEffort}" is above the model's maxEffort "${modelMax}"`,
+                    fix: `Lower the policy route's effort to "${modelMax}" or below, or remove it.`,
+                  });
+                }
+              }
+            }
+          }
+        }
+        if (Object.hasOwn(entry, "effort") && typeof entry.effort !== "string") {
+          problems.push({
+            code: "policy-route-effort-not-string",
+            field: pathJoin(field, "effort"),
+            message: `the policy "${policyName}" route at index ${index} effort must be a string`,
+            fix: `Set the effort of the policy "${policyName}" route at index ${index} to a string.`,
+          });
+        }
+        for (const name of Object.keys(entry)) {
+          if (name !== "route" && name !== "effort") {
+            problems.push({
+              code: "policy-route-field-unknown",
+              field: pathJoin(field, name),
+              message: `the field "${name}" is not part of a policy route`,
+              fix: `Remove the field "${name}" from the policy "${policyName}" route at index ${index}.`,
+            });
+          }
+        }
+      });
+    }
+
+    const reason = policyRaw.reason;
+    if (reason === undefined) {
+      problems.push({
+        code: "policy-reason-missing",
+        field: pathJoin(policyField, "reason"),
+        message: `the policy "${policyName}" has no reason, which model-router requires`,
+        fix: `Add a one-line reason to the policy "${policyName}".`,
+      });
+    } else if (typeof reason !== "string") {
+      problems.push({
+        code: "policy-reason-not-string",
+        field: pathJoin(policyField, "reason"),
+        message: `the policy "${policyName}" reason must be a string`,
+        fix: `Set the reason of "${policyName}" to a one-line sentence.`,
+      });
+    }
+
+    let spec: string = "open";
+    if (Object.hasOwn(policyRaw, "spec")) {
+      const policySpec = policyRaw.spec;
+      if (typeof policySpec !== "string" || !SPEC_VALUES.includes(policySpec)) {
+        problems.push({
+          code: "policy-spec-invalid",
+          field: pathJoin(policyField, "spec"),
+          message: `the policy "${policyName}" spec must be open or settled`,
+          fix: `Set the spec of "${policyName}" to open or settled, or remove it.`,
+        });
+      } else {
+        spec = policySpec;
+      }
+    }
+
+    if (Object.hasOwn(policyRaw, "since")) {
+      if (typeof policyRaw.since !== "string") {
+        problems.push({
+          code: "policy-since-not-string",
+          field: pathJoin(policyField, "since"),
+          message: `the policy "${policyName}" since must be a string`,
+          fix: `Set the since of "${policyName}" to a date string.`,
+        });
+      }
+    }
+
+    for (const name of Object.keys(policyRaw)) {
+      if (!POLICY_FIELDS.includes(name)) {
+        problems.push({
+          code: "policy-field-unknown",
+          field: pathJoin(policyField, name),
+          message: `the field "${name}" is not part of the policy "${policyName}"`,
+          fix: `Remove the field "${name}" from the policy "${policyName}".`,
+        });
+      }
+    }
+
+    if (Array.isArray(stakes)) {
+      const policyEffortValue = typeof policyRaw.effort === "string" ? policyRaw.effort : undefined;
+      const shape: PolicyShape = {
+        name: policyName,
+        routes: collectRouteLabels(routes),
+        stakes: stakes.filter((entry): entry is string => typeof entry === "string"),
+        spec,
+        task: typeof task === "string" ? task : "",
+        ...(policyEffortValue === undefined ? {} : { effort: policyEffortValue }),
+      };
+      seen.push(shape);
+    }
+  }
+
+  detectPolicyTies(seen, problems);
+}
+
+function collectRouteLabels(raw: unknown): readonly string[] {
+  if (!Array.isArray(raw)) return [];
+  const labels: string[] = [];
+  for (const entry of raw) {
+    if (isPlainObject(entry) && typeof entry.route === "string") {
+      labels.push(entry.route);
+    }
+  }
+  return labels;
+}
+
+function detectPolicyTies(policies: readonly PolicyShape[], problems: RouterProblem[]): void {
+  for (let i = 0; i < policies.length; i++) {
+    for (let j = i + 1; j < policies.length; j++) {
+      const a = policies[i];
+      const b = policies[j];
+      if (a === undefined || b === undefined) continue;
+      if (a.task !== b.task) continue;
+      const overlap = a.stakes.some((stake) => b.stakes.includes(stake));
+      if (!overlap) continue;
+      if (a.spec === b.spec) {
+        problems.push({
+          code: "policy-tie",
+          field: '$["policy"]',
+          message: `policies "${a.name}" and "${b.name}" both cover task "${a.task}" at stakes ${a.stakes.filter((stake) => b.stakes.includes(stake)).join(", ")} with spec "${a.spec}"`,
+          fix: `Adjust one of the policies so only one applies to each query, or rename a task.`,
+        });
+      }
+      // spec:settled beats unconditional; an unconditional and a settled
+      // with the same task and overlapping stakes is the chosen order, not a tie.
+    }
+  }
+}
+
+function collectModelsByRoute(loaded: LoadedRegistry): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const [modelKey, model] of Object.entries(loaded.registry.models)) {
+    for (const route of model.routes) {
+      const label = `${modelKey}@${route.harness}${route.provider ? `/${route.provider}` : ""}`;
+      map.set(label, modelKey);
+    }
+  }
+  return map;
+}
+
+function exceedsLadder(value: string, ceiling: string): boolean {
+  const ladder = EFFORT_LADDER as readonly string[];
+  const valueIndex = ladder.indexOf(value);
+  const ceilingIndex = ladder.indexOf(ceiling);
+  if (valueIndex === -1 || ceilingIndex === -1) return false;
+  return valueIndex > ceilingIndex;
 }
 
 function sectionsError(first: RouterProblem, rest: readonly RouterProblem[]): RouterError {

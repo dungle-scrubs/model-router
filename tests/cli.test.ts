@@ -108,13 +108,13 @@ describe("usage failures exit 2 with query-invalid", () => {
   });
 
   test("an unknown word names itself and points at the ranking call", () => {
-    const result = run(["tasks", "--registry", FULL]);
+    const result = run(["frobnicate", "--registry", FULL]);
     expect(result.exitCode).toBe(2);
     expect(errorEnvelope(result.stderr).error).toEqual({
       code: "query-invalid",
       field: "query",
-      fix: "Run model-router '<query>' or model-router - to read the query from stdin; the tasks and check subcommands arrive in a later release.",
-      message: 'unknown command "tasks".',
+      fix: "Run model-router tasks to print the registry's task list, or model-router '<query>' to rank.",
+      message: 'unknown command "frobnicate".',
       problems: [],
     });
   });

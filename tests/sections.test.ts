@@ -19,7 +19,7 @@ function catchSectionsError(fn: () => unknown): RouterError {
 describe("validateRouterSections", () => {
   test("a valid router section returns its rank list", () => {
     const loaded = loadRegistry({ path: FULL });
-    expect(validateRouterSections(loaded)).toEqual({ rank: ["coding", "intelligence"] });
+    expect(validateRouterSections(loaded)).toEqual({ rank: ["coding", "intelligence"], tasks: {} });
   });
 
   test("a registry without a router section fails with the line to add", async () => {
@@ -276,6 +276,7 @@ describe("validateRouterSections", () => {
         validateRouterSections(withQuestions({ browser: "Does the work need a browser?" })),
       ).toEqual({
         rank: ["coding"],
+        tasks: {},
       });
 
       const notObject = catchSectionsError(() => validateRouterSections(withQuestions("browser")));

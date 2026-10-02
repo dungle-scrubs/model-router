@@ -1,0 +1,101 @@
+{
+  "format": 1,
+  "ratings": {
+    "coding": "Writes and changes code to a spec.",
+    "taste": "Editorial judgment.",
+    "speed": "How fast the model responds."
+  },
+  "capabilities": {
+    "browser": "Can drive a web browser.",
+    "repo-access": "Can read and change files in the workspace."
+  },
+  "router": {
+    "rank": ["coding", "taste"]
+  },
+  "tasks": {
+    "task-a": {
+      "description": "Write or change code to a stated spec.",
+      "minimums": {
+        "low": { "coding": 6 },
+        "normal": { "coding": 7 },
+        "high": { "coding": 8 }
+      },
+      "rank": ["coding"],
+      "needs": ["repo-access"],
+      "effort": "high"
+    },
+    "task-b": {
+      "description": "Browse the web and gather references.",
+      "minimums": {
+        "low": { "taste": 3 },
+        "normal": { "taste": 5 },
+        "high": { "taste": 7 }
+      },
+      "rank": ["taste"]
+    }
+  },
+  "policy": {
+    "policy-a": {
+      "task": "task-a",
+      "stakes": ["low", "normal", "high"],
+      "routes": [
+        { "route": "model-b@harness-x", "effort": "medium" },
+        { "route": "model-c@harness-x" }
+      ],
+      "reason": "Cheap code routes run first."
+    },
+    "policy-settled": {
+      "task": "task-a",
+      "stakes": ["normal", "high"],
+      "spec": "settled",
+      "routes": [{ "route": "model-a@harness-x" }],
+      "reason": "Settled code specs go to the leading route."
+    }
+  },
+  "models": {
+    "model-a": {
+      "family": "family-a",
+      "maxEffort": "high",
+      "ratings": { "coding": 7, "taste": 5 },
+      "routes": [
+        {
+          "harness": "harness-x",
+          "modelId": "model-id-a1",
+          "hosted": false,
+          "privacyEligible": true,
+          "cost": 8,
+          "responseSeconds": 3
+        }
+      ]
+    },
+    "model-b": {
+      "family": "family-b",
+      "maxEffort": "medium",
+      "ratings": { "coding": 7, "taste": 6 },
+      "routes": [
+        {
+          "harness": "harness-x",
+          "modelId": "model-id-b1",
+          "hosted": true,
+          "cost": 9,
+          "responseSeconds": 2
+        }
+      ]
+    },
+    "model-c": {
+      "family": "family-a",
+      "maxEffort": "xhigh",
+      "fixedEffort": "high",
+      "ratings": { "coding": 8, "taste": 4 },
+      "routes": [
+        {
+          "harness": "harness-x",
+          "modelId": "model-id-c1",
+          "hosted": false,
+          "privacyEligible": true,
+          "capabilities": ["repo-access"]
+        }
+      ]
+    }
+  }
+}

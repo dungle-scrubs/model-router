@@ -113,7 +113,23 @@ export interface RankOptions {
   readonly registry?: string | LoadedRegistry;
 }
 
+/** A task entry validated from the registry's tasks section. */
+export interface TaskEntry {
+  readonly description: string;
+  readonly effort?: string;
+  readonly minimums: Readonly<Record<string, Readonly<Record<string, number>>>>;
+  readonly needs: readonly string[];
+  readonly rank: readonly string[];
+}
+
+/** One task summary returned by listTasks. */
+export interface TaskSummary {
+  readonly description: string;
+  readonly name: string;
+}
+
 /** The router section shape from the registry file, after validation. */
 export interface RouterSections {
   readonly rank: readonly string[];
+  readonly tasks: Readonly<Record<string, TaskEntry>>;
 }

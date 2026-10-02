@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { RegistryError } from "@dungle-scrubs/model-registry";
 import { Command, CommanderError } from "commander";
 import { RouterError } from "./error.js";
-import { rank } from "./rank.js";
+import { listTasks, rank } from "./rank.js";
 import type { RouterErrorCode } from "./types.js";
 import { ROUTER_VERSION } from "./version.js";
 
@@ -15,7 +15,7 @@ const EXIT_REGISTRY_FAILURE = 4;
 const EXIT_HELP = `
 
 Exit codes:
-  0  an answer with at least one route
+  0  an answer with at least one route (rank call); or tasks printed
   2  invalid query, flag or subcommand (query-invalid)
   3  an answer with no route; the answer is still printed
   4  the registry or its router section failed to load
@@ -24,8 +24,8 @@ Exit codes:
 const USAGE_FIX = "Run model-router --help for the ranking call and its options.";
 const NO_QUERY_FIX =
   "Run model-router '<query>' with a JSON query object, or pass - to read the query from stdin.";
-const UNKNOWN_WORD_FIX =
-  "Run model-router '<query>' or model-router - to read the query from stdin; the tasks and check subcommands arrive in a later release.";
+const TASKS_FIX =
+  "Run model-router tasks to print the registry's task list, or model-router '<query>' to rank.";
 const INTERNAL_FIX = "Report this failure together with the command you ran.";
 
 export interface CliSink {
@@ -71,6 +71,34 @@ function queryInvalid(field: string, message: string, fix: string): RouterError 
   return new RouterError({ code: "query-invalid", field, fix, message, problems: [] });
 }
 
+function resolveRegistryOption(registryValues: readonly string[]): string {
+  if (registryValues.length > 1) {
+    throw queryInvalid(
+      "registry",
+      "the --registry option was given more than once.",
+      "Give model-router exactly one --registry path.",
+    );
+  }
+  const explicit = registryValues[0];
+  if (explicit === "") {
+    throw queryInvalid(
+      "registry",
+      "the --registry option was given an empty path.",
+      "Give --registry a non-empty path to a registry file.",
+    );
+  }
+  return explicit ?? "";
+}
+
+function addRegistryOption(command: Command): Command {
+  return command.option(
+    "--registry <path>",
+    "path to the registry file",
+    (value: string, previous: string[]) => [...previous, value],
+    [],
+  );
+}
+
 export function runCli(argv: readonly string[], io: Partial<CliIo> = {}): number {
   const stdout = io.stdout ?? process.stdout;
   const stderr = io.stderr ?? process.stderr;
@@ -92,38 +120,31 @@ export function runCli(argv: readonly string[], io: Partial<CliIo> = {}): number
     },
     writeErr: () => {},
   });
-  program.option(
-    "--registry <path>",
-    "path to the registry file",
-    (value: string, previous: string[]) => [...previous, value],
-    [],
+
+  addRegistryOption(program);
+
+  const tasksCommand = addRegistryOption(
+    new Command("tasks").description("Print the registry's task list as one JSON line."),
   );
+  tasksCommand.action((options: { registry?: string[] }) => {
+    const explicit = resolveRegistryOption(options.registry ?? []);
+    const tasks = listTasks(explicit === "" ? {} : { registry: explicit });
+    stdout.write(`${JSON.stringify(tasks)}\n`);
+    answerExit = EXIT_SUCCESS;
+  });
+  program.addCommand(tasksCommand);
+
   program.argument("[query]", "the query as a JSON object, or - to read it from stdin");
   program.action((query: string | undefined, options: { registry?: string[] }) => {
-    const registryValues = options.registry ?? [];
-    if (registryValues.length > 1) {
-      throw queryInvalid(
-        "registry",
-        "the --registry option was given more than once.",
-        "Give model-router exactly one --registry path.",
-      );
-    }
-    const explicit = registryValues[0];
-    if (explicit === "") {
-      throw queryInvalid(
-        "registry",
-        "the --registry option was given an empty path.",
-        "Give --registry a non-empty path to a registry file.",
-      );
-    }
+    const explicit = resolveRegistryOption(options.registry ?? []);
     if (query === undefined) {
       throw queryInvalid("query", "no query argument was given.", NO_QUERY_FIX);
     }
     if (query !== "-" && !query.startsWith("{")) {
-      throw queryInvalid("query", `unknown command ${JSON.stringify(query)}.`, UNKNOWN_WORD_FIX);
+      throw queryInvalid("query", `unknown command ${JSON.stringify(query)}.`, TASKS_FIX);
     }
     const raw = query === "-" ? readStdin() : query;
-    const answer = rank(raw, explicit === undefined ? {} : { registry: explicit });
+    const answer = rank(raw, explicit === "" ? {} : { registry: explicit });
     stdout.write(`${JSON.stringify(answer)}\n`);
     answerExit = answer.routes.length === 0 ? EXIT_NO_ROUTE : EXIT_SUCCESS;
   });
