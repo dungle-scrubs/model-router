@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dungle-scrubs.github.io/model-router/answer.schema.json",
   "title": "model-router answer, contract version 1",
-  "description": "The answer shape emitted by model-router contract 1. Routes carry identity, run facts and placement; removed routes carry a coded reason. The answer allows fields this schema does not define; the query schema rejects them.",
+  "description": "The answer shape emitted by model-router contract 1. Routes carry identity, run facts and placement; removed routes carry a coded reason. The answer allows fields this schema does not define; the query schema rejects them on input.",
   "type": "object",
   "properties": {
     "contract": {
@@ -16,7 +16,25 @@
       "pattern": "^sha256:[a-f0-9]{64}$"
     },
     "query": {
-      "type": "object"
+      "description": "The query as applied: defaults filled, lists deduplicated. Known fields carry their contract types and vocabularies; fields beyond them are allowed.",
+      "type": "object",
+      "properties": {
+        "task": { "type": "string" },
+        "minimums": {
+          "type": "object",
+          "additionalProperties": { "type": "number" }
+        },
+        "needs": { "type": "array", "items": { "type": "string" } },
+        "effort": { "type": "string" },
+        "pin": { "type": "string" },
+        "stakes": { "enum": ["low", "normal", "high"] },
+        "prefer": { "enum": ["cost", "speed"] },
+        "privacy": { "enum": ["normal", "secret"] },
+        "excludeFamilies": { "type": "array", "items": { "type": "string" } },
+        "spec": { "enum": ["open", "settled"] }
+      },
+      "required": ["minimums", "needs", "prefer", "privacy", "spec", "stakes", "excludeFamilies"],
+      "additionalProperties": true
     },
     "pin": {
       "oneOf": [

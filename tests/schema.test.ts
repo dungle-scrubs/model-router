@@ -9,12 +9,22 @@ const ajv = new Ajv2020({ allErrors: true, strictNumbers: true });
 
 const digest = "sha256:c17ecff5329da3d1cf52589af2abef9140fb781325396b4c1d0d676822dd2789";
 
+const appliedQuery = {
+  excludeFamilies: [],
+  minimums: {},
+  needs: [],
+  prefer: "cost",
+  privacy: "normal",
+  spec: "open",
+  stakes: "normal",
+} as const;
+
 const baseAnswer = {
   availabilityNote: null,
   contract: 1,
   describe: null,
   pin: null,
-  query: {},
+  query: appliedQuery,
   registryDigest: digest,
   removed: [],
   routerVersion: "0.1.0",
@@ -154,8 +164,45 @@ describe("query.schema.json", () => {
 describe("answer.schema.json", () => {
   const validate = ajv.compile(JSON.parse(readFileSync(answerSchemaPath, "utf8")) as object);
 
-  test("accepts a minimal answer", () => {
+  test("accepts a minimal answer whose query is the full applied query", () => {
     expect(validate(baseAnswer)).toBe(true);
+  });
+
+  test("rejects malformed known query fields inside the answer", () => {
+    expect(validate({ ...baseAnswer, query: { ...appliedQuery, privacy: "secrets" } })).toBe(false);
+    expect(validate({ ...baseAnswer, query: { ...appliedQuery, minimums: [] } })).toBe(false);
+    expect(validate({ ...baseAnswer, query: { ...appliedQuery, minimums: { coding: "7" } } })).toBe(
+      false,
+    );
+    expect(validate({ ...baseAnswer, query: { ...appliedQuery, prefer: "quality" } })).toBe(false);
+    expect(validate({ ...baseAnswer, query: { ...appliedQuery, stakes: "urgent" } })).toBe(false);
+    expect(validate({ ...baseAnswer, query: { ...appliedQuery, spec: "draft" } })).toBe(false);
+    expect(validate({ ...baseAnswer, query: { ...appliedQuery, needs: "browser" } })).toBe(false);
+    expect(
+      validate({ ...baseAnswer, query: { ...appliedQuery, excludeFamilies: "family-a" } }),
+    ).toBe(false);
+    expect(validate({ ...baseAnswer, query: { ...appliedQuery, task: 7 } })).toBe(false);
+    expect(validate({ ...baseAnswer, query: { ...appliedQuery, effort: 5 } })).toBe(false);
+    expect(validate({ ...baseAnswer, query: { ...appliedQuery, pin: 9 } })).toBe(false);
+  });
+
+  test("an applied query missing an applied default is not a contract 1 answer", () => {
+    const { prefer: _prefer, ...withoutPrefer } = appliedQuery;
+    expect(validate({ ...baseAnswer, query: withoutPrefer })).toBe(false);
+  });
+
+  test("the applied query carries the optional fields when the query stated them", () => {
+    expect(
+      validate({
+        ...baseAnswer,
+        query: {
+          ...appliedQuery,
+          effort: "high",
+          pin: "model-a@harness-x",
+          task: "implement",
+        },
+      }),
+    ).toBe(true);
   });
 
   test("accepts a full route and validates against every placement value", () => {
@@ -213,5 +260,6 @@ describe("answer.schema.json", () => {
   test("allows fields the schema does not define", () => {
     expect(validate({ ...baseAnswer, extra: true })).toBe(true);
     expect(validate({ ...baseAnswer, routes: [{ ...baseRoute, extra: 1 }] })).toBe(true);
+    expect(validate({ ...baseAnswer, query: { ...appliedQuery, extra: true } })).toBe(true);
   });
 });
