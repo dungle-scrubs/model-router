@@ -190,14 +190,7 @@ export interface AvailabilityDocument {
  * `exhausted`, and warnings raised during the call (the
  * `availability-exhausted-all` case). The result routes carry the same shape the input routes carried, plus the `availability` and (when
  * present) the `reasons` fields the function filled in. */
-export interface AvailabilityResult<
-  R extends {
-    readonly availability: AvailabilityValue;
-    readonly label: string;
-    readonly meter?: string;
-    readonly reasons?: readonly Coded[];
-  },
-> {
+export interface AvailabilityResult<R extends { readonly label: string; readonly meter?: string }> {
   readonly removed: readonly { readonly label: string; readonly reason: Coded }[];
   readonly routes: readonly (R & {
     readonly availability: AvailabilityValue;

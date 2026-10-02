@@ -4,6 +4,14 @@ import type { AvailabilityEntry, AvailabilityResult, AvailabilityValue, Coded } 
 // status is not one of these three values is ignored: it does not cover
 // the meter it names, so the routes for that meter keep the engine's
 // first-pass availability. A `Map` keeps the lookup own-property safe.
+const VALID_AVAILABILITY = new Set<AvailabilityValue>([
+  "ok",
+  "projected",
+  "exhausted",
+  "unknown",
+  "unmetered",
+]);
+
 const KNOWN_STATUSES = new Set<AvailabilityValue>(["ok", "projected", "exhausted"]);
 
 /** The order from worst to least: a meter reading's `status` is reduced
@@ -191,14 +199,7 @@ function groupByMeter(entries: readonly AvailabilityEntry[]): Map<
  * reasons. The original route's `availability` field is honored only
  * when no entry covers the meter (the "only an entry moves a route"
  * rule). */
-function routeState<
-  R extends {
-    readonly availability: AvailabilityValue;
-    readonly label: string;
-    readonly meter?: string;
-    readonly reasons?: readonly Coded[];
-  },
->(
+function routeState<R extends { readonly label: string; readonly meter?: string }>(
   route: R,
   meterStates: ReadonlyMap<
     string,
@@ -215,7 +216,7 @@ function routeState<
   reason: Coded | undefined;
 } {
   if (route.meter === undefined) {
-    return { availability: "unmetered", group: "kept", reason: undefined };
+    return { availability: "preserve", group: "kept", reason: undefined };
   }
   const meterState = meterStates.get(route.meter);
   if (meterState === undefined) {
@@ -250,14 +251,6 @@ function routeState<
   return { availability: "ok", group: "kept", reason: undefined };
 }
 
-/** A route's own availability value, when no entry covers its meter.
- *The engine's first-pass availability is either "unmetered" (no meter)
- * or "unknown" (meter, no entry covers it). A re-applying call may pass
- * routes with availability already set (e.g. "projected" from a prior
- * walk); the original value survives when the call's decision is
- * "preserve". */
-void 0;
-
 /** Filter the route's existing meter reasons: a re-applying call that
  * covers the route's meter replaces the old meter reason with this call's one. Other reasons (such as `floor-not-met`) survive. The function
  * is pure and reads each reason's `code`. */
@@ -276,7 +269,22 @@ function replaceMeterReasons<R extends { readonly reasons?: readonly Coded[] }>(
     if (existing === undefined && filtered.length === 0) return undefined;
     return filtered.length === existing?.length ? existing : filtered;
   }
-  return [...filtered, next];
+  const replacement = [...filtered, next];
+  if (
+    existing?.length === replacement.length &&
+    existing.every((reason, index) => {
+      const other = replacement[index];
+      return (
+        other !== undefined &&
+        reason.code === other.code &&
+        reason.message === other.message &&
+        reason.fix === other.fix &&
+        reason.field === other.field
+      );
+    })
+  )
+    return existing;
+  return replacement;
 }
 
 /**
@@ -299,14 +307,7 @@ function replaceMeterReasons<R extends { readonly reasons?: readonly Coded[] }>(
  * survives a walk, and other reasons (such as `floor-not-met`) are
  * kept.
  */
-export function applyAvailability<
-  R extends {
-    readonly availability: AvailabilityValue;
-    readonly label: string;
-    readonly meter?: string;
-    readonly reasons?: readonly Coded[];
-  },
->(
+export function applyAvailability<R extends { readonly label: string; readonly meter?: string }>(
   routes: readonly R[],
   entries: readonly AvailabilityEntry[],
   options?: { readonly spendToZero?: readonly string[] },
@@ -343,68 +344,52 @@ export function applyAvailability<
     warnings.push(WARNING_EXHAUSTED_ALL);
   }
 
-  const newRoutes: R[] = [];
+  const newRoutes: Array<
+    R & { readonly availability: AvailabilityValue; readonly reasons?: readonly Coded[] }
+  > = [];
   const removedList: { label: string; reason: Coded }[] = [];
 
-  const finalize = (decision: (typeof decisions)[number], fallback: AvailabilityValue): void => {
-    const { route, reason, group } = decision;
-    // "preserve" means: no entry covers this route's meter. The route
-    // keeps its input availability: a fresh engine call sees "unknown"
-    // (meter) or "unmetered" (no meter) here; a re-apply sees whatever
-    // the prior walk set. A route without an own availability (a plain
-    // {label, meter} input) gets the engine's fallback: "unmetered"
-    // without a meter, "unknown" with one. The fallback is unused on
-    // preserve for routes that already carry an availability.
-    const currentAvailability: AvailabilityValue | undefined = route.availability;
-    const newAvailability =
+  const finalize = (decision: (typeof decisions)[number]): void => {
+    const { route, reason } = decision;
+    const view = route as { readonly availability?: unknown; readonly reasons?: readonly Coded[] };
+    const ownAvailability =
+      Object.hasOwn(route, "availability") &&
+      VALID_AVAILABILITY.has(view.availability as AvailabilityValue);
+    const availability =
       decision.availability === "preserve"
-        ? currentAvailability === undefined
-          ? fallback
-          : currentAvailability
+        ? ownAvailability
+          ? (view.availability as AvailabilityValue)
+          : route.meter === undefined
+            ? "unmetered"
+            : "unknown"
         : decision.availability;
-    void fallback;
-    if (group === "removed" && !allExhausted) {
-      removedList.push({
-        label: route.label,
-        reason: reason ?? REASON_EXHAUSTED(route.meter ?? "", undefined, undefined),
-      });
+    const reasons =
+      decision.availability === "preserve" ? view.reasons : replaceMeterReasons(view, reason);
+    if (ownAvailability && view.availability === availability && reasons === view.reasons) {
+      newRoutes.push(
+        route as R & {
+          readonly availability: AvailabilityValue;
+          readonly reasons?: readonly Coded[];
+        },
+      );
       return;
     }
-    const reasons = replaceMeterReasons(route, reason);
-    // reasonsChanged is true when the replacement produced a different
-    // list: either the new reason was added, or an old meter reason was
-    // filtered out without a new one. Both cases need the field to be
-    // present on the returned route. A route that had no reasons on
-    // entry and gains none keeps the same object: reasonsChanged only
-    // flips true when the new list is actually different.
-    const reasonsChanged =
-      reasons !== (route.reasons ?? undefined) ||
-      (reasons !== undefined) !== (route.reasons !== undefined);
-    const availabilityChanged = route.availability !== newAvailability;
-    if (!availabilityChanged && !reasonsChanged) {
-      newRoutes.push(route);
-      return;
-    }
-    const out: R =
-      reasonsChanged && reasons !== undefined && reasons.length > 0
-        ? ({ ...route, availability: newAvailability, reasons } as R)
-        : reasonsChanged && reasons !== undefined && reasons.length === 0
-          ? ({ ...route, availability: newAvailability } as R)
-          : ({ ...route, availability: newAvailability } as R);
-    newRoutes.push(out);
+    newRoutes.push(
+      reasons === undefined ? { ...route, availability } : { ...route, availability, reasons },
+    );
   };
 
   for (const decision of decisions) {
     if (decision.group !== "kept") continue;
-    finalize(decision, "unknown");
+    finalize(decision);
   }
   for (const decision of decisions) {
     if (decision.group !== "demoted") continue;
-    finalize(decision, "unknown");
+    finalize(decision);
   }
   if (allExhausted) {
     for (const decision of decisions) {
-      if (decision.group === "removed") finalize(decision, "unknown");
+      if (decision.group === "removed") finalize(decision);
     }
   } else {
     for (const decision of decisions) {

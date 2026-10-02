@@ -247,7 +247,10 @@ describe("applyAvailability in isolation", () => {
 
   test("an entry with an unknown status does not cover the meter", () => {
     const result = pureApplyAvailability(routes, [
-      { meter: "meter-a", status: "unknown" as never },
+      {
+        meter: "meter-a",
+        status: "unknown" as unknown as import("../src/types.js").AvailabilityEntryStatus,
+      },
     ]);
     expect(result.routes.find((r) => r.label === "model-a@harness-x")?.availability).toBe(
       "unknown",
@@ -259,7 +262,12 @@ describe("applyAvailability in isolation", () => {
     ]);
     expect(result.removed).toEqual([]);
     for (const status of ["unmetered", "constructor", "bogus"] as const) {
-      const r = pureApplyAvailability(routes, [{ meter: "meter-a", status: status as never }]);
+      const r = pureApplyAvailability(routes, [
+        {
+          meter: "meter-a",
+          status: status as unknown as import("../src/types.js").AvailabilityEntryStatus,
+        },
+      ]);
       const a = r.routes.find((route) => route.label === "model-a@harness-x");
       expect(a?.availability).toBe("unknown");
       expect(r.removed).toEqual([]);
@@ -269,10 +277,10 @@ describe("applyAvailability in isolation", () => {
   test("plain {label, meter} objects with no entries come back unknown or unmetered in order", () => {
     //The generic signature accepts plain objects (no cast).
     const plain = [
-      { label: "model-a@harness-x", meter: "meter-a" as string | undefined },
+      { label: "model-a@harness-x", meter: "meter-a" },
       { label: "model-c@harness-x" },
     ];
-    const withMeter = pureApplyAvailability(plain as never, []);
+    const withMeter = pureApplyAvailability(plain, []);
     expect(withMeter.routes[0]?.availability).toBe("unknown");
     expect(withMeter.routes[1]?.availability).toBe("unmetered");
     expect(withMeter.routes.map((r) => r.label)).toEqual([
@@ -290,9 +298,7 @@ describe("applyAvailability in isolation", () => {
         { availability: "unmetered", label: "model-c@harness-x" },
       ]),
     );
-    const result = pureApplyAvailability(plain as never, [
-      { meter: "meter-a", status: "exhausted" },
-    ]);
+    const result = pureApplyAvailability(plain, [{ meter: "meter-a", status: "exhausted" }]);
     expect(result.routes.map((r) => r.label)).toEqual(["model-c@harness-x"]);
     expect(result.removed.map((r) => r.label)).toEqual(["model-a@harness-x"]);
   });
