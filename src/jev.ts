@@ -323,25 +323,17 @@ function redact(message: string, key: string): string {
 /** Check the numeric options a caller passes: misuse is a programmer error,
  * refused with a `RangeError` naming the option before the key is read, so
  * it never shares a label with the failures of the call itself. Only
- * options that are present are checked. */
+ * options that are present are checked; `Number.isInteger` and
+ * `Number.isFinite` already reject every non-number. */
 function checkOptions(options: AskJevOptions): void {
   const { maxAttempts, timeoutMs, backoffMs } = options;
-  if (
-    maxAttempts !== undefined &&
-    (typeof maxAttempts !== "number" || !Number.isInteger(maxAttempts) || maxAttempts < 1)
-  ) {
+  if (maxAttempts !== undefined && (!Number.isInteger(maxAttempts) || maxAttempts < 1)) {
     throw new RangeError('askJev option "maxAttempts" must be a positive integer');
   }
-  if (
-    timeoutMs !== undefined &&
-    (typeof timeoutMs !== "number" || !Number.isInteger(timeoutMs) || timeoutMs < 1)
-  ) {
+  if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs < 1)) {
     throw new RangeError('askJev option "timeoutMs" must be a positive integer');
   }
-  if (
-    backoffMs !== undefined &&
-    (typeof backoffMs !== "number" || !Number.isFinite(backoffMs) || backoffMs < 0)
-  ) {
+  if (backoffMs !== undefined && (!Number.isFinite(backoffMs) || backoffMs < 0)) {
     throw new RangeError('askJev option "backoffMs" must be a finite number of at least 0');
   }
 }

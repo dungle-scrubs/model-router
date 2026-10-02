@@ -75,6 +75,22 @@ describe("askJev key handling", () => {
     });
   });
 
+  test("a key of only printable ASCII, including both boundary characters, is used", async () =>
+    withEnv({ TYPESAFE_API_KEY: "!key-a~" }, async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        ok({
+          model: "m",
+          answers: { urgent: { type: "noul", noul: 0.5 } },
+          usage: { input_tokens: 1, output_tokens: 1 },
+        }),
+      );
+      const result = await askJev("state", QUESTIONS, { sleep: never });
+      expect(result.model).toBe("m");
+      const init = fetchSpy.mock.calls[0]?.[1] as { headers: Record<string, string> };
+      expect(init.headers.Authorization).toBe("Bearer !key-a~");
+      fetchSpy.mockRestore();
+    }));
+
   test("the missing-key message names only TYPESAFE_API_KEY", async () => {
     await withEnv({ TYPESAFE_API_KEY: undefined }, async () => {
       const error = await rejected(askJev("state", QUESTIONS, { sleep: never }));
@@ -210,6 +226,12 @@ describe("askJev option checks", () => {
   test("timeoutMs 0 is refused", () =>
     rejectsRangeError(
       askJev("state", QUESTIONS, { timeoutMs: 0 }),
+      'askJev option "timeoutMs" must be a positive integer',
+    ));
+
+  test("timeoutMs 1.5 is refused", () =>
+    rejectsRangeError(
+      askJev("state", QUESTIONS, { timeoutMs: 1.5 }),
       'askJev option "timeoutMs" must be a positive integer',
     ));
 

@@ -409,6 +409,20 @@ describe("the describe step with nothing to ask", () => {
       expect(result.warnings).toEqual([]);
       fetchSpy.mockRestore();
     }));
+
+  test("the early return's filled query has no own key for the absent task", async () =>
+    withEnv({ TYPESAFE_API_KEY: undefined }, async () => {
+      const result = await describeStep(
+        "some work",
+        '{"privacy":"normal","minimums":{"coding":7}}',
+        { registry: NO_QUESTIONS },
+      );
+      expect(result.query).toStrictEqual({
+        minimums: { coding: 7 },
+        needs: [],
+        privacy: "normal",
+      });
+    }));
 });
 
 describe("the describe step's config gates", () => {
