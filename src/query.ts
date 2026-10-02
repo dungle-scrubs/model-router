@@ -6,10 +6,23 @@ import type { AppliedQuery, Prefer, Privacy, Query, Spec, Stakes } from "./types
 
 const AJV_OPTIONS = { allErrors: true, strictNumbers: true } as const;
 
-const QUERY_FIELD_LIST =
-  "task, minimums, needs, effort, pin, stakes, prefer, privacy, excludeFamilies and spec";
+/** The query contract's field names, in the schema's order. The field
+ * list and the describe step's filled query both walk it, so neither can
+ * drift from the schema. Exported from this module only, not from the
+ * package entry. */
+export const QUERY_FIELDS: readonly string[] = Object.keys(querySchema.properties);
+
+// The schema always has fields, so the list needs no empty case.
+const QUERY_FIELD_LIST = `${QUERY_FIELDS.slice(0, -1).join(", ")} and ${QUERY_FIELDS.slice(-1).join("")}`;
 
 const validateQueryShape = new Ajv2020(AJV_OPTIONS).compile(querySchema);
+
+// The describe step's partial query: the same strict fields, types and
+// vocabularies, without the task-or-minimums requirement. The describe step
+// fills the task, so the requirement holds only after it runs.
+const partialSchema: Record<string, unknown> = { ...querySchema };
+delete partialSchema.anyOf;
+const validatePartialShape = new Ajv2020(AJV_OPTIONS).compile(partialSchema);
 
 function invalid(field: string, message: string, fix: string): RouterError {
   return new RouterError({ code: "query-invalid", field, fix, message, problems: [] });
@@ -115,6 +128,27 @@ export function parseQuery(input: unknown): Query {
 
 function dedupe(values: readonly string[] | undefined): readonly string[] {
   return [...new Set(values ?? [])];
+}
+
+/**
+ * Parse and validate the describe step's partial query: every contract
+ * field keeps its strict shape, but the task-or-minimums rule is suspended
+ * because the step fills the task. A string is JSON text (the CLI argument
+ * or stdin); any other value is the query object itself.
+ */
+export function parsePartialQuery(input: unknown): Query {
+  const raw = typeof input === "string" ? parseJsonText(input) : input;
+  if (!isPlainObject(raw)) {
+    throw invalid(
+      "query",
+      "the query must be a JSON object",
+      "Give the query as a JSON object; the describe step fills task or keeps the minimums you state.",
+    );
+  }
+  if (!validatePartialShape(raw)) {
+    throw curatedError(validatePartialShape.errors ?? []);
+  }
+  return raw as Query;
 }
 
 /**

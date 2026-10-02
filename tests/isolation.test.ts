@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadRegistry } from "@dungle-scrubs/model-registry";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { defaultConfig, loadConfig, xdgConfigPath } from "../src/config.js";
 import { rank } from "../src/index.js";
 import { expectValidAnswer, fixturePath, withEnv } from "./helpers.js";
@@ -52,6 +52,30 @@ describe("vitest isolation", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  test("the test environment never sees the operator's Jev key", () => {
+    // The setup deletes TYPESAFE_API_KEY before any test runs, so a test
+    // that forgets to stub the key cannot inherit the operator's real one
+    // and send it to the hosted endpoint through a leaked fetch.
+    expect(process.env.TYPESAFE_API_KEY).toBeUndefined();
+  });
+
+  test("globalThis.fetch is a guard that rejects with the fixed message", async () => {
+    // No test reaches the network by construction: fetch is the guard the
+    // setup installed. A stubbed spy replaces it per test and mockRestore
+    // returns here.
+    await expect(fetch("http://127.0.0.1:9/")).rejects.toThrow(
+      /^tests make no network request; stub fetch in the test$/,
+    );
+  });
+
+  test("a spy over fetch restores to the guard, not the real fetch", async () => {
+    const spy = vi.spyOn(globalThis, "fetch");
+    spy.mockRestore();
+    await expect(fetch("http://127.0.0.1:9/")).rejects.toThrow(
+      /^tests make no network request; stub fetch in the test$/,
+    );
   });
 
   test("rank uses the isolated default when no config option is given", () => {

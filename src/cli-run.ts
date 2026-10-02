@@ -3,10 +3,11 @@ import { loadRegistry, RegistryError } from "@dungle-scrubs/model-registry";
 import { Command, CommanderError } from "commander";
 import { loadAvailabilityForCli } from "./availability-cli.js";
 import { type LoadedConfig, loadConfig } from "./config.js";
+import { checkDescribeText, describe as describeStep, parseDescribeQuery } from "./describe.js";
 import { RouterError } from "./error.js";
 import { listTasks, rank } from "./rank.js";
 import { validateRouterSections } from "./sections.js";
-import type { AvailabilityEntry, RouterErrorCode } from "./types.js";
+import type { AvailabilityEntry, Coded, RouterErrorCode } from "./types.js";
 import { ROUTER_VERSION } from "./version.js";
 
 const EXIT_SUCCESS = 0;
@@ -14,14 +15,16 @@ const EXIT_INTERNAL_FAULT = 1;
 const EXIT_QUERY_INVALID = 2;
 const EXIT_NO_ROUTE = 3;
 const EXIT_REGISTRY_FAILURE = 4;
+const EXIT_DESCRIBE_FAILED = 5;
 
 const EXIT_HELP = `
 
 Exit codes:
   0  an answer with at least one route (rank call); or tasks printed
-  2  invalid query, flag or subcommand (query-invalid)
+  2  invalid query, flag or subcommand (query-invalid), or the describe step refusing secret work (describe-private)
   3  an answer with no route; the answer is still printed
   4  the registry or its router section, or the config file, failed to load
+  5  the describe step needed a Jev answer and the call failed (describe-failed)
   1  an internal fault (internal-error)`;
 
 const USAGE_FIX = "Run model-router --help for the ranking call and its options.";
@@ -67,7 +70,9 @@ function commanderMessage(error: CommanderError): string {
 }
 
 function routerExitCode(code: RouterErrorCode): number {
-  return code === "query-invalid" ? EXIT_QUERY_INVALID : EXIT_REGISTRY_FAILURE;
+  if (code === "query-invalid" || code === "describe-private") return EXIT_QUERY_INVALID;
+  if (code === "describe-failed") return EXIT_DESCRIBE_FAILED;
+  return EXIT_REGISTRY_FAILURE;
 }
 
 function resolveConfigOption(configValues: readonly string[]): string | undefined {
@@ -168,6 +173,46 @@ function addRegistryOption(command: Command): Command {
   );
 }
 
+function resolveDescribeOption(describeValues: readonly string[]): string | undefined {
+  if (describeValues.length > 1) {
+    throw queryInvalid(
+      "describe",
+      "the --describe option was given more than once.",
+      "Give model-router exactly one --describe path.",
+    );
+  }
+  const explicit = describeValues[0];
+  if (explicit === "") {
+    throw queryInvalid(
+      "describe",
+      "the --describe option was given an empty path.",
+      "Give --describe a non-empty path to a work description file.",
+    );
+  }
+  return explicit;
+}
+
+function addDescribeOption(command: Command): Command {
+  return command.option(
+    "--describe <file>",
+    "read the work description from <file> and fill the query's task and needs with a Jev call",
+    (value: string, previous: string[] | undefined) => [...(previous ?? []), value],
+  );
+}
+
+function readDescribeFile(path: string): string {
+  try {
+    return readFileSync(path, "utf8");
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw queryInvalid(
+      "describe",
+      `the --describe file "${path}" could not be read: ${reason}`,
+      "Give --describe a path to a readable text file holding the work description.",
+    );
+  }
+}
+
 /** Resolve the registry the way the CLI does: an explicit `--registry`
  * path uses the file the caller chose, an absent path uses the loader's path
  * order. The check command needs both the digest and the resolved path,
@@ -193,30 +238,27 @@ function loadConfigOption(explicit: string | undefined): LoadedConfig {
  * entries (no flag or a failed load ranks without availability, per
  * RFC). The CLI sets `availabilityNote` from the load's note and appends
  * the load's warnings after the engine's, the way the describe block
- * will land later. */
+ * lands later. */
 function assembleAnswer(
   raw: string,
-  explicitRegistry: string,
-  explicitConfigOption: { explicitPath?: string },
+  rankOptions: Parameters<typeof rank>[1],
   availabilityOption: readonly AvailabilityEntry[] | undefined,
-  availabilityNote: import("./types.js").Coded | null,
-  readerWarnings: readonly import("./types.js").Coded[],
+  availabilityNote: Coded | null,
+  readerWarnings: readonly Coded[],
 ): import("./types.js").Answer {
-  const config = loadConfigOption(explicitConfigOption.explicitPath);
-  const configOption = config.configPath ?? config.config;
-  const baseOptions =
-    availabilityOption === undefined
-      ? { config: configOption }
-      : { availability: availabilityOption, config: configOption };
-  const rankOptions: Parameters<typeof rank>[1] =
-    explicitRegistry === "" ? baseOptions : { ...baseOptions, registry: explicitRegistry };
   const answer = rank(raw, rankOptions);
   const warnings =
     readerWarnings.length === 0 ? answer.warnings : [...answer.warnings, ...readerWarnings];
+  if (availabilityOption === undefined && availabilityNote === null) {
+    return answer;
+  }
   return { ...answer, availabilityNote, warnings };
 }
 
-export function runCli(argv: readonly string[], io: Partial<CliIo> = {}): number {
+/** Run the model-router CLI. Returns the exit code instead of exiting, so
+ * an embedding process keeps control; async because the describe step
+ * awaits a Jev call. */
+export async function runCli(argv: readonly string[], io: Partial<CliIo> = {}): Promise<number> {
   const stdout = io.stdout ?? process.stdout;
   const stderr = io.stderr ?? process.stderr;
   const readStdin = io.readStdin ?? readStdinDefault;
@@ -241,24 +283,52 @@ export function runCli(argv: readonly string[], io: Partial<CliIo> = {}): number
   addRegistryOption(program);
   addConfigOption(program);
   addAvailabilityOptions(program);
+  addDescribeOption(program);
 
   const tasksCommand = addRegistryOption(
     addConfigOption(
       new Command("tasks").description("Print the registry's task list as one JSON line."),
     ),
   );
+  // Commander 15 does not inherit the root's exitOverride or output sinks
+  // through addCommand: configure the child the same way, so its parser
+  // errors throw back to the shared catch instead of calling process.exit,
+  // and its help reaches stdout through the same sink.
   tasksCommand.exitOverride().configureOutput({
     writeOut: (text) => {
       stdout.write(text);
     },
     writeErr: () => {},
   });
-  tasksCommand.hook("preAction", (thisCommand: Command) => {
-    const options = thisCommand.optsWithGlobals() as {
+  tasksCommand.action(function (this: Command) {
+    const options = this.optsWithGlobals() as {
+      registry?: string[];
+      config?: string[];
+      describe?: string[];
       availability?: unknown;
       availabilityFile?: unknown;
-      config?: string[];
     };
+    const explicitRegistry = resolveRegistryOption(options.registry ?? []);
+    const configValues = options.config ?? [];
+    // The command --config takes no value: tasks prints the registry's
+    // task list and never reads the config, so a config flag here is
+    // exit 2 with the query-invalid envelope.
+    if (configValues.length > 0) {
+      throw queryInvalid(
+        "config",
+        "the --config option does not apply to the tasks subcommand.",
+        "Run model-router check or model-router '<query>' to use --config.",
+      );
+    }
+    // The --describe flag is the same: it belongs to the ranking call, and
+    // tasks never makes a Jev call.
+    if ((options.describe ?? []).length > 0) {
+      throw queryInvalid(
+        "describe",
+        "the --describe option does not apply to the tasks subcommand.",
+        "Run model-router '<query>' --describe <file> to use --describe.",
+      );
+    }
     if (options.availability === true || options.availabilityFile !== undefined) {
       throw queryInvalid(
         "availability",
@@ -268,18 +338,6 @@ export function runCli(argv: readonly string[], io: Partial<CliIo> = {}): number
         "Run model-router '<query>' to use --availability.",
       );
     }
-    const configValues = options.config ?? [];
-    if (configValues.length > 0) {
-      throw queryInvalid(
-        "config",
-        "the --config option does not apply to the tasks subcommand.",
-        "Run model-router check or model-router '<query>' to use --config.",
-      );
-    }
-  });
-  tasksCommand.action(function (this: Command) {
-    const options = this.optsWithGlobals() as { registry?: string[] };
-    const explicitRegistry = resolveRegistryOption(options.registry ?? []);
     const tasks = listTasks(explicitRegistry === "" ? {} : { registry: explicitRegistry });
     stdout.write(`${JSON.stringify(tasks)}\n`);
     answerExit = EXIT_SUCCESS;
@@ -293,17 +351,38 @@ export function runCli(argv: readonly string[], io: Partial<CliIo> = {}): number
       ),
     ),
   );
+  // Commander 15 does not inherit the root's exitOverride or output sinks
+  // through addCommand: configure the child the same way, so its parser
+  // errors throw back to the shared catch instead of calling process.exit,
+  // and its help reaches stdout through the same sink.
   checkCommand.exitOverride().configureOutput({
     writeOut: (text) => {
       stdout.write(text);
     },
     writeErr: () => {},
   });
-  checkCommand.hook("preAction", (thisCommand: Command) => {
-    const options = thisCommand.optsWithGlobals() as {
+  checkCommand.action(function (this: Command) {
+    const options = this.optsWithGlobals() as {
+      registry?: string[];
+      config?: string[];
+      describe?: string[];
       availability?: unknown;
       availabilityFile?: unknown;
     };
+    const explicitRegistry = resolveRegistryOption(options.registry ?? []);
+    const explicitConfig = resolveConfigOption(options.config ?? []);
+    // The check command runs no availability source and makes no Jev call:
+    // it loads the registry (path resolution and digest), validates the
+    // router sections the same way rank and listTasks do, then loads the
+    // config. Any of those failures is exit 4. The --describe flag belongs
+    // to the ranking call and is exit 2 here.
+    if ((options.describe ?? []).length > 0) {
+      throw queryInvalid(
+        "describe",
+        "the --describe option does not apply to the check subcommand.",
+        "Run model-router '<query>' --describe <file> to use --describe.",
+      );
+    }
     if (options.availability === true || options.availabilityFile !== undefined) {
       throw queryInvalid(
         "availability",
@@ -313,11 +392,6 @@ export function runCli(argv: readonly string[], io: Partial<CliIo> = {}): number
         "Run model-router '<query>' to use --availability.",
       );
     }
-  });
-  checkCommand.action(function (this: Command) {
-    const options = this.optsWithGlobals() as { registry?: string[]; config?: string[] };
-    const explicitRegistry = resolveRegistryOption(options.registry ?? []);
-    const explicitConfig = resolveConfigOption(options.config ?? []);
     const loaded = loadRegistryOption(explicitRegistry);
     validateRouterSections(loaded);
     const config = loadConfigOption(explicitConfig);
@@ -333,53 +407,118 @@ export function runCli(argv: readonly string[], io: Partial<CliIo> = {}): number
   program.addCommand(checkCommand);
 
   program.argument("[query]", "the query as a JSON object, or - to read it from stdin");
-  program.action(function (
-    this: Command,
-    query: string | undefined,
-    options: {
-      availability?: unknown;
-      availabilityFile?: unknown;
-      config?: string[];
-      registry?: string[];
+  program.action(
+    async (
+      query: string | undefined,
+      options: {
+        registry?: string[];
+        config?: string[];
+        describe?: string[];
+        availability?: unknown;
+        availabilityFile?: unknown;
+      },
+    ) => {
+      const explicitRegistry = resolveRegistryOption(options.registry ?? []);
+      const explicitConfig = resolveConfigOption(options.config ?? []);
+      const describeFile = resolveDescribeOption(options.describe ?? []);
+      const availabilityState = readAvailabilityOptionState(options, "availability");
+      if (query === undefined) {
+        throw queryInvalid("query", "no query argument was given.", NO_QUERY_FIX);
+      }
+      if (query !== "-" && !query.startsWith("{")) {
+        throw queryInvalid("query", `unknown command ${JSON.stringify(query)}.`, TASKS_FIX);
+      }
+      const raw = query === "-" ? readStdin() : query;
+      // The describe step gates run before any load so a secret or empty
+      // description is rejected ahead of every file read. The privacy gate
+      // is the first: it parses the query and refuses `secret`. The text
+      // gate is the second: it reads the description file (only with a
+      // valid privacy) and refuses an empty description. Only after both
+      // gates does the CLI load the registry and config.
+      let describeText: string | undefined;
+      if (describeFile !== undefined) {
+        parseDescribeQuery(raw);
+        describeText = readDescribeFile(describeFile);
+        checkDescribeText(describeText);
+      }
+      // The config option goes through the same loader the check command
+      // uses. When the caller leaves it off, rank's documented env path
+      // order applies (process.env read by the loader itself). The
+      // library's `config` option is a path string or a plain settings
+      // object: a loader that found a file passes the path so rank can
+      // re-read it through the same loader, and a loader that fell
+      // through to defaults passes the validated object directly.
+      const configOptionFor = (explicit: string | undefined) => {
+        const config = loadConfigOption(explicit);
+        return config.configPath ?? config.config;
+      };
+      // The describe step and the availability flag use the same config
+      // object the loader returns. When neither is set the flag-fallback
+      // loads once; when both are set both run on the same settings.
+      const config = loadConfigOption(explicitConfig);
+      const availabilityLoad = loadAvailabilityForCli({
+        command: availabilityState.fromCommand,
+        config: config.config.availability,
+        file: availabilityState.file,
+      });
+      const availabilityOption =
+        availabilityState.file === undefined && !availabilityState.fromCommand
+          ? undefined
+          : availabilityLoad.entries;
+      if (describeText !== undefined) {
+        // Load the registry once and hand the loaded result to both the
+        // describe step and rank: the task set offered to Jev and the
+        // digest in the answer come from the same bytes.
+        const loadedRegistry = loadRegistryOption(explicitRegistry);
+        const rankOptions: Parameters<typeof rank>[1] =
+          availabilityOption === undefined
+            ? { registry: loadedRegistry, config: configOptionFor(explicitConfig) }
+            : {
+                registry: loadedRegistry,
+                config: configOptionFor(explicitConfig),
+                availability: availabilityOption,
+              };
+        // The describe step fills the query's task and needs through a Jev
+        // call, then ranks the filled query and merges the describe block
+        // into the answer. The describe step's warnings lead the answer's
+        // warnings list: they happened first.
+        const described = await describeStep(describeText, raw, rankOptions);
+        const answer = rank(described.query, rankOptions);
+        const merged = {
+          ...answer,
+          describe: described.describe,
+          warnings: [...described.warnings, ...answer.warnings],
+        };
+        stdout.write(`${JSON.stringify(merged)}\n`);
+        answerExit = merged.routes.length === 0 ? EXIT_NO_ROUTE : EXIT_SUCCESS;
+        return;
+      }
+      const rankOptions: Parameters<typeof rank>[1] =
+        explicitRegistry === ""
+          ? availabilityOption === undefined
+            ? { config: configOptionFor(explicitConfig) }
+            : { availability: availabilityOption, config: configOptionFor(explicitConfig) }
+          : availabilityOption === undefined
+            ? { registry: explicitRegistry, config: configOptionFor(explicitConfig) }
+            : {
+                registry: explicitRegistry,
+                availability: availabilityOption,
+                config: configOptionFor(explicitConfig),
+              };
+      const answer = assembleAnswer(
+        raw,
+        rankOptions,
+        availabilityOption,
+        availabilityLoad.note,
+        availabilityLoad.warnings,
+      );
+      stdout.write(`${JSON.stringify(answer)}\n`);
+      answerExit = answer.routes.length === 0 ? EXIT_NO_ROUTE : EXIT_SUCCESS;
     },
-  ): void {
-    const explicitRegistry = resolveRegistryOption(options.registry ?? []);
-    const explicitConfig = resolveConfigOption(options.config ?? []);
-    const availabilityState = readAvailabilityOptionState(
-      options as { availability?: unknown; availabilityFile?: unknown },
-      "availability",
-    );
-    if (query === undefined) {
-      throw queryInvalid("query", "no query argument was given.", NO_QUERY_FIX);
-    }
-    if (query !== "-" && !query.startsWith("{")) {
-      throw queryInvalid("query", `unknown command ${JSON.stringify(query)}.`, TASKS_FIX);
-    }
-    const raw = query === "-" ? readStdin() : query;
-    const config = loadConfigOption(explicitConfig);
-    const availabilityLoad = loadAvailabilityForCli({
-      command: availabilityState.fromCommand,
-      config: config.config.availability,
-      file: availabilityState.file,
-    });
-    const availabilityOption =
-      availabilityState.file === undefined && !availabilityState.fromCommand
-        ? undefined
-        : availabilityLoad.entries;
-    const answer = assembleAnswer(
-      raw,
-      explicitRegistry,
-      explicitConfig === undefined ? {} : { explicitPath: explicitConfig },
-      availabilityOption,
-      availabilityLoad.note,
-      availabilityLoad.warnings,
-    );
-    stdout.write(`${JSON.stringify(answer)}\n`);
-    answerExit = answer.routes.length === 0 ? EXIT_NO_ROUTE : EXIT_SUCCESS;
-  });
+  );
 
   try {
-    program.parse(argv, { from: "user" });
+    await program.parseAsync(argv, { from: "user" });
     return answerExit;
   } catch (error) {
     if (error instanceof RouterError) {

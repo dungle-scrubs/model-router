@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { EFFORT_LADDER, type EffortLevel } from "@dungle-scrubs/model-registry";
 import { RouterError } from "./error.js";
+import { DEFAULT_JEV_MODEL } from "./jev.js";
 import type { RouterProblem } from "./types.js";
 
 /** The default ceiling: a level ladder entry. */
@@ -10,6 +11,18 @@ export const DEFAULT_CEILING: EffortLevel = "xhigh";
 
 /** The default effort level when no source names one. */
 export const DEFAULT_EFFORT: EffortLevel = "medium";
+
+/** The default task confidence gate for the describe step. */
+export const DEFAULT_TASK_GATE = 0.85;
+
+/** The default capability escalation threshold for the describe step. */
+export const DEFAULT_CAPABILITY_THRESHOLD = 0.5;
+
+/** The Jev model the package pins for the describe step. Versioned, not an
+ * alias: the gates above were chosen against a model that must not move
+ * underneath them. The constant lives in the Jev client; the response's
+ * `model` field reports what answered. */
+export { DEFAULT_JEV_MODEL } from "./jev.js";
 
 /** A precise problem the config file had, or a single-finding RouterError. */
 export interface ConfigProblem {
@@ -25,7 +38,7 @@ interface ConfigEnv {
   readonly [key: string]: string | undefined;
 }
 
-const KNOWN_KEYS = new Set(["availability", "effort"]);
+const KNOWN_KEYS = new Set(["availability", "describe", "effort"]);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -138,6 +151,11 @@ function validateAvailability(
 /** Build the default config: every key to its documented default. */
 export function defaultConfig(): RouterConfig {
   return {
+    describe: {
+      capabilityThreshold: DEFAULT_CAPABILITY_THRESHOLD,
+      jevModel: DEFAULT_JEV_MODEL,
+      taskGate: DEFAULT_TASK_GATE,
+    },
     effort: {
       ceiling: DEFAULT_CEILING,
       default: DEFAULT_EFFORT,
@@ -182,7 +200,7 @@ function validateConfigObject(raw: unknown): {
     problems.push({
       code: "config-key-unknown",
       field: pathJoin("$", key),
-      fix: `Remove the field "${key}"; the config accepts only "effort" and "$schema".`,
+      fix: `Remove the field "${key}"; the config accepts only "effort", "describe" and "$schema".`,
       message: `the field "${key}" is not defined by the config schema`,
     });
   }
@@ -266,13 +284,96 @@ function validateConfigObject(raw: unknown): {
   }
   const availabilityRaw = hasOwn(raw, "availability") ? raw.availability : undefined;
   const availability = validateAvailability(availabilityRaw, problems);
+  const describeSection = validateDescribeSection(raw, problems);
   return {
     problems,
     config: {
       ...(availability === undefined ? {} : { availability }),
+      describe: describeSection,
       effort: { ceiling, default: defaultLevel },
     },
   };
+}
+
+/** A probability: a finite number in [0, 1]. */
+function isProbability(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
+/** Validate the describe section with own-property reads. Inherited values
+ * are absent, so the defaults apply. */
+function validateDescribeSection(
+  raw: Record<string, unknown>,
+  problems: ConfigProblem[],
+): RouterConfig["describe"] {
+  const describeRaw = hasOwn(raw, "describe") ? raw.describe : undefined;
+  if (describeRaw === undefined) {
+    return defaultConfig().describe;
+  }
+  if (!isPlainObject(describeRaw)) {
+    problems.push({
+      code: "config-describe-not-object",
+      field: pathJoin("$", "describe"),
+      fix: 'Replace "describe" with an object such as "describe": { "taskGate": 0.85, "capabilityThreshold": 0.5 }.',
+      message: 'the "describe" section must be a JSON object',
+    });
+    return defaultConfig().describe;
+  }
+  let taskGate = DEFAULT_TASK_GATE;
+  let capabilityThreshold = DEFAULT_CAPABILITY_THRESHOLD;
+  let jevModel: string = DEFAULT_JEV_MODEL;
+  const taskGateRaw = hasOwn(describeRaw, "taskGate") ? describeRaw.taskGate : undefined;
+  if (taskGateRaw !== undefined) {
+    if (!isProbability(taskGateRaw)) {
+      problems.push({
+        code: "config-describe-task-gate-invalid",
+        field: pathJoin(pathJoin("$", "describe"), "taskGate"),
+        fix: 'Set "describe"."taskGate" to a probability between 0 and 1, such as 0.85.',
+        message: '"describe"."taskGate" must be a probability between 0 and 1',
+      });
+    } else {
+      taskGate = taskGateRaw;
+    }
+  }
+  const thresholdRaw = hasOwn(describeRaw, "capabilityThreshold")
+    ? describeRaw.capabilityThreshold
+    : undefined;
+  if (thresholdRaw !== undefined) {
+    if (!isProbability(thresholdRaw)) {
+      problems.push({
+        code: "config-describe-capability-threshold-invalid",
+        field: pathJoin(pathJoin("$", "describe"), "capabilityThreshold"),
+        fix: 'Set "describe"."capabilityThreshold" to a probability between 0 and 1, such as 0.5.',
+        message: '"describe"."capabilityThreshold" must be a probability between 0 and 1',
+      });
+    } else {
+      capabilityThreshold = thresholdRaw;
+    }
+  }
+  const modelRaw = hasOwn(describeRaw, "jevModel") ? describeRaw.jevModel : undefined;
+  if (modelRaw !== undefined) {
+    if (typeof modelRaw !== "string" || modelRaw.trim().length === 0) {
+      problems.push({
+        code: "config-describe-jev-model-invalid",
+        field: pathJoin(pathJoin("$", "describe"), "jevModel"),
+        fix: 'Set "describe"."jevModel" to a Jev model name, or remove it to use the pinned default.',
+        message: '"describe"."jevModel" must be a non-empty Jev model name',
+      });
+    } else {
+      jevModel = modelRaw;
+    }
+  }
+  for (const key of Object.keys(describeRaw)) {
+    if (key !== "taskGate" && key !== "capabilityThreshold" && key !== "jevModel") {
+      problems.push({
+        code: "config-describe-key-unknown",
+        field: pathJoin(pathJoin("$", "describe"), key),
+        fix: `Remove the field "describe"."${key}"; "describe" accepts only "taskGate", "capabilityThreshold" and "jevModel".`,
+        message: `the field "describe"."${key}" is not defined by the config schema`,
+      });
+    }
+  }
+  return { capabilityThreshold, jevModel, taskGate };
 }
 
 /** A loaded config plus the path it came from. `configPath` is null when
@@ -295,10 +396,15 @@ export interface RouterConfigAvailability {
   readonly timeoutSeconds: number;
 }
 
-/** The router's configuration: effort ceilings and the availability
- * source. Describe arrives in the next slice (#31) and stays absent here. */
+/** The router's configuration: effort defaults, the describe step's
+ * gates, and the optional availability source. */
 export interface RouterConfig {
   readonly availability?: RouterConfigAvailability;
+  readonly describe: {
+    readonly capabilityThreshold: number;
+    readonly jevModel: string;
+    readonly taskGate: number;
+  };
   readonly effort: {
     readonly ceiling: EffortLevel;
     readonly default: EffortLevel;

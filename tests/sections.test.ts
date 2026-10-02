@@ -1479,6 +1479,7 @@ describe("validateRouterSections", () => {
     const loaded = loadRegistry({ path: FULL });
     expect(validateRouterSections(loaded)).toEqual({
       policies: {},
+      questions: {},
       rank: ["coding", "intelligence"],
       tasks: {},
     });
@@ -1738,6 +1739,7 @@ describe("validateRouterSections", () => {
         validateRouterSections(withQuestions({ browser: "Does the work need a browser?" })),
       ).toEqual({
         policies: {},
+        questions: { browser: "Does the work need a browser?" },
         rank: ["coding"],
         tasks: {},
       });

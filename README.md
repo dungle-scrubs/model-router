@@ -4,7 +4,7 @@ Rank model routes for a structured query against the shared model registry.
 
 A route is one model reached through one harness. The caller states what the work needs; the router orders the registry's routes into one ranked list, contract version 1. This package is the router half of the design in the model-registry RFC; the loader and validator half is [`@dungle-scrubs/model-registry`](https://github.com/dungle-scrubs/model-registry). Development release: the package is private and unpublished.
 
-This release implements issues #29 and #30: pins, effort resolution, `config.json`, the `check` subcommand, and meter availability. The describe step arrives in a later issue.
+This release implements issues #29, #30 and #31: pins, effort resolution, `config.json`, the `check` subcommand, meter availability, the describe step, and the Jev client.
 
 ## CLI
 
@@ -20,6 +20,9 @@ $ model-router tasks --registry registry.json
 
 $ model-router check --registry registry.json
 {"configPath":null,"registryDigest":"sha256:...","registryPath":"..."}
+
+$ model-router --describe work.txt --registry registry.json '{"privacy":"normal"}'
+{"availabilityNote":null,"contract":1,"describe":{...},"query":{"task":"task-a",...},"routes":[...]}
 ```
 
 The query is the positional JSON argument, or `-` to read it from stdin. `--registry <path>` names the registry file; without it the loader's path order applies (`MODEL_REGISTRY_FILE`, then `$XDG_CONFIG_HOME/model-registry/registry.json`, then `~/.config/model-registry/registry.json`).
@@ -30,14 +33,21 @@ A first argument that starts with `{` or `-` is the ranking call. Any other word
 
 The answer is one JSON line on stdout, also when no route survives. `model-router tasks` prints one JSON line: the task list, or `[]` when the registry has none. Errors print as one JSON line on stderr: `{"error":{"code":"...","message":"...","fix":"...","field":"...","problems":[]}}`. A loader error keeps model-registry's own envelope, with `path` instead of `field`.
 
+### The describe flag
+
+`--describe <file>` reads the work description from the file, calls the describe step, then ranks the filled query and merges the describe block into the answer (see [The describe step](#the-describe-step)). With `--describe` the query MUST state `privacy`; the default does not apply, so a caller that forgets it gets exit 2 and not a hosted call, and `privacy: secret` is refused outright (`describe-private`, exit 2). The description file must hold non-blank text. The same registry and config options apply: `--registry`, `--config`.
+
+When Jev gave no answer and the task was needed (the query stated neither `task` nor `minimums`), the CLI exits 5 with `describe-failed`; when the task was not needed, the answer is built from the caller's own fields with a `capabilities-unasked` warning.
+
 ### Exit codes
 
 | Exit | Meaning |
 |---|---|
 | 0 | an answer with at least one route, or the task list printed |
-| 2 | invalid query, flag or subcommand (`query-invalid`) |
+| 2 | invalid query, flag or subcommand (`query-invalid`); or the describe step refusing to run (`describe-private`) |
 | 3 | an answer with no route; the answer is still printed |
 | 4 | the registry or its router section, or the config file, failed to load |
+| 5 | the describe step needed a Jev answer and the call failed (`describe-failed`) |
 | 1 | an internal fault (`internal-error`) |
 
 ## The query
@@ -87,12 +97,15 @@ When the query names a route label, the pin is placed ahead of the policy and ra
 
 ### `config.json`
 
-The router reads its `config.json` for `effort.ceiling`, `effort.default`, and the optional `availability` source. The path order is `--config <path>`, `MODEL_ROUTER_CONFIG`, then `$XDG_CONFIG_HOME/model-router/config.json`. When no file is at the XDG path, every default applies and no warning is added. An explicit path that does not exist, or an invalid file, is `config-invalid`. Every key is OPTIONAL, and the schema is closed: an unknown key is `config-invalid`; `$schema` is allowed for editor support. A default above the ceiling is `config-invalid`. The file holds no registry path and no Jev key; the key comes from `TYPESAFE_API_KEY`.
-
-The `availability` section configures the `--availability` flag's command:
+The router reads its `config.json` for `effort.ceiling`, `effort.default`, the `describe` group, and the optional `availability` source. The path order is `--config <path>`, `MODEL_ROUTER_CONFIG`, then `$XDG_CONFIG_HOME/model-router/config.json`. When no file is at the XDG path, every default applies and no warning is added. An explicit path that does not exist, or an invalid file, is `config-invalid`. Every key is OPTIONAL, and the schema is closed: an unknown key is `config-invalid`; `$schema` is allowed for editor support. A default above the ceiling is `config-invalid`. The file holds no registry path and no Jev key; the key comes from `TYPESAFE_API_KEY`.
 
 | Key | Default | Rule |
 |---|---|---|
+| `effort.ceiling` | `xhigh` | a ladder level |
+| `effort.default` | `medium` | a ladder level, not above `effort.ceiling` |
+| `describe.taskGate` | `0.85` | a probability in `[0, 1]`; Jev's task is taken at or above it |
+| `describe.capabilityThreshold` | `0.5` | a probability in `[0, 1]`; a capability answer at or above it is added to `needs` |
+| `describe.jevModel` | `jev-1.13.0` | a non-empty Jev model name; the package pins a versioned ID, not an alias |
 | `availability.command` | `none` | an argv array, run with no shell |
 | `availability.timeoutSeconds` | `10` | a positive number |
 | `availability.maxAgeSeconds` | `300` | the staleness bound, for command output and for a file |
@@ -104,6 +117,32 @@ The CLI does not read the `availability` section unless `--availability` or `--a
 At most one policy applies to a query. A policy is a candidate when its `task` is the query's task, its `stakes` include the query's, and its `spec` condition holds: a policy without `spec` applies whatever the query's `spec` is, and a policy with `spec: "settled"` applies only to a `spec: "settled"` query. A policy's `spec` accepts only `settled`. When a specless policy and a settled policy are both candidates for a settled query, the settled one wins. Two policies that could match the same query at the same level - the same task, an overlapping stakes level, the same spec condition (both specless, or both settled) - make the file invalid (`policy-tie`).
 
 The policy's routes come before the ranked routes, in written order, with `placedBy: "policy"`, `policy` naming the policy and `floor: "skipped"`. No route appears twice. A policy route that a hard limit removed stays in `removed` with its hard-limit reason, and a `policy-route-removed` warning names the policy.
+
+## The describe step
+
+`describe(text, partialQuery, { registry?, config? })` fills a partial query from a prose work description. `model-router --describe <file> '<partial>'` runs it and then ranks. The checks run in this order:
+
+1. **Privacy gate.** `privacy` absent is `query-invalid` on the `privacy` field; `privacy: secret` is `describe-private`. No request leaves the machine before this gate passes: hosted Jev never receives text from a secret call.
+2. **Text gate.** A blank description is `query-invalid`.
+3. **Ask Jev.** The task question rides only when the partial query has neither `task` nor `minimums`: one choice over the declared tasks, each task's `description` as its criterion, so a task added to the registry is offered with no package change. One noul question per `router.questions` entry rides always, with the registry's own question text. The state is the work description and nothing else. The model is `describe.jevModel` from `config.json`. When nothing is to ask (the query states `task` or `minimums` and the registry declares no `router.questions`), the step makes no request and reads no key: `model` and `usage` are null and no warning is added.
+4. **Gate the answers.** A task confidence at or above `describe.taskGate` is used; below it the guess is kept with a `task-uncertain` warning whose fix says to pass `task`. A capability answer at or above `describe.capabilityThreshold` adds the capability to `needs`. Capabilities are escalate-only: an answer never removes a capability the caller named.
+5. **Fill.** The returned query carries the caller's fields with the filled `task` and the extended `needs`. Every other field is the caller's. The CLI ranks this query and merges the describe block and the step's warnings into the answer.
+
+When Jev gives no answer (no key, failed request, unusable answer), the task's necessity decides: the task was needed (the query stated neither `task` nor `minimums`) means `describe-failed`, exit 5, carrying Jev's own code; the task was not needed means the caller's query continues with a `capabilities-unasked` warning carrying the code. The step asks no `stakes` question, no question about secret material, and keeps no local-model fallback. The Jev client's missing-key message names only `TYPESAFE_API_KEY`: no credential tool, no path.
+
+The describe block in the answer: `model` (what answered, `null` when Jev failed), `taskGate` and `capabilityThreshold` (the values applied), `task` (`source`: `caller`, `jev`, or `inline-need` when `minimums` was given; `confidence`, `null` when no task question was asked; `candidates`: the choice distribution's tasks with probabilities, highest first), `needsAdded` (each added capability with its probability) and `usage` (Jev's token counts, `null` when Jev failed).
+
+## The Jev client
+
+`askJev(state, questions, options?)` posts one state and a map of typed questions to `https://api.typesafe.ai/v1/systemone` and returns `{ model, answers, usage }`. `JevError` carries a stable `code` and, when one arrived, the HTTP `status`. The client reads `TYPESAFE_API_KEY` from the environment; a missing key throws before any request. An option that is present but invalid, such as `timeoutMs: 0`, throws a `RangeError` naming the option before any request; `timeoutMs` is at most 2147483647, the largest delay a timer holds; `JevError` covers failures of the call itself. Every 200 body is validated against the questions that were sent: a body that does not match is `BAD_RESPONSE`. Each attempt is bounded by a 15 s timeout (`timeoutMs`) that covers the whole attempt, the response body included; a timeout is `UNREACHABLE` naming the limit and is not retried. The client retries `429` and `529` with exponential backoff, honoring `Retry-After`; a delay above 30 s, from `Retry-After` or the backoff, stops the retries at once with `RATE_LIMITED` naming the requested wait. The key and retry helpers stay private to the package.
+
+| JevError code | Cause |
+|---|---|
+| `MISSING_KEY` | `TYPESAFE_API_KEY` is not set, or holds a character outside printable ASCII |
+| `UNREACHABLE` | the request to the endpoint failed at the network level |
+| `SERVICE_ERROR` | the endpoint returned a status the client does not retry |
+| `RATE_LIMITED` | every retry attempt came back retryable |
+| `BAD_RESPONSE` | a 200 body that does not match the questions sent: no answers object, no model or usage, or a missing or malformed answer for an asked question |
 
 ## The ranking
 
@@ -146,6 +185,8 @@ The RFC names the error codes; these warning and reason codes are this package's
 | `availability-entry-invalid` | warnings | the CLI's reader skipped an entry (missing `meter`, missing `status`, or an unknown status); other entries still apply |
 | `meter-undeclared` | warnings | an entry names a meter the registry does not declare |
 | `meter-no-reading` | warnings | a reading was applied and a meter the routes use has no entry |
+| `task-uncertain` | warnings | Jev's task is below `describe.taskGate`; the guess is kept and the fix says to pass `task` |
+| `capabilities-unasked` | warnings | Jev gave no answer when the task was not needed; the fix says to add any needed capability to `needs` |
 | `privacy-secret-not-eligible` | removed reasons | the route is not `privacyEligible` under `privacy: secret` |
 | `family-excluded-by-query` | removed reasons | the route's family is in `excludeFamilies` |
 | `needs-not-satisfied` | removed reasons | the route lacks a needed capability |
@@ -236,6 +277,11 @@ A `config-invalid` error carries one problem per finding in `problems[]`. These 
 | `config-availability-timeout-invalid` | `availability.timeoutSeconds` is not a positive number |
 | `config-availability-max-age-invalid` | `availability.maxAgeSeconds` is not a positive number |
 | `config-availability-key-unknown` | a field in `availability` other than `command`, `timeoutSeconds` and `maxAgeSeconds` |
+| `config-describe-not-object` | `describe` is not a JSON object |
+| `config-describe-task-gate-invalid` | `describe.taskGate` is not a probability between 0 and 1 |
+| `config-describe-capability-threshold-invalid` | `describe.capabilityThreshold` is not a probability between 0 and 1 |
+| `config-describe-jev-model-invalid` | `describe.jevModel` is not a non-empty Jev model name |
+| `config-describe-key-unknown` | a field in `describe` other than `taskGate`, `capabilityThreshold` and `jevModel` |
 
 ## Availability codes
 
@@ -254,10 +300,16 @@ A failed availability source on the CLI does not fail ranking; the engine fills 
 ```ts
 import {
   applyAvailability,
+  askJev,
+  describe,
   dropExpired,
+  JevError,
   listTasks,
   rank,
   RouterError,
+  type JevAnswer,
+  type JevQuestion,
+  type JevResponse,
 } from "@dungle-scrubs/model-router";
 
 const answer = rank(
@@ -275,6 +327,31 @@ answer.registryDigest;        // "sha256:<hex>"
 
 const tasks = listTasks({ registry: "registry.json" });
 // [{ name, description }, ...] in file order, or []
+
+// A path, or a LoadedRegistry from model-registry's loadRegistry, so several
+// calls share one load and one digest:
+const loaded = loadRegistry({ path: "registry.json" });
+rank({ task: "task-a", stakes: "normal" }, { registry: loaded, config: { effort: { default: "low" } } });
+listTasks({ registry: loaded });
+
+// The describe step fills a partial query from a work description. The
+// partial query must state privacy; Jev's task fills `task` and capability
+// answers extend `needs`. The result also carries the describe block and
+// the warnings the caller merges into the answer's warnings list.
+const described = await describe("implement the feature", { privacy: "normal" }, {
+  registry: "registry.json",
+});
+const describedAnswer = rank(described.query, { registry: "registry.json" });
+// described.describe.model, .taskGate, .capabilityThreshold, .task, .needsAdded, .usage
+
+// The Jev client behind the step, for callers with their own questions:
+const response = await askJev(
+  "the state text",
+  { urgent: { type: "noul", instructions: "Is this urgent?" } },
+  { model: "jev-1.13.0" },
+);
+response.answers.urgent satisfies JevAnswer | undefined;
+response satisfies JevResponse;
 
 // The library reads availability through the rank option. The caller
 // gathers entries (and runs dropExpired) before ranking; the engine
@@ -294,7 +371,7 @@ const result = applyAvailability(answer.routes, reading.entries, {
 });
 ```
 
-`rank` and `listTasks` are synchronous and pure over their inputs. They throw `RouterError` (`query-invalid`, exit 2; `registry-sections-invalid`, exit 4; `config-invalid`, exit 4) and rethrow model-registry's `RegistryError` unchanged. `applyAvailability` and `dropExpired` are pure over `(routes, entries)` and `(entries, now)`: the same inputs give the same outputs. The loader and the label builder are not re-exported; import them from `@dungle-scrubs/model-registry`. The package ships `query.schema.json`, `answer.schema.json`, and `availability.schema.json`: the query schema rejects undefined fields, the answer schema allows them, and the availability schema validates the document a user converter writes.
+`rank` and `listTasks` are synchronous and pure over their inputs. `describe` awaits one Jev call. They throw `RouterError` (`query-invalid`, exit 2; `describe-private`, exit 2; `registry-sections-invalid`, exit 4; `config-invalid`, exit 4; `describe-failed`, exit 5) and rethrow model-registry's `RegistryError` unchanged. `applyAvailability` and `dropExpired` are pure over `(routes, entries)` and `(entries, now)`: the same inputs give the same outputs. The loader and the label builder are not re-exported; import them from `@dungle-scrubs/model-registry`. The package ships `query.schema.json`, `answer.schema.json`, and `availability.schema.json`: the query schema rejects undefined fields, the answer schema allows them, and the availability schema validates the document a user converter writes.
 
 ## Development
 

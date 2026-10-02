@@ -12,6 +12,18 @@ import { afterAll } from "vitest";
 const tempDir = mkdtempSync(join(tmpdir(), "model-router-vitest-"));
 process.env.XDG_CONFIG_HOME = tempDir;
 delete process.env.MODEL_ROUTER_CONFIG;
+// No test reads the operator's Jev key: a test outside withEnv would
+// otherwise inherit it and could send it to the hosted endpoint.
+delete process.env.TYPESAFE_API_KEY;
+
+// No test makes a network request by construction: fetch is replaced with
+// a guard that rejects. A test that needs fetch stubs it with a spy; plain
+// assignment keeps the property a plain value, so mockRestore on that spy
+// returns to the guard instead of the real fetch. Built-CLI child processes
+// never see a key (it is deleted above), so they never call fetch either.
+const fetchGuard: typeof globalThis.fetch = () =>
+  Promise.reject(new Error("tests make no network request; stub fetch in the test"));
+globalThis.fetch = fetchGuard;
 
 afterAll(() => {
   rmSync(tempDir, { recursive: true, force: true });

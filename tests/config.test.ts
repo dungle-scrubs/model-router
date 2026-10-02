@@ -35,6 +35,7 @@ describe("validateConfigObjectInput", () => {
 
   test("an explicit default and ceiling apply", () => {
     expect(validateConfigObjectInput({ effort: { ceiling: "high", default: "low" } })).toEqual({
+      ...defaultConfig(),
       effort: { ceiling: "high", default: "low" },
     });
   });
@@ -664,6 +665,127 @@ describe("config availability section", () => {
       expect(result.config.availability?.command).toEqual(["from-file"]);
       expect(result.config.availability?.timeoutSeconds).toBe(7);
       expect(result.config.availability?.maxAgeSeconds).toBe(120);
+    });
+  });
+});
+
+describe("the describe section of config.json", () => {
+  test("the defaults apply: taskGate 0.85, capabilityThreshold 0.5, the pinned Jev model", () => {
+    expect(defaultConfig().describe).toEqual({
+      taskGate: 0.85,
+      capabilityThreshold: 0.5,
+      jevModel: "jev-1.13.0",
+    });
+  });
+
+  test("an empty object keeps the defaults and adds the describe defaults beside effort", () => {
+    expect(validateConfigObjectInput({})).toEqual(defaultConfig());
+    expect(validateConfigObjectInput({})).toHaveProperty("describe");
+  });
+
+  test("describe values apply", () => {
+    expect(
+      validateConfigObjectInput({
+        describe: { taskGate: 0.6, capabilityThreshold: 0.7, jevModel: "jev-test" },
+      }),
+    ).toEqual({
+      effort: { ceiling: "xhigh", default: "medium" },
+      describe: { taskGate: 0.6, capabilityThreshold: 0.7, jevModel: "jev-test" },
+    });
+  });
+
+  test("boundary probabilities 0 and 1 are valid", () => {
+    expect(
+      validateConfigObjectInput({ describe: { taskGate: 0, capabilityThreshold: 1 } }).describe
+        .taskGate,
+    ).toBe(0);
+    expect(
+      validateConfigObjectInput({ describe: { taskGate: 1 } }).describe.capabilityThreshold,
+    ).toBe(0.5);
+  });
+
+  test("a non-object describe section fails config-describe-not-object", () => {
+    try {
+      validateConfigObjectInput({ describe: 7 });
+      throw new Error("expected validateConfigObjectInput to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RouterError);
+      expect((error as RouterError).code).toBe("config-invalid");
+      expect((error as RouterError).problems.map((problem) => problem.code)).toEqual([
+        "config-describe-not-object",
+      ]);
+    }
+  });
+
+  test("a taskGate above 1 fails, a negative one fails, a non-number fails", () => {
+    for (const taskGate of [1.5, -0.1, "high", null]) {
+      try {
+        validateConfigObjectInput({ describe: { taskGate } });
+        throw new Error(`expected ${String(taskGate)} to fail`);
+      } catch (error) {
+        expect(error).toBeInstanceOf(RouterError);
+        expect((error as RouterError).problems.map((problem) => problem.code)).toEqual([
+          "config-describe-task-gate-invalid",
+        ]);
+      }
+    }
+  });
+
+  test("a capabilityThreshold off the probability range fails", () => {
+    for (const capabilityThreshold of [1.01, -1, "medium"]) {
+      try {
+        validateConfigObjectInput({ describe: { capabilityThreshold } });
+        throw new Error(`expected ${String(capabilityThreshold)} to fail`);
+      } catch (error) {
+        expect((error as RouterError).problems.map((problem) => problem.code)).toEqual([
+          "config-describe-capability-threshold-invalid",
+        ]);
+      }
+    }
+  });
+
+  test("an empty or non-string jevModel fails", () => {
+    for (const jevModel of ["", "  ", 7]) {
+      try {
+        validateConfigObjectInput({ describe: { jevModel } });
+        throw new Error(`expected ${String(jevModel)} to fail`);
+      } catch (error) {
+        expect((error as RouterError).problems.map((problem) => problem.code)).toEqual([
+          "config-describe-jev-model-invalid",
+        ]);
+      }
+    }
+  });
+
+  test("an unknown key inside describe fails config-describe-key-unknown", () => {
+    try {
+      validateConfigObjectInput({ describe: { gate: 0.9 } });
+      throw new Error("expected validateConfigObjectInput to throw");
+    } catch (error) {
+      expect((error as RouterError).problems.map((problem) => problem.code)).toEqual([
+        "config-describe-key-unknown",
+      ]);
+    }
+  });
+
+  test("inherited describe values are not read from the prototype", () => {
+    const inherited = validateConfigObjectInput({
+      describe: Object.create({ taskGate: 0.1, mystery: true }),
+    });
+    expect(inherited.describe).toEqual(defaultConfig().describe);
+  });
+
+  test("a file and an object with describe keys give the same config", async () => {
+    await withTempDir(async (dir) => {
+      const path = writeJson(dir, "config.json", {
+        describe: { taskGate: 0.6, jevModel: "jev-test" },
+      });
+      const fromFile = loadConfigFromPath(path);
+      const fromObject = validateConfigObjectInput({
+        describe: { taskGate: 0.6, jevModel: "jev-test" },
+      });
+      expect(fromFile.config).toEqual(fromObject);
+      expect(fromFile.configPath).toBe(path);
     });
   });
 });

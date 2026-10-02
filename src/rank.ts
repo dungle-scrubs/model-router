@@ -107,7 +107,7 @@ interface Floor {
   readonly rating: string;
 }
 
-function resolveRegistry(option: RankOptions["registry"]): LoadedRegistry {
+export function resolveRegistry(option: RankOptions["registry"]): LoadedRegistry {
   if (typeof option === "string") return loadRegistry({ path: option });
   if (option !== undefined) return option;
   return loadRegistry();
@@ -120,7 +120,7 @@ function resolveRegistry(option: RankOptions["registry"]): LoadedRegistry {
  * accepts no pre-loaded config shortcut: callers that already ran the
  * loader must pass the path string it consumed, not the LoadedConfig
  * envelope, so the validator is the one source of truth. */
-function resolveConfig(
+export function resolveConfig(
   option: RankOptions["config"],
   env: NodeJS.ProcessEnv = process.env,
 ): LoadedConfig {
