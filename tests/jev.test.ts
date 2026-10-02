@@ -78,7 +78,7 @@ describe("askJev request shape", () => {
       const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
         ok({
           model: "jev-1.13.0",
-          answers: {},
+          answers: { urgent: { type: "noul", noul: 0.5 } },
           usage: { input_tokens: 1, output_tokens: 1 },
         }),
       );
@@ -108,7 +108,7 @@ describe("askJev request shape", () => {
       const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
         ok({
           model: "jev-1.13.0",
-          answers: {},
+          answers: { urgent: { type: "noul", noul: 0.5 } },
           usage: { input_tokens: 1, output_tokens: 1 },
         }),
       );
@@ -132,7 +132,11 @@ describe("askJev retry and failure handling", () => {
         attempt++;
         return attempt < 3
           ? fail(429)
-          : ok({ model: "m", answers: {}, usage: { input_tokens: 1, output_tokens: 1 } });
+          : ok({
+              model: "m",
+              answers: { urgent: { type: "noul", noul: 0.5 } },
+              usage: { input_tokens: 1, output_tokens: 1 },
+            });
       });
       const result = await askJev("state", QUESTIONS, {
         backoffMs: 10,
@@ -155,7 +159,11 @@ describe("askJev retry and failure handling", () => {
         attempt++;
         return attempt < 2
           ? fail(429, { "Retry-After": "1" })
-          : ok({ model: "m", answers: {}, usage: { input_tokens: 1, output_tokens: 1 } });
+          : ok({
+              model: "m",
+              answers: { urgent: { type: "noul", noul: 0.5 } },
+              usage: { input_tokens: 1, output_tokens: 1 },
+            });
       });
       await askJev("state", QUESTIONS, {
         backoffMs: 10,
@@ -176,7 +184,11 @@ describe("askJev retry and failure handling", () => {
         attempt++;
         return attempt < 2
           ? fail(429, { "Retry-After": new Date(Date.now() - 60_000).toUTCString() })
-          : ok({ model: "m", answers: {}, usage: { input_tokens: 1, output_tokens: 1 } });
+          : ok({
+              model: "m",
+              answers: { urgent: { type: "noul", noul: 0.5 } },
+              usage: { input_tokens: 1, output_tokens: 1 },
+            });
       });
       await askJev("state", QUESTIONS, {
         backoffMs: 10,
@@ -196,7 +208,11 @@ describe("askJev retry and failure handling", () => {
         attempt++;
         return attempt < 2
           ? fail(529)
-          : ok({ model: "m", answers: {}, usage: { input_tokens: 1, output_tokens: 1 } });
+          : ok({
+              model: "m",
+              answers: { urgent: { type: "noul", noul: 0.5 } },
+              usage: { input_tokens: 1, output_tokens: 1 },
+            });
       });
       const result = await askJev("state", QUESTIONS, {
         backoffMs: 1,
@@ -284,6 +300,133 @@ describe("askJev defaults", () => {
       );
       expect(error.code).toBe("RATE_LIMITED");
       expect(attempt).toBe(4);
+      fetchSpy.mockRestore();
+    }));
+});
+
+describe("askJev response validation", () => {
+  const okBody = (answers: unknown): Record<string, unknown> => ({
+    model: "jev-1.13.0",
+    answers,
+    usage: { input_tokens: 10, output_tokens: 2 },
+  });
+
+  const choiceQuestions: Record<string, JevQuestion> = {
+    pick: {
+      type: "choice",
+      instructions: "Pick the matching item.",
+      criteria: { "task-a": "covers a", "task-b": "covers b" },
+    },
+  };
+
+  const scoreQuestions: Record<string, JevQuestion> = {
+    level: {
+      type: "score",
+      instructions: "Score the item.",
+      criteria: ["low", "mid", "high"],
+    },
+  };
+
+  test("a well-formed choice answer for an asked choice question is returned", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const answer = {
+        type: "choice",
+        choice: "task-a",
+        confidence: 0.8,
+        probabilities: { "task-a": 0.8, "task-b": 0.2 },
+      };
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(ok(okBody({ pick: answer })));
+      const result = await askJev("state", choiceQuestions, { sleep: never });
+      expect(result.answers.pick).toStrictEqual(answer);
+      fetchSpy.mockRestore();
+    }));
+
+  test("a choice outside the question's criteria is BAD_RESPONSE naming the id and the field", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        ok(
+          okBody({
+            pick: {
+              type: "choice",
+              choice: "task-zz",
+              confidence: 0.8,
+              probabilities: { "task-zz": 1 },
+            },
+          }),
+        ),
+      );
+      const error = await rejected(askJev("state", choiceQuestions, { sleep: never }));
+      expect(error.code).toBe("BAD_RESPONSE");
+      expect(error.message).toContain("pick");
+      expect(error.message).toContain("choice");
+      fetchSpy.mockRestore();
+    }));
+
+  test("a well-formed score answer for an asked score question is returned", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const answer = {
+        type: "score",
+        score: 1.5,
+        confidence: 0.7,
+        legend: { "0": "low", "1": "mid", "2": "high" },
+        probabilities: { "0": 0.1, "1": 0.8, "2": 0.1 },
+      };
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(ok(okBody({ level: answer })));
+      const result = await askJev("state", scoreQuestions, { sleep: never });
+      expect(result.answers.level).toStrictEqual(answer);
+      fetchSpy.mockRestore();
+    }));
+
+  test("a score answer whose legend holds a non-string is BAD_RESPONSE naming the id and the field", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        ok(
+          okBody({
+            level: {
+              type: "score",
+              score: 1.5,
+              confidence: 0.7,
+              legend: { "0": 3 },
+              probabilities: { "0": 1 },
+            },
+          }),
+        ),
+      );
+      const error = await rejected(askJev("state", scoreQuestions, { sleep: never }));
+      expect(error.code).toBe("BAD_RESPONSE");
+      expect(error.message).toContain("level");
+      expect(error.message).toContain("legend");
+      fetchSpy.mockRestore();
+    }));
+
+  test("a noul outside [0, 1] is BAD_RESPONSE naming the id and the field", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(ok(okBody({ urgent: { type: "noul", noul: 7 } })));
+      const error = await rejected(askJev("state", QUESTIONS, { sleep: never }));
+      expect(error.code).toBe("BAD_RESPONSE");
+      expect(error.message).toContain("urgent");
+      expect(error.message).toContain("noul");
+      fetchSpy.mockRestore();
+    }));
+
+  test("an answer for a question that was not asked is ignored", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        ok(
+          okBody({
+            urgent: { type: "noul", noul: 0.4 },
+            unasked: { type: "noul", noul: 0.9 },
+          }),
+        ),
+      );
+      const result = await askJev("state", QUESTIONS, { sleep: never });
+      expect(Object.keys(result.answers).sort()).toEqual(["unasked", "urgent"]);
       fetchSpy.mockRestore();
     }));
 });

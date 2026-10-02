@@ -337,6 +337,34 @@ describe("--describe failures", () => {
     });
   });
 
+  test("a choice answer without probabilities exits 5, not 1", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      await withDescriptionFile("some work", async (file) => {
+        const body = {
+          model: "jev-1.13.0",
+          answers: {
+            task: { type: "choice", choice: "task-a", confidence: 0.9 },
+            needs_browser: { type: "noul", noul: 0.8 },
+            "needs_repo-access": { type: "noul", noul: 0.2 },
+          },
+          usage: USAGE,
+        };
+        const fetchSpy = stubFetch(body);
+        const result = await run([
+          "--describe",
+          file,
+          "--registry",
+          FIXTURE,
+          '{"privacy":"normal"}',
+        ]);
+        expect(result.exitCode).toBe(5);
+        const error = await errorEnvelope(result.stderr);
+        expect(error.code).toBe("describe-failed");
+        expect(error.message).toContain("BAD_RESPONSE");
+        fetchSpy.mockRestore();
+      });
+    }));
+
   test("a service failure with the task needed exits 5 carrying the code", async () =>
     withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
       await withDescriptionFile("some work", async (file) => {

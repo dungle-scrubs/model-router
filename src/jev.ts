@@ -3,9 +3,10 @@
  *
  * One state, many typed questions, answered in parallel in a single request.
  * The describe step builds its questions and gates the answers; this module
- * only carries the request. It is exported as `askJev` with `JevError` and
- * the question, answer and response types; the key and retry helpers stay
- * private.
+ * carries the request and owns the response contract: every 200 body is
+ * validated against the questions that were sent before it is returned. It
+ * is exported as `askJev` with `JevError` and the question, answer and
+ * response types; the key and retry helpers stay private.
  *
  * The client is raw fetch against POST /v1/systemone, not the official SDK:
  * the request is three fields, and the retry schedule and the key handling
@@ -114,6 +115,144 @@ export type AskJevOptions = {
 const wait = (milliseconds: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
 
+function isOwnObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** A probability: a finite number in [0, 1]. */
+function isUnit(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
+/** A token count: a non-negative integer. */
+function isTokenCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function badResponse(message: string): JevError {
+  return new JevError("BAD_RESPONSE", `${ENDPOINT} returned an unusable answer: ${message}`);
+}
+
+/** Check a choice answer against the question it answers. The message names
+ * the question id and the field; it never names the value or the state. */
+function validateChoiceAnswer(
+  id: string,
+  question: JevChoiceQuestion,
+  answer: Record<string, unknown>,
+): void {
+  if (typeof answer.choice !== "string" || !Object.hasOwn(question.criteria, answer.choice)) {
+    throw badResponse(
+      `the answer for question "${id}" names a "choice" the question did not offer`,
+    );
+  }
+  if (!isUnit(answer.confidence)) {
+    throw badResponse(
+      `the answer for question "${id}" has a "confidence" that is not a probability in [0, 1]`,
+    );
+  }
+  if (!isOwnObject(answer.probabilities)) {
+    throw badResponse(`the answer for question "${id}" has no "probabilities" object`);
+  }
+  for (const probability of Object.values(answer.probabilities)) {
+    if (!isUnit(probability)) {
+      throw badResponse(
+        `the answer for question "${id}" has a "probabilities" entry that is not a probability in [0, 1]`,
+      );
+    }
+  }
+}
+
+/** Check a score answer against the question it answers. */
+function validateScoreAnswer(id: string, answer: Record<string, unknown>): void {
+  if (typeof answer.score !== "number" || !Number.isFinite(answer.score)) {
+    throw badResponse(`the answer for question "${id}" has a "score" that is not a finite number`);
+  }
+  if (!isUnit(answer.confidence)) {
+    throw badResponse(
+      `the answer for question "${id}" has a "confidence" that is not a probability in [0, 1]`,
+    );
+  }
+  if (!isOwnObject(answer.legend)) {
+    throw badResponse(`the answer for question "${id}" has no "legend" object`);
+  }
+  for (const value of Object.values(answer.legend)) {
+    if (typeof value !== "string") {
+      throw badResponse(
+        `the answer for question "${id}" has a "legend" value that is not a string`,
+      );
+    }
+  }
+  if (!isOwnObject(answer.probabilities)) {
+    throw badResponse(`the answer for question "${id}" has no "probabilities" object`);
+  }
+  for (const probability of Object.values(answer.probabilities)) {
+    if (!isUnit(probability)) {
+      throw badResponse(
+        `the answer for question "${id}" has a "probabilities" entry that is not a probability in [0, 1]`,
+      );
+    }
+  }
+}
+
+/** Check a noul answer against the question it answers. */
+function validateNoulAnswer(id: string, answer: Record<string, unknown>): void {
+  if (!isUnit(answer.noul)) {
+    throw badResponse(
+      `the answer for question "${id}" has a "noul" that is not a probability in [0, 1]`,
+    );
+  }
+}
+
+/** Validate a 200 body against the questions that were sent: model and
+ * usage are present and well formed, and every asked question has an own
+ * answer of the asked type in shape. Answers to unasked questions are
+ * ignored. Any miss is BAD_RESPONSE; the message names the question id and
+ * the field, never the value or the state. */
+function validateResponse(
+  parsed: unknown,
+  questions: Readonly<Record<string, JevQuestion>>,
+): JevResponse {
+  if (!isOwnObject(parsed)) {
+    throw badResponse("the body is not a JSON object");
+  }
+  if (typeof parsed.model !== "string" || parsed.model.length === 0) {
+    throw badResponse('the field "model" is missing or not a non-empty string');
+  }
+  if (
+    !isOwnObject(parsed.usage) ||
+    !isTokenCount(parsed.usage.input_tokens) ||
+    !isTokenCount(parsed.usage.output_tokens)
+  ) {
+    throw badResponse('the field "usage" is missing or not token counts');
+  }
+  const answers = parsed.answers;
+  if (!isOwnObject(answers)) {
+    throw badResponse("there is no answers object");
+  }
+  for (const [id, question] of Object.entries(questions)) {
+    if (!Object.hasOwn(answers, id)) {
+      throw badResponse(`the answer for question "${id}" is missing`);
+    }
+    const answer = answers[id];
+    if (!isOwnObject(answer)) {
+      throw badResponse(`the answer for question "${id}" is not a JSON object`);
+    }
+    if (answer.type !== question.type) {
+      throw badResponse(
+        `the answer for question "${id}" has a "type" that differs from the question's`,
+      );
+    }
+    if (question.type === "choice") {
+      validateChoiceAnswer(id, question, answer);
+    } else if (question.type === "score") {
+      validateScoreAnswer(id, answer);
+    } else {
+      validateNoulAnswer(id, answer);
+    }
+  }
+  return parsed as JevResponse;
+}
+
 /** `Retry-After` is seconds or an HTTP date. Anything else falls back to the
  * exponential schedule rather than guessing. */
 function retryDelay(header: string | null, attempt: number, base: number): number {
@@ -188,16 +327,7 @@ export async function askJev(
           }`,
         );
       }
-      if (
-        !parsed ||
-        typeof parsed !== "object" ||
-        !("answers" in parsed) ||
-        !parsed.answers ||
-        typeof parsed.answers !== "object"
-      ) {
-        throw new JevError("BAD_RESPONSE", `${ENDPOINT} returned no answers object`);
-      }
-      return parsed as JevResponse;
+      return validateResponse(parsed, questions);
     }
 
     lastStatus = response.status;

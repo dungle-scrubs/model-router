@@ -319,20 +319,22 @@ describe("the describe step's gate and result", () => {
       spy.mockRestore();
     }));
 
-  test("an unusable capability answer is ignored rather than treated as a no", async () =>
+  test("an unusable capability answer makes the whole response unusable", async () =>
     withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
       const body = {
         ...happyBody,
         answers: {
           task: choiceAnswer("task-a", 0.9, { "task-a": 0.9, "task-b": 0.1 }),
           needs_browser: { type: "score", score: 1, legend: {}, probabilities: {}, confidence: 1 },
-          "needs_repo-access": noulAnswer(Number.NaN),
+          "needs_repo-access": noulAnswer(0.1),
         },
       };
       const { spy } = stubFetch(body);
-      const result = await describeStep("some work", '{"privacy":"normal"}', { registry: FIXTURE });
-      expect(result.query.needs).toEqual([]);
-      expect(result.describe.needsAdded).toEqual([]);
+      const error = await catchRouterError(
+        describeStep("some work", '{"privacy":"normal"}', { registry: FIXTURE }),
+      );
+      expect(error.code).toBe("describe-failed");
+      expect(error.message).toContain("BAD_RESPONSE");
       spy.mockRestore();
     }));
 });
@@ -485,6 +487,184 @@ describe("the describe step when Jev fails", () => {
       expect(error.code).toBe("describe-failed");
       expect(error.message).toContain("UNREACHABLE");
       fetchSpy.mockRestore();
+    }));
+});
+
+describe("the Jev 200 body is validated against the questions sent", () => {
+  test("a choice answer without confidence is describe-failed carrying BAD_RESPONSE", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const body = {
+        model: "jev-1.13.0",
+        answers: {
+          task: {
+            type: "choice",
+            choice: "task-a",
+            probabilities: { "task-a": 0.9, "task-b": 0.1 },
+          },
+          needs_browser: noulAnswer(0.8),
+          "needs_repo-access": noulAnswer(0.2),
+        },
+        usage: USAGE,
+      };
+      const { spy } = stubFetch(body);
+      const error = await catchRouterError(
+        describeStep("some work", '{"privacy":"normal"}', { registry: FIXTURE }),
+      );
+      expect(error.code).toBe("describe-failed");
+      expect(error.message).toContain("BAD_RESPONSE");
+      expect(error.message).toContain("task");
+      expect(error.message).toContain("confidence");
+      spy.mockRestore();
+    }));
+
+  test("a choice answer without probabilities is describe-failed", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const body = {
+        model: "jev-1.13.0",
+        answers: {
+          task: { type: "choice", choice: "task-a", confidence: 0.9 },
+          needs_browser: noulAnswer(0.8),
+          "needs_repo-access": noulAnswer(0.2),
+        },
+        usage: USAGE,
+      };
+      const { spy } = stubFetch(body);
+      const error = await catchRouterError(
+        describeStep("some work", '{"privacy":"normal"}', { registry: FIXTURE }),
+      );
+      expect(error.code).toBe("describe-failed");
+      expect(error.message).toContain("BAD_RESPONSE");
+      expect(error.message).toContain("probabilities");
+      spy.mockRestore();
+    }));
+
+  test("a string confidence is describe-failed", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const body = {
+        ...happyBody,
+        answers: {
+          task: {
+            type: "choice",
+            choice: "task-a",
+            confidence: "0.1",
+            probabilities: { "task-a": 0.9, "task-b": 0.1 },
+          },
+          needs_browser: noulAnswer(0.1),
+          "needs_repo-access": noulAnswer(0.1),
+        },
+      };
+      const { spy } = stubFetch(body);
+      const error = await catchRouterError(
+        describeStep("some work", '{"privacy":"normal"}', { registry: FIXTURE }),
+      );
+      expect(error.code).toBe("describe-failed");
+      expect(error.message).toContain("BAD_RESPONSE");
+      spy.mockRestore();
+    }));
+
+  test("a probability outside [0, 1] is describe-failed", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const body = {
+        ...happyBody,
+        answers: {
+          task: choiceAnswer("task-a", 0.9, { "task-a": 1.5, "task-b": 0.1 }),
+          needs_browser: noulAnswer(0.1),
+          "needs_repo-access": noulAnswer(0.1),
+        },
+      };
+      const { spy } = stubFetch(body);
+      const error = await catchRouterError(
+        describeStep("some work", '{"privacy":"normal"}', { registry: FIXTURE }),
+      );
+      expect(error.code).toBe("describe-failed");
+      expect(error.message).toContain("BAD_RESPONSE");
+      expect(error.message).toContain("probabilities");
+      spy.mockRestore();
+    }));
+
+  test("a body without model is describe-failed", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const body = {
+        answers: {
+          task: choiceAnswer("task-a", 0.9, { "task-a": 0.9, "task-b": 0.1 }),
+          needs_browser: noulAnswer(0.1),
+          "needs_repo-access": noulAnswer(0.1),
+        },
+        usage: USAGE,
+      };
+      const { spy } = stubFetch(body);
+      const error = await catchRouterError(
+        describeStep("some work", '{"privacy":"normal"}', { registry: FIXTURE }),
+      );
+      expect(error.code).toBe("describe-failed");
+      expect(error.message).toContain("BAD_RESPONSE");
+      expect(error.message).toContain("model");
+      spy.mockRestore();
+    }));
+
+  test("a body without usage is describe-failed", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const body = {
+        model: "jev-1.13.0",
+        answers: {
+          task: choiceAnswer("task-a", 0.9, { "task-a": 0.9, "task-b": 0.1 }),
+          needs_browser: noulAnswer(0.1),
+          "needs_repo-access": noulAnswer(0.1),
+        },
+      };
+      const { spy } = stubFetch(body);
+      const error = await catchRouterError(
+        describeStep("some work", '{"privacy":"normal"}', { registry: FIXTURE }),
+      );
+      expect(error.code).toBe("describe-failed");
+      expect(error.message).toContain("BAD_RESPONSE");
+      expect(error.message).toContain("usage");
+      spy.mockRestore();
+    }));
+
+  test("a noul outside [0, 1] with a caller task warns capabilities-unasked and keeps the needs", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const body = {
+        model: "jev-1.13.0",
+        answers: {
+          needs_browser: noulAnswer(7),
+          "needs_repo-access": noulAnswer(0.1),
+        },
+        usage: USAGE,
+      };
+      const { spy } = stubFetch(body);
+      const result = await describeStep(
+        "some work",
+        '{"privacy":"normal","task":"task-b","needs":["repo-access"]}',
+        { registry: FIXTURE },
+      );
+      expect(result.query.needs).toEqual(["repo-access"]);
+      expect(result.describe.needsAdded).toEqual([]);
+      expect(result.warnings).toHaveLength(1);
+      expect(result.warnings[0]?.code).toBe("capabilities-unasked");
+      expect(result.warnings[0]?.message).toContain("BAD_RESPONSE");
+      spy.mockRestore();
+    }));
+
+  test("a missing capability answer with a caller task warns capabilities-unasked and keeps the needs", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const body = {
+        model: "jev-1.13.0",
+        answers: { "needs_repo-access": noulAnswer(0.1) },
+        usage: USAGE,
+      };
+      const { spy } = stubFetch(body);
+      const result = await describeStep(
+        "some work",
+        '{"privacy":"normal","task":"task-b","needs":["repo-access"]}',
+        { registry: FIXTURE },
+      );
+      expect(result.query.needs).toEqual(["repo-access"]);
+      expect(result.describe.needsAdded).toEqual([]);
+      expect(result.warnings).toHaveLength(1);
+      expect(result.warnings[0]?.code).toBe("capabilities-unasked");
+      expect(result.warnings[0]?.message).toContain("BAD_RESPONSE");
+      spy.mockRestore();
     }));
 });
 

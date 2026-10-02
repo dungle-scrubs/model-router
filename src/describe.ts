@@ -63,24 +63,6 @@ function nullRecord<TValue>(): Record<string, TValue> {
   return Object.create(null) as Record<string, TValue>;
 }
 
-function isChoiceAnswer(answer: unknown): answer is JevChoiceAnswer {
-  return (
-    typeof answer === "object" &&
-    answer !== null &&
-    "type" in answer &&
-    (answer as { type: unknown }).type === "choice"
-  );
-}
-
-function isNoulAnswer(answer: unknown): answer is JevNoulAnswer {
-  return (
-    typeof answer === "object" &&
-    answer !== null &&
-    "type" in answer &&
-    (answer as { type: unknown }).type === "noul"
-  );
-}
-
 /** The candidates of a choice answer: every option with its probability,
  * highest first. */
 function candidatesOf(probabilities: Readonly<Record<string, number>>): DescribeTaskCandidate[] {
@@ -231,18 +213,9 @@ export async function describe(
   let confidence: number | null = null;
   let candidates: DescribeTaskCandidate[] = [];
   if (taskNeeded) {
-    const answer: unknown = response.answers[TASK_QUESTION_ID];
-    if (!isChoiceAnswer(answer)) {
-      throw describeFailed("BAD_RESPONSE", `${TASK_QUESTION_ID} is not a choice answer`);
-    }
-    // The criteria offered only declared tasks; a choice outside them is an
-    // unusable answer, not a guess to keep.
-    if (!Object.hasOwn(sections.tasks, answer.choice)) {
-      throw describeFailed(
-        "BAD_RESPONSE",
-        `the task answer "${answer.choice}" is not a declared task`,
-      );
-    }
+    // The client validated the answer's shape and that its choice was
+    // offered: the criteria held only declared tasks.
+    const answer = response.answers[TASK_QUESTION_ID] as JevChoiceAnswer;
     task = answer.choice;
     confidence = answer.confidence;
     candidates = candidatesOf(answer.probabilities);
@@ -258,13 +231,13 @@ export async function describe(
   const taskSource = partial.task !== undefined ? "caller" : taskNeeded ? "jev" : "inline-need";
 
   // Capabilities: escalate-only. A noul at or above the threshold adds the
-  // capability; an unusable answer is skipped, and a capability the caller
-  // named is never reported as added.
+  // capability, and a capability the caller named is never reported as
+  // added. The client guarantees every capability answer exists and is a
+  // noul in [0, 1].
   const needs = [...new Set(partial.needs ?? [])];
   const needsAdded: DescribeNeedAdded[] = [];
   for (const capability of Object.keys(sections.questions)) {
-    const answer: unknown = response.answers[`${CAPABILITY_PREFIX}${capability}`];
-    if (!isNoulAnswer(answer) || !Number.isFinite(answer.noul)) continue;
+    const answer = response.answers[`${CAPABILITY_PREFIX}${capability}`] as JevNoulAnswer;
     if (answer.noul >= config.describe.capabilityThreshold && !needs.includes(capability)) {
       needs.push(capability);
       needsAdded.push({ capability, probability: answer.noul });

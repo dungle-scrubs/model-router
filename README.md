@@ -132,7 +132,7 @@ The describe block in the answer: `model` (what answered, `null` when Jev failed
 | `UNREACHABLE` | the request to the endpoint failed at the network level |
 | `SERVICE_ERROR` | the endpoint returned a status the client does not retry |
 | `RATE_LIMITED` | every retry attempt came back retryable |
-| `BAD_RESPONSE` | a 200 whose body has no usable answers object |
+| `BAD_RESPONSE` | a 200 body that does not match the questions sent: no answers object, no model or usage, or a missing or malformed answer for an asked question |
 
 ## The ranking
 
