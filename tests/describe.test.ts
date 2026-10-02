@@ -478,14 +478,20 @@ describe("the describe step when Jev fails", () => {
       spy.mockRestore();
     }));
 
-  test("a non-Jev error from the client is treated as unreachable", async () =>
+  test("an error response whose body read fails is describe-failed carrying SERVICE_ERROR", async () =>
     withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("socket hang up"));
+      const broken = {
+        ok: false,
+        status: 502,
+        headers: { get: () => null },
+        text: () => Promise.reject(new Error("stream reset")),
+      } as unknown as Response;
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(broken);
       const error = await catchRouterError(
         describeStep("some work", '{"privacy":"normal"}', { registry: FIXTURE }),
       );
       expect(error.code).toBe("describe-failed");
-      expect(error.message).toContain("UNREACHABLE");
+      expect(error.message).toContain("SERVICE_ERROR");
       fetchSpy.mockRestore();
     }));
 });

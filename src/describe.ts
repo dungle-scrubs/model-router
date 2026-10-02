@@ -178,18 +178,18 @@ export async function describe(
   try {
     response = await askJev(text, questions, { model: config.describe.jevModel });
   } catch (error) {
-    const jevError = error instanceof JevError ? error : null;
-    const code = jevError?.code ?? "UNREACHABLE";
-    const message = jevError?.message ?? (error instanceof Error ? error.message : String(error));
+    // The client throws only JevError; anything else is an internal fault
+    // and is rethrown unchanged rather than relabelled.
+    if (!(error instanceof JevError)) throw error;
     if (taskNeeded) {
-      throw describeFailed(code, message);
+      throw describeFailed(error.code, error.message);
     }
     // The task was not needed: continue on the caller's own fields and say
     // the capabilities were never asked.
     const warnings: Coded[] = [
       {
         code: "capabilities-unasked",
-        message: `Jev gave no answer (${code}), so no capability question was read; the query keeps the needs you stated`,
+        message: `Jev gave no answer (${error.code}), so no capability question was read; the query keeps the needs you stated`,
         fix: 'Add any capability the work needs to "needs" in the query, or retry when Jev answers.',
       },
     ];

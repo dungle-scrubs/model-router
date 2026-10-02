@@ -332,9 +332,19 @@ export async function askJev(
 
     lastStatus = response.status;
     if (!RETRYABLE.has(response.status)) {
+      // The client throws only JevError: even the error body failing to
+      // read stays a SERVICE_ERROR carrying the status.
+      let errorText: string;
+      try {
+        errorText = await response.text();
+      } catch (error) {
+        errorText = `the error body could not be read: ${
+          error instanceof Error ? error.message : String(error)
+        }`;
+      }
       throw new JevError(
         "SERVICE_ERROR",
-        `${ENDPOINT} returned HTTP ${response.status}: ${await response.text()}`,
+        `${ENDPOINT} returned HTTP ${response.status}: ${errorText}`,
         response.status,
       );
     }

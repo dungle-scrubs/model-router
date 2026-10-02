@@ -268,6 +268,22 @@ describe("askJev retry and failure handling", () => {
       fetchSpy.mockRestore();
     }));
 
+  test("an error response whose body read fails is SERVICE_ERROR with the status", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const broken = {
+        ok: false,
+        status: 502,
+        headers: { get: () => null },
+        text: () => Promise.reject(new Error("stream reset")),
+      } as unknown as Response;
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(broken);
+      const error = await rejected(askJev("state", QUESTIONS, { sleep: never }));
+      expect(error.code).toBe("SERVICE_ERROR");
+      expect(error.status).toBe(502);
+      expect(error.message).toContain("502");
+      fetchSpy.mockRestore();
+    }));
+
   test("a 200 without an answers object throws BAD_RESPONSE", async () =>
     withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
       const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(ok({ model: "m" }));
