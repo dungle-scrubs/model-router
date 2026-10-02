@@ -1,4 +1,5 @@
-import { mkdirSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import {
@@ -319,20 +320,27 @@ describe("loadConfigFromPath reads config-invalid for filesystem failures", () =
   });
 
   test("a file removed between the existence check and the read fails config-invalid", async () => {
-    // Race the existence check against the read: the existence check sees
-    // the file, the read runs after the file is gone. The cleanest way to
-    // exercise this is to remove the parent directory entirely: the
-    // existence check has already returned true on the original path, but
-    // the subsequent read sees an ENOENT, which the loader must convert
-    // to config-invalid.
-    let filePath = "";
-    await withTempDir(async (dir) => {
-      filePath = writeJson(dir, "config.json", {});
+    // Race the existence check against the read: existsSync sees a real
+    // file at the path, but the file's permissions are then stripped so the
+    // subsequent readFileSync throws EACCES. The chmod runs after the
+    // write but before the loader call; the directory is left in place so
+    // existsSync keeps returning true and the loader reaches the read.
+    // Removing the read-error catch would let EACCES escape as the
+    // generic fs error and exit 1; the catch converts it to
+    // config-invalid. The directory is removed explicitly at the end so
+    // the suite does not leak files.
+    const dir = mkdtempSync(join(tmpdir(), "model-router-race-"));
+    const filePath = join(dir, "config.json");
+    writeFileSync(filePath, "{}");
+    chmodSync(filePath, 0o000);
+    try {
+      expect(() => loadConfigFromPath(filePath)).toThrowError(
+        expect.objectContaining({ code: "config-invalid" }),
+      );
+    } finally {
+      chmodSync(filePath, 0o600);
       rmSync(dir, { recursive: true, force: true });
-    });
-    expect(() => loadConfigFromPath(filePath)).toThrowError(
-      expect.objectContaining({ code: "config-invalid" }),
-    );
+    }
   });
 });
 
