@@ -73,15 +73,21 @@ describe("rank with a known task", () => {
       ["model-a@harness-x", "below"],
       ["model-c@harness-x", "below"],
     ]);
-    // model-b fails only the coding floor; its taste 6 meets the task's
-    // taste 5 floor, which the inline minimums left in place.
-    expect(added.routes[0]?.reasons).toEqual([
-      {
-        code: "floor-not-met",
-        field: '$.minimums["coding"]',
-        message: 'the model\'s rating for "coding" is 7, below the floor 9',
-      },
+    // Every route's reasons prove the retained task floor: model-b and
+    // model-a meet taste 5 and fail only the inline coding 9 floor, while
+    // model-c fails the retained taste floor first. If the inline minimums
+    // had replaced the whole floor set, model-b and model-a would clear and
+    // model-c's reasons would name coding alone.
+    expect(added.routes.map((entry) => entry.reasons.map((reason) => reason.field))).toEqual([
+      ['$.minimums["coding"]'],
+      ['$.minimums["coding"]'],
+      ['$.minimums["taste"]', '$.minimums["coding"]'],
     ]);
+    expect(added.routes[2]?.reasons[0]).toEqual({
+      code: "floor-not-met",
+      field: '$.minimums["taste"]',
+      message: 'the model\'s rating for "taste" is 4, below the floor 5',
+    });
   });
 
   test("inline needs add to the task's needs", async () => {
@@ -208,6 +214,21 @@ describe("rank under spec: settled", () => {
     expect(answer.warnings[0]?.message).toBe(
       'the spec "settled" matched no policy; normal ranking was used',
     );
+    // The fallback is the normal ranking: repo-access removes model-a and
+    // model-b, the coding 7 floor clears model-c, and no route carries a
+    // policy placement.
+    expect(answer.routes.map((entry) => [entry.label, entry.placedBy, entry.floor])).toEqual([
+      ["model-c@harness-x", "rank", "clears"],
+    ]);
+    expect(answer.routes.every((entry) => !("policy" in entry))).toBe(true);
+    expect(answer.removed.map((entry) => entry.label)).toEqual([
+      "model-a@harness-x",
+      "model-b@harness-x",
+    ]);
+    expect(answer.removed.map((entry) => entry.reason.code)).toEqual([
+      "needs-not-satisfied",
+      "needs-not-satisfied",
+    ]);
   });
 
   test("a spec: open query with no matching policy warns policy-none", () => {
@@ -316,11 +337,45 @@ describe("rank places a policy's routes first", () => {
 
   test("the policy routes appear with placedBy=policy and floor=skipped in written order", () => {
     const loaded = tasks();
-    const answer = rank({ task: "task-a", stakes: "normal" }, { registry: loaded });
+    // task-a without its repo-access need, and a policy naming two routes
+    // in written order [model-b, model-c]: both survive. The task's rank
+    // (coding) would place model-c (coding 8) first, so the asserted order
+    // proves placement follows the policy's written order.
+    const twoPlaced = {
+      ...loaded,
+      sections: {
+        ...loaded.sections,
+        tasks: {
+          "task-a": {
+            description: "Write or change code to a stated spec.",
+            minimums: { low: { coding: 6 }, normal: { coding: 7 }, high: { coding: 8 } },
+            rank: ["coding"],
+          },
+        },
+        policy: {
+          "policy-a": {
+            task: "task-a",
+            stakes: ["low", "normal", "high"],
+            routes: [{ route: "model-b@harness-x" }, { route: "model-c@harness-x" }],
+            reason: "Cheap code routes run first.",
+          },
+        },
+      },
+    };
+    const answer = rank({ task: "task-a", stakes: "normal" }, { registry: twoPlaced });
     expectValidAnswer(answer);
-    expect(answer.routes[0]?.label).toBe("model-c@harness-x");
-    expect(answer.routes[0]?.placedBy).toBe("policy");
-    expect(answer.routes[0]?.floor).toBe("skipped");
+    expect(
+      answer.routes.map((entry) => [
+        entry.label,
+        entry.placedBy,
+        entry.policy ?? null,
+        entry.floor,
+      ]),
+    ).toEqual([
+      ["model-b@harness-x", "policy", "policy-a", "skipped"],
+      ["model-c@harness-x", "policy", "policy-a", "skipped"],
+      ["model-a@harness-x", "rank", null, "clears"],
+    ]);
   });
 
   test("a policy-placed route carries the policy name; rank-placed routes do not", () => {
@@ -348,7 +403,7 @@ describe("rank places a policy's routes first", () => {
 });
 
 describe("rank with a known task uses cost-first clearing order", () => {
-  test("a known task without floors ranks clearing routes by cost first, not capability first", async () => {
+  test("a known task ranks clearing routes by cost first, not capability first", async () => {
     const { writeJson, withTempDir } = await import("./helpers.js");
     await withTempDir(async (dir) => {
       const path = writeJson(dir, "registry.json", {
@@ -434,18 +489,23 @@ describe("listTasks", () => {
 
   test("throws registry-sections-invalid on the same problems as rank", () => {
     const loaded = policyBroken();
-    expect(() => listTasks({ registry: loaded })).toThrowError(RouterError);
+    let rankProblems: readonly unknown[] = [];
+    try {
+      rank({ task: "task-a" }, { registry: loaded });
+      throw new Error("expected rank to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RouterError);
+      rankProblems = (error as RouterError).problems;
+    }
+    expect(rankProblems.length).toBeGreaterThanOrEqual(5);
     try {
       listTasks({ registry: loaded });
-      throw new Error("expected throw");
+      throw new Error("expected listTasks to throw");
     } catch (error) {
       expect(error).toBeInstanceOf(RouterError);
       const routerError = error as RouterError;
       expect(routerError.code).toBe("registry-sections-invalid");
-      const codes = routerError.problems.map((problem) => problem.code);
-      expect(codes).toContain("policy-tie");
-      expect(codes).toContain("policy-route-effort-above-max");
-      expect(codes).toContain("policy-route-label-unknown");
+      expect(routerError.problems).toEqual(rankProblems);
     }
   });
 });

@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 import packageJson from "../package.json" with { type: "json" };
 import { runCli } from "../src/cli-run.js";
+import { RouterError, rank } from "../src/index.js";
 import {
   captureStream,
   expectValidAnswer,
@@ -340,15 +341,21 @@ describe("the tasks subcommand", () => {
   });
 
   test("exits 4 with registry-sections-invalid on the same problems as rank", () => {
+    let rankProblems: readonly unknown[] = [];
+    try {
+      rank({ task: "task-a" }, { registry: POLICY_BROKEN });
+      throw new Error("expected rank to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RouterError);
+      rankProblems = (error as RouterError).problems;
+    }
+    expect(rankProblems.length).toBeGreaterThanOrEqual(5);
     const result = run(["tasks", "--registry", POLICY_BROKEN]);
     expect(result.exitCode).toBe(4);
     expect(result.stdout()).toBe("");
     const error = errorEnvelope(result.stderr).error;
     expect(error.code).toBe("registry-sections-invalid");
-    const codes = (error.problems as { code: string }[]).map((problem) => problem.code);
-    expect(codes).toContain("policy-tie");
-    expect(codes).toContain("policy-route-effort-above-max");
-    expect(codes).toContain("policy-route-label-unknown");
+    expect(error.problems).toEqual(rankProblems);
   });
 
   test("exits 4 with registry-sections-invalid when router is missing", () => {
