@@ -180,6 +180,40 @@ describe("askJev key redaction", () => {
       fetchSpy.mockRestore();
     }));
 
+  test("a short-word key never corrupts the fixed error-body phrase", async () =>
+    withEnv({ TYPESAFE_API_KEY: "error" }, async () => {
+      const broken = {
+        ok: false,
+        status: 500,
+        headers: { get: () => null },
+        text: () => Promise.reject(new Error("stream reset")),
+      } as unknown as Response;
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(broken);
+      const error = await rejected(askJev("state", QUESTIONS, { sleep: never }));
+      expect(error.code).toBe("SERVICE_ERROR");
+      expect(error.message).toBe(
+        `${ENDPOINT} returned HTTP 500: the error body could not be read: stream reset`,
+      );
+      fetchSpy.mockRestore();
+    }));
+
+  test("a failed error-body read that echoes a short-word key redacts only the echo", async () =>
+    withEnv({ TYPESAFE_API_KEY: "error" }, async () => {
+      const broken = {
+        ok: false,
+        status: 500,
+        headers: { get: () => null },
+        text: () => Promise.reject(new Error("stream reset while reading error")),
+      } as unknown as Response;
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(broken);
+      const error = await rejected(askJev("state", QUESTIONS, { sleep: never }));
+      expect(error.code).toBe("SERVICE_ERROR");
+      expect(error.message).toBe(
+        `${ENDPOINT} returned HTTP 500: the error body could not be read: stream reset while reading [redacted]`,
+      );
+      fetchSpy.mockRestore();
+    }));
+
   test("a 200 body that echoes the key is never printed with it", async () =>
     withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
       const fetchSpy = vi

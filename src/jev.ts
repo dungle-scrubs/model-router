@@ -444,12 +444,13 @@ export async function askJev(
             response.status,
           );
         }
-        errorText = redact(
-          `the error body could not be read: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
+        // The fixed phrase stays outside redact: only the thrown
+        // error's text is foreign, so a short-word key cannot corrupt the
+        // phrase itself.
+        errorText = `the error body could not be read: ${redact(
+          error instanceof Error ? error.message : String(error),
           key,
-        );
+        )}`;
       }
       throw new JevError(
         "SERVICE_ERROR",
