@@ -70,10 +70,17 @@ export function parseDescribeQuery(input: unknown): Query {
 }
 
 function describeFailed(code: string, message: string): RouterError {
+  // The fix follows the code: only MISSING_KEY is a setup problem; every
+  // other code means the key resolved and retrying or skipping the call
+  // is the answer.
+  const fix =
+    code === "MISSING_KEY"
+      ? 'Set TYPESAFE_API_KEY in the environment, or pass "task" or "minimums" in the query so the describe step needs no Jev answer.'
+      : 'Retry when Jev answers, or pass "task" or "minimums" in the query so the describe step needs no Jev answer.';
   return new RouterError({
     code: "describe-failed",
     field: "describe",
-    fix: 'Set TYPESAFE_API_KEY in the environment, or pass "task" or "minimums" in the query so the describe step needs no Jev answer.',
+    fix,
     message: `the describe step needed a task from Jev and the call failed (${code}): ${message}`,
     problems: [],
   });

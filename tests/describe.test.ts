@@ -446,11 +446,32 @@ describe("the describe step when Jev fails", () => {
         describeStep("some work", '{"privacy":"normal"}', { registry: FIXTURE }),
       );
       expect(error.code).toBe("describe-failed");
+      expect(error.fix).toBe(
+        'Set TYPESAFE_API_KEY in the environment, or pass "task" or "minimums" in the query so the describe step needs no Jev answer.',
+      );
       expect(error.message).toBe(
         "the describe step needed a task from Jev and the call failed (MISSING_KEY): " +
           "TYPESAFE_API_KEY is not set. Set it in the environment and run the command again.",
       );
       expect(fetchSpy).not.toHaveBeenCalled();
+      fetchSpy.mockRestore();
+    }));
+
+  test("a rate-limited call keeps the retry fix, not the key fix", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(
+          new Response("slow down", { status: 429, headers: { "Retry-After": "0" } }),
+        );
+      const error = await catchRouterError(
+        describeStep("some work", '{"privacy":"normal"}', { registry: FIXTURE }),
+      );
+      expect(error.code).toBe("describe-failed");
+      expect(error.fix).toBe(
+        'Retry when Jev answers, or pass "task" or "minimums" in the query so the describe step needs no Jev answer.',
+      );
+      expect(error.message).toContain("RATE_LIMITED");
       fetchSpy.mockRestore();
     }));
 
