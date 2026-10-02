@@ -1,0 +1,10 @@
+{
+  "format": 1,
+  "ratings": {
+    "coding": "Writes and changes code to a spec."
+  },
+  "router": {
+    "rank": ["coding"]
+  },
+  "models": {}
+}

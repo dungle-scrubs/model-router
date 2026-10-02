@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dungle-scrubs.github.io/model-router/answer.schema.json",
+  "title": "model-router answer, contract version 1",
+  "description": "The answer shape emitted by model-router contract 1. Routes carry identity, run facts and placement; removed routes carry a coded reason. The answer allows fields this schema does not define; the query schema rejects them.",
+  "type": "object",
+  "properties": {
+    "contract": {
+      "const": 1
+    },
+    "routerVersion": {
+      "type": "string"
+    },
+    "registryDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "query": {
+      "type": "object"
+    },
+    "pin": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "properties": {
+            "label": { "type": "string" },
+            "used": { "type": "boolean" },
+            "reason": { "type": "string" }
+          },
+          "required": ["label", "used", "reason"]
+        }
+      ]
+    },
+    "routes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/answerRoute" }
+    },
+    "removed": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/removedRoute" }
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/coded" }
+    },
+    "availabilityNote": {
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/coded" }]
+    },
+    "describe": {
+      "oneOf": [{ "type": "null" }, { "type": "object" }]
+    }
+  },
+  "required": [
+    "contract",
+    "routerVersion",
+    "registryDigest",
+    "query",
+    "pin",
+    "routes",
+    "removed",
+    "warnings",
+    "availabilityNote",
+    "describe"
+  ],
+  "$defs": {
+    "coded": {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "fix": { "type": "string" },
+        "field": { "type": "string" }
+      },
+      "required": ["code", "message"]
+    },
+    "answerRoute": {
+      "type": "object",
+      "properties": {
+        "label": { "type": "string" },
+        "model": { "type": "string" },
+        "harness": { "type": "string" },
+        "modelId": { "type": "string" },
+        "provider": { "type": "string" },
+        "effort": { "enum": ["low", "medium", "high", "xhigh", "max"] },
+        "hosted": { "type": "boolean" },
+        "family": { "type": "string" },
+        "meter": { "type": "string" },
+        "placedBy": { "enum": ["pin", "policy", "rank"] },
+        "floor": { "enum": ["clears", "below", "skipped"] },
+        "availability": {
+          "enum": ["ok", "projected", "exhausted", "unknown", "unmetered"]
+        },
+        "reasons": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/coded" }
+        }
+      },
+      "required": [
+        "label",
+        "model",
+        "harness",
+        "modelId",
+        "hosted",
+        "family",
+        "placedBy",
+        "floor",
+        "availability",
+        "reasons"
+      ]
+    },
+    "removedRoute": {
+      "type": "object",
+      "properties": {
+        "label": { "type": "string" },
+        "reason": { "$ref": "#/$defs/coded" }
+      },
+      "required": ["label", "reason"]
+    }
+  }
+}

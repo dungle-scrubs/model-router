@@ -1,0 +1,23 @@
+{
+  "format": 1,
+  "ratings": {
+    "coding": "Writes and changes code to a spec."
+  },
+  "models": {
+    "model-a": {
+      "family": "family-a",
+      "ratings": { "coding": 7 },
+      "routes": [
+        {
+          "harness": "harness-x",
+          "modelId": "model-id-a",
+          "hosted": true,
+          "cost": 7
+        }
+      ]
+    }
+  },
+  "router": {
+    "rank": ["coding"]
+  }
+}

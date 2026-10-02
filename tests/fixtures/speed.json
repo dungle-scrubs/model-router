@@ -1,0 +1,65 @@
+{
+  "format": 1,
+  "ratings": {
+    "coding": "Writes and changes code to a spec."
+  },
+  "capabilities": {
+    "browser": "Can drive a web browser."
+  },
+  "models": {
+    "fast": {
+      "family": "family-fast",
+      "ratings": { "coding": 5 },
+      "routes": [
+        {
+          "harness": "harness-x",
+          "modelId": "fast-1",
+          "hosted": true,
+          "cost": 5,
+          "responseSeconds": 1
+        }
+      ]
+    },
+    "medium": {
+      "family": "family-med",
+      "ratings": { "coding": 5 },
+      "routes": [
+        {
+          "harness": "harness-x",
+          "modelId": "medium-1",
+          "hosted": true,
+          "cost": 5,
+          "responseSeconds": 3
+        }
+      ]
+    },
+    "slow": {
+      "family": "family-slow",
+      "ratings": { "coding": 5 },
+      "routes": [
+        {
+          "harness": "harness-x",
+          "modelId": "slow-1",
+          "hosted": true,
+          "cost": 5,
+          "responseSeconds": 10
+        }
+      ]
+    },
+    "no-speed": {
+      "family": "family-none",
+      "ratings": { "coding": 5 },
+      "routes": [
+        {
+          "harness": "harness-x",
+          "modelId": "no-speed-1",
+          "hosted": true,
+          "cost": 5
+        }
+      ]
+    }
+  },
+  "router": {
+    "rank": ["coding"]
+  }
+}

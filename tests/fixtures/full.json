@@ -1,0 +1,108 @@
+{
+  "format": 1,
+  "ratings": {
+    "coding": "Writes and changes code to a spec.",
+    "intelligence": "General capability.",
+    "taste": "Editorial judgment."
+  },
+  "capabilities": {
+    "browser": "Can drive a web browser.",
+    "repo-access": "Can read and change files in the workspace."
+  },
+  "meters": {
+    "meter-a": { "notes": "Test meter." }
+  },
+  "router": {
+    "rank": ["coding", "intelligence"]
+  },
+  "models": {
+    "model-a": {
+      "family": "family-a",
+      "ratings": {
+        "coding": 7,
+        "intelligence": 8,
+        "taste": 6
+      },
+      "maxEffort": "high",
+      "routes": [
+        {
+          "harness": "harness-x",
+          "modelId": "model-id-a1",
+          "hosted": false,
+          "privacyEligible": true,
+          "cost": 8,
+          "meter": "meter-a",
+          "responseSeconds": 4
+        },
+        {
+          "harness": "harness-y",
+          "modelId": "model-id-a2",
+          "provider": "provider-1",
+          "hosted": true,
+          "cost": 5,
+          "capabilities": ["repo-access"]
+        }
+      ]
+    },
+    "model-b": {
+      "family": "family-b",
+      "ratings": {
+        "coding": 5,
+        "intelligence": 7,
+        "taste": 4
+      },
+      "routes": [
+        {
+          "harness": "harness-x",
+          "modelId": "model-id-b1",
+          "hosted": true,
+          "cost": 9,
+          "responseSeconds": 2
+        }
+      ]
+    },
+    "model-c": {
+      "family": "family-a",
+      "ratings": {
+        "coding": 9,
+        "intelligence": 6,
+        "taste": 3
+      },
+      "routes": [
+        {
+          "harness": "harness-x",
+          "modelId": "model-id-c1",
+          "hosted": false,
+          "privacyEligible": true
+        }
+      ]
+    },
+    "model-d": {
+      "family": "family-b",
+      "ratings": {
+        "coding": 6,
+        "intelligence": 5
+      },
+      "routes": [
+        {
+          "harness": "harness-z",
+          "modelId": "model-id-d1",
+          "hosted": true,
+          "cost": 3
+        }
+      ]
+    },
+    "model-e": {
+      "family": "family-a",
+      "routes": [
+        {
+          "harness": "harness-w",
+          "modelId": "model-id-e1",
+          "hosted": true,
+          "cost": 6,
+          "responseSeconds": 5
+        }
+      ]
+    }
+  }
+}
