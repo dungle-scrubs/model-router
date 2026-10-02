@@ -396,6 +396,29 @@ describe("rank accepts a config object or path", () => {
     ).toThrowError(expect.objectContaining({ code: "config-invalid" }));
   });
 
+  test("an object with 'config' and 'configPath' keys is not a pre-loaded config bypass", () => {
+    // The router accepts a config path or a settings object. A wrapper
+    // with both `config` and `configPath` looks like a pre-loaded
+    // LoadedConfig, but the library has no shortcut for callers that
+    // already ran the loader: the validator is the one source of truth.
+    // With `default: "max"`, the invalid input would let uncapped models
+    // emit `max` if the shortcut still ran.
+    const loaded = full();
+    const wrapper = {
+      config: { effort: { ceiling: "warp-nine", default: "max" } },
+      configPath: null,
+    };
+    try {
+      rank({ minimums: { coding: 5 } }, { registry: loaded, config: wrapper as never });
+      throw new Error("expected rank to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RouterError);
+      expect((error as RouterError).code).toBe("config-invalid");
+      const problems = (error as RouterError).problems.map((problem) => problem.code);
+      expect(problems).toContain("config-key-unknown");
+    }
+  });
+
   test("a settings object validates the same way as a file with the same bytes", () => {
     const loaded = full();
     const objectAnswer = rank(

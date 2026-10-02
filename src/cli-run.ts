@@ -265,10 +265,17 @@ export function runCli(argv: readonly string[], io: Partial<CliIo> = {}): number
       const raw = query === "-" ? readStdin() : query;
       // The config option goes through the same loader the check command
       // uses. When the caller leaves it off, rank's documented env path
-      // order applies (process.env read by the loader itself).
+      // order applies (process.env read by the loader itself). The
+      // library's `config` option is a path string or a plain settings
+      // object: a loader that found a file passes the path so rank can
+      // re-read it through the same loader, and a loader that fell
+      // through to defaults passes the validated object directly.
       const config = loadConfigOption(explicitConfig);
+      const configOption = config.configPath ?? config.config;
       const rankOptions: Parameters<typeof rank>[1] =
-        explicitRegistry === "" ? { config } : { registry: explicitRegistry, config };
+        explicitRegistry === ""
+          ? { config: configOption }
+          : { registry: explicitRegistry, config: configOption };
       const answer = rank(raw, rankOptions);
       stdout.write(`${JSON.stringify(answer)}\n`);
       answerExit = answer.routes.length === 0 ? EXIT_NO_ROUTE : EXIT_SUCCESS;

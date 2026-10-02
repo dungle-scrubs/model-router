@@ -1,5 +1,5 @@
 import type { EffortLevel, LoadedRegistry, RegistryDigest } from "@dungle-scrubs/model-registry";
-import type { LoadedConfig, RouterConfig } from "./config.js";
+import type { RouterConfig } from "./config.js";
 
 export type { EffortLevel } from "@dungle-scrubs/model-registry";
 export type { LoadedConfig, RouterConfig } from "./config.js";
@@ -116,9 +116,11 @@ export interface RouterErrorDetails {
 }
 
 /** Options the rank entry point accepts. `registry` is a path or a loaded registry.
- * `config` is a path, a parsed object, or an explicit `LoadedConfig`. */
+ * `config` is a path string or a plain settings object. The library has no
+ * pre-loaded config shortcut: callers that already ran the loader must pass
+ * the path string it consumed. */
 export interface RankOptions {
-  readonly config?: string | RouterConfigInput | LoadedConfig;
+  readonly config?: string | RouterConfigInput;
   readonly registry?: string | LoadedRegistry;
 }
 
