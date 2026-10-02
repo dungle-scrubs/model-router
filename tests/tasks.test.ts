@@ -669,4 +669,48 @@ describe("special names in the registry's sections", () => {
       },
     );
   });
+  test("a malformed policy route label reports both problems through rank and listTasks", async () => {
+    // A label with a non-callable toString must not crash validation while
+    // formatting the independent off-ladder effort diagnostic.
+    await withTempDir(async (dir) => {
+      const loaded = loadRegistry({
+        path: writeJson(dir, "registry.json", {
+          format: 1,
+          ratings: { coding: "Code." },
+          router: { rank: ["coding"] },
+          tasks: {
+            "task-a": {
+              description: "Code.",
+              minimums: { low: {}, normal: {}, high: {} },
+              rank: ["coding"],
+            },
+          },
+          policy: {
+            "policy-a": {
+              task: "task-a",
+              stakes: ["normal"],
+              routes: [{ route: { toString: 7 }, effort: "warp-nine" }],
+              reason: "r",
+            },
+          },
+          models: {},
+        }),
+      });
+      const expectedCodes = ["policy-route-label-missing", "policy-route-effort-invalid"];
+      for (const call of [
+        () => rank({ task: "task-a" }, { registry: loaded }),
+        () => listTasks({ registry: loaded }),
+      ]) {
+        try {
+          call();
+          throw new Error("expected the call to throw");
+        } catch (error) {
+          expect(error).toBeInstanceOf(RouterError);
+          const routerError = error as RouterError;
+          expect(routerError.code).toBe("registry-sections-invalid");
+          expect(routerError.problems.map((problem) => problem.code)).toEqual(expectedCodes);
+        }
+      }
+    });
+  });
 });

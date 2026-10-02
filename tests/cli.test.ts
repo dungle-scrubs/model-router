@@ -11,6 +11,7 @@ import {
   fixturePath,
   runBuiltCli,
   withTempDir,
+  writeJson,
 } from "./helpers.js";
 
 const FULL = fixturePath("full.json");
@@ -381,6 +382,43 @@ describe("the tasks subcommand", () => {
 });
 
 describe("the built CLI", () => {
+  test("a malformed policy route label exits 4 with both section problems", async () => {
+    // The malformed label must surface as registry-sections-invalid, not
+    // as an internal fault from formatting the effort diagnostic.
+    await withTempDir(async (dir) => {
+      const path = writeJson(dir, "policy-malformed-label.json", {
+        format: 1,
+        ratings: { coding: "Code." },
+        router: { rank: ["coding"] },
+        tasks: {
+          "task-a": {
+            description: "Code.",
+            minimums: { low: {}, normal: {}, high: {} },
+            rank: ["coding"],
+          },
+        },
+        policy: {
+          "policy-a": {
+            task: "task-a",
+            stakes: ["normal"],
+            routes: [{ route: { toString: 7 }, effort: "warp-nine" }],
+            reason: "r",
+          },
+        },
+        models: {},
+      });
+      const result = runBuiltCli(['{"task":"task-a"}', "--registry", path]);
+      expect(result.exitCode).toBe(4);
+      expect(result.stdout).toBe("");
+      const error = JSON.parse(result.stderr).error;
+      expect(error.code).toBe("registry-sections-invalid");
+      expect(error.problems.map((problem: { code: string }) => problem.code)).toEqual([
+        "policy-route-label-missing",
+        "policy-route-effort-invalid",
+      ]);
+    });
+  });
+
   test("a rank call exits 0 through node dist/cli.js", () => {
     const result = runBuiltCli(['{"minimums":{"coding":5}}', "--registry", FULL]);
     expect(result.exitCode).toBe(0);

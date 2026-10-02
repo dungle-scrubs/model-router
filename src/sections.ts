@@ -570,13 +570,16 @@ function validatePolicy(
         if (typeof policyEffort === "string") {
           // The ladder check needs no route or model: it is a fixed
           // vocabulary, so an off-ladder effort is reported even when the
-          // label is unknown. The model-limit checks need the model.
+          // label is unknown. The model-limit checks need the model. The
+          // diagnostic names the route index when the label failed its
+          // string check: formatting an unvalidated value can throw.
+          const routeRef = typeof routeLabel === "string" ? `"${routeLabel}"` : `at index ${index}`;
           if (!(EFFORT_LADDER as readonly string[]).includes(policyEffort)) {
             problems.push({
               code: "policy-route-effort-invalid",
               field: pathJoin(field, "effort"),
-              message: `the policy "${policyName}" route "${routeLabel}" effort must be one of ${EFFORT_LADDER.join(", ")}`,
-              fix: `Set the effort of the policy "${policyName}" route "${routeLabel}" to one of ${EFFORT_LADDER.join(", ")}.`,
+              message: `the policy "${policyName}" route ${routeRef} effort must be one of ${EFFORT_LADDER.join(", ")}`,
+              fix: `Set the effort of the policy "${policyName}" route ${routeRef} to one of ${EFFORT_LADDER.join(", ")}.`,
             });
           } else if (typeof routeLabel === "string" && Object.hasOwn(declaredRoutes, routeLabel)) {
             // The loader's route index is the one label authority: it holds

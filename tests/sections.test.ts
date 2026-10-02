@@ -509,6 +509,39 @@ describe("validateRouterSections tasks and policy", () => {
     ]);
   });
 
+  test("a malformed route label does not stop the off-ladder effort report", async () => {
+    const error = withPolicy(
+      {
+        "policy-a": {
+          task: "task-a",
+          stakes: ["normal"],
+          routes: [{ route: { toString: 7 }, effort: "warp-nine" }],
+          reason: "r",
+        },
+      },
+      {
+        tasks: {
+          "task-a": {
+            description: "Code.",
+            minimums: { low: { coding: 6 }, normal: { coding: 7 }, high: { coding: 8 } },
+            rank: ["coding"],
+          },
+        },
+      },
+    );
+    expect(error.problems.map((problem) => problem.code)).toEqual([
+      "policy-route-label-missing",
+      "policy-route-effort-invalid",
+    ]);
+    expect(error.problems[1]).toEqual({
+      code: "policy-route-effort-invalid",
+      field: '$["policy"]["policy-a"]["routes"][0]["effort"]',
+      fix: 'Set the effort of the policy "policy-a" route at index 0 to one of low, medium, high, xhigh, max.',
+      message:
+        'the policy "policy-a" route at index 0 effort must be one of low, medium, high, xhigh, max',
+    });
+  });
+
   test("a non-object policy section is invalid", async () => {
     const error = withPolicy("oops");
     expect(error.problems[0]).toEqual({
