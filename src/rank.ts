@@ -113,13 +113,11 @@ export function resolveRegistry(option: RankOptions["registry"]): LoadedRegistry
   return loadRegistry();
 }
 
-/** Resolve the rank call's `config` option: a string is a path, a plain
- * object is the settings form, an absent option falls through to the
- * documented path order. The settings form goes through one validator;
- * the path form goes through the same loader the CLI uses. The library
- * accepts no pre-loaded config shortcut: callers that already ran the
- * loader must pass the path string it consumed, not the LoadedConfig
- * envelope, so the validator is the one source of truth. */
+/** Resolve the rank call's `config` option: a path string uses the same
+ * loader as the CLI; an absent option follows the documented path order.
+ * A plain settings object goes through the one validator. Callers that
+ * already ran the loader pass its validated settings object, not the
+ * LoadedConfig envelope, to validate again without a second file read. */
 export function resolveConfig(
   option: RankOptions["config"],
   env: NodeJS.ProcessEnv = process.env,
