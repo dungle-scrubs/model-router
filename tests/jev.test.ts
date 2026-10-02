@@ -1277,4 +1277,13 @@ describe("askJev response validation", () => {
       expect(Object.keys(result.answers).sort()).toEqual(["unasked", "urgent"]);
       fetchSpy.mockRestore();
     }));
+
+  test("a 200 whose answers lack the asked id is refused naming the id", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const error = await askBody(QUESTIONS, okBody({ unasked: { type: "noul", noul: 0.5 } }));
+      expect(error.code).toBe("BAD_RESPONSE");
+      expect(error.message).toBe(
+        `${ENDPOINT} returned an unusable answer: the answer for question "urgent" is missing`,
+      );
+    }));
 });
