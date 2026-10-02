@@ -442,3 +442,42 @@ describe("without --describe nothing changes", () => {
     expect(Object.keys(raw.router.questions).sort()).toEqual(["browser", "repo-access"]);
   });
 });
+
+describe("--describe warning order", () => {
+  test("the describe warnings come before the ranking warnings", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      await withDescriptionFile("unclear work", async (file) => {
+        const body = {
+          ...happyBody,
+          answers: {
+            task: {
+              type: "choice",
+              choice: "task-b",
+              confidence: 0.6,
+              probabilities: { "task-a": 0.4, "task-b": 0.6 },
+            },
+            needs_browser: { type: "noul", noul: 0.1 },
+            "needs_repo-access": { type: "noul", noul: 0.1 },
+          },
+        };
+        const fetchSpy = stubFetch(body);
+        // family-c is unknown, so rank warns family-unknown beside the
+        // describe step's task-uncertain.
+        const result = await run([
+          "--describe",
+          file,
+          "--registry",
+          FIXTURE,
+          '{"privacy":"normal","excludeFamilies":["family-c"]}',
+        ]);
+        expect(result.exitCode).toBe(0);
+        const answer = JSON.parse(result.stdout());
+        expectValidAnswer(answer);
+        expect(answer.warnings.map((warning: { code: string }) => warning.code)).toEqual([
+          "task-uncertain",
+          "family-unknown",
+        ]);
+        fetchSpy.mockRestore();
+      });
+    }));
+});

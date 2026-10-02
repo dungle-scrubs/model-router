@@ -501,3 +501,93 @@ describe("JevError stays distinguishable", () => {
       fetchSpy.mockRestore();
     }));
 });
+
+describe("boundary and passthrough behavior", () => {
+  test("a confidence exactly at taskGate is taken without the warning", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const body = {
+        ...happyBody,
+        answers: {
+          task: choiceAnswer("task-a", 0.85, { "task-a": 0.85, "task-b": 0.15 }),
+          needs_browser: noulAnswer(0.1),
+          "needs_repo-access": noulAnswer(0.1),
+        },
+      };
+      const { spy } = stubFetch(body);
+      const result = await describeStep("some work", '{"privacy":"normal"}', {
+        registry: FIXTURE,
+      });
+      expect(result.warnings).toEqual([]);
+      expect(result.query.task).toBe("task-a");
+      spy.mockRestore();
+    }));
+
+  test("a noul exactly at capabilityThreshold is added", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const body = {
+        ...happyBody,
+        answers: {
+          task: choiceAnswer("task-a", 0.9, { "task-a": 0.9, "task-b": 0.1 }),
+          needs_browser: noulAnswer(0.5),
+          "needs_repo-access": noulAnswer(0.1),
+        },
+      };
+      const { spy } = stubFetch(body);
+      const result = await describeStep("some work", '{"privacy":"normal"}', {
+        registry: FIXTURE,
+      });
+      expect(result.query.needs).toEqual(["browser"]);
+      expect(result.describe.needsAdded).toEqual([{ capability: "browser", probability: 0.5 }]);
+      spy.mockRestore();
+    }));
+
+  test("the filled query echoes every caller field it did not fill", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const { spy } = stubFetch(happyBody);
+      const result = await describeStep(
+        "some work",
+        {
+          effort: "high",
+          excludeFamilies: ["family-b"],
+          pin: "model-a@harness-x",
+          prefer: "speed",
+          privacy: "normal",
+          spec: "settled",
+          stakes: "high",
+        },
+        { registry: FIXTURE },
+      );
+      expect(result.query).toEqual({
+        effort: "high",
+        excludeFamilies: ["family-b"],
+        needs: ["browser"],
+        pin: "model-a@harness-x",
+        prefer: "speed",
+        privacy: "normal",
+        spec: "settled",
+        stakes: "high",
+        task: "task-a",
+      });
+      spy.mockRestore();
+    }));
+
+  test("the task question carries its instruction text", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const { seen, spy } = stubFetch(happyBody);
+      await describeStep("some work", '{"privacy":"normal"}', { registry: FIXTURE });
+      const taskQuestion = seen()?.questions.task as { instructions: unknown };
+      expect(String(taskQuestion.instructions)).toContain("Which task type");
+      spy.mockRestore();
+    }));
+
+  test("the describe block echoes the pinned model from the config", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const { seen, spy } = stubFetch(happyBody);
+      await describeStep("some work", '{"privacy":"normal"}', {
+        registry: FIXTURE,
+        config: { describe: { jevModel: "jev-test" } },
+      });
+      expect(seen()?.model).toBe("jev-test");
+      spy.mockRestore();
+    }));
+});

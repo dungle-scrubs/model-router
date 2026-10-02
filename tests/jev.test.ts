@@ -269,3 +269,20 @@ describe("askJev retry and failure handling", () => {
       fetchSpy.mockRestore();
     }));
 });
+
+describe("askJev defaults", () => {
+  test("the default attempt count is 4", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      let attempt = 0;
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+        attempt++;
+        return fail(429);
+      });
+      const error = await rejected(
+        askJev("state", QUESTIONS, { backoffMs: 1, sleep: () => Promise.resolve() }),
+      );
+      expect(error.code).toBe("RATE_LIMITED");
+      expect(attempt).toBe(4);
+      fetchSpy.mockRestore();
+    }));
+});
