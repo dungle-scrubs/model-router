@@ -21,6 +21,19 @@ const ok = (body: unknown): Response =>
 const fail = (status: number, headers: Record<string, string> = {}): Response =>
   new Response("upstream said no", { status, headers });
 
+/** A response that sends its headers and one body chunk, then stalls: the
+ * stream never completes until the attempt's signal aborts, when it errors
+ * with the signal's own reason. */
+const stalledBody = (status: number, signal: AbortSignal | null | undefined): Response => {
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode("{"));
+      signal?.addEventListener("abort", () => controller.error(signal.reason));
+    },
+  });
+  return new Response(body, { status });
+};
+
 const never = (): Promise<void> => {
   throw new Error("sleep should not be called");
 };
@@ -481,6 +494,40 @@ describe("askJev retry and failure handling", () => {
       const error = await rejected(askJev("state", QUESTIONS, { timeoutMs: 20, sleep: never }));
       expect(error.code).toBe("UNREACHABLE");
       expect(error.message).toContain("20 ms timeout");
+      expect(calls).toBe(1);
+      fetchSpy.mockRestore();
+    }));
+
+  test("a timeout while the 200 body streams is UNREACHABLE with the status, after one call", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      let calls = 0;
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) => {
+        calls++;
+        return Promise.resolve(stalledBody(200, (init as RequestInit).signal));
+      });
+      const error = await rejected(askJev("state", QUESTIONS, { timeoutMs: 50, sleep: never }));
+      expect(error.code).toBe("UNREACHABLE");
+      expect(error.status).toBe(200);
+      expect(error.message).toBe(
+        `could not reach ${ENDPOINT}: the attempt exceeded the 50 ms timeout`,
+      );
+      expect(calls).toBe(1);
+      fetchSpy.mockRestore();
+    }));
+
+  test("a timeout while the error body streams is UNREACHABLE with the status, after one call", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      let calls = 0;
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) => {
+        calls++;
+        return Promise.resolve(stalledBody(500, (init as RequestInit).signal));
+      });
+      const error = await rejected(askJev("state", QUESTIONS, { timeoutMs: 50, sleep: never }));
+      expect(error.code).toBe("UNREACHABLE");
+      expect(error.status).toBe(500);
+      expect(error.message).toBe(
+        `could not reach ${ENDPOINT}: the attempt exceeded the 50 ms timeout`,
+      );
       expect(calls).toBe(1);
       fetchSpy.mockRestore();
     }));

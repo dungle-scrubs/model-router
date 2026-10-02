@@ -371,6 +371,15 @@ export async function askJev(
       try {
         parsed = await response.json();
       } catch (error) {
+        // The timeout bounds the whole attempt, the body included: a stall
+        // after the headers is the same stalled attempt as one before them.
+        if (signal.aborted) {
+          throw new JevError(
+            "UNREACHABLE",
+            `could not reach ${ENDPOINT}: the attempt exceeded the ${timeoutMs} ms timeout`,
+            response.status,
+          );
+        }
         // A 200 whose body is not JSON is an unusable answer, not a crash.
         // The parser quotes the body, so the key is redacted from its text.
         throw new JevError(
@@ -393,6 +402,13 @@ export async function askJev(
         const read = await response.text();
         errorText = redact(read, key);
       } catch (error) {
+        if (signal.aborted) {
+          throw new JevError(
+            "UNREACHABLE",
+            `could not reach ${ENDPOINT}: the attempt exceeded the ${timeoutMs} ms timeout`,
+            response.status,
+          );
+        }
         errorText = redact(
           `the error body could not be read: ${
             error instanceof Error ? error.message : String(error)
