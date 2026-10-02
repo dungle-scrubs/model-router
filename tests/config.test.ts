@@ -146,10 +146,12 @@ describe("loadConfigFromPath", () => {
     });
   });
 
-  test("a missing file fails config-invalid", () => {
-    expect(() => loadConfigFromPath("/nonexistent/path/config.json")).toThrowError(
-      expect.objectContaining({ code: "config-invalid" }),
-    );
+  test("a missing file fails config-invalid", async () => {
+    await withTempDir(async (dir) => {
+      expect(() => loadConfigFromPath(join(dir, "missing.json"))).toThrowError(
+        expect.objectContaining({ code: "config-invalid" }),
+      );
+    });
   });
 
   test("a file with invalid JSON fails config-invalid", async () => {
@@ -166,10 +168,12 @@ describe("loadConfigFromPath", () => {
 });
 
 describe("xdgConfigPath", () => {
-  test("uses XDG_CONFIG_HOME when set", () => {
-    expect(xdgConfigPath({ XDG_CONFIG_HOME: "/tmp/example" })).toBe(
-      join("/tmp/example", "model-router", "config.json"),
-    );
+  test("uses XDG_CONFIG_HOME when set", async () => {
+    await withTempDir(async (dir) => {
+      expect(xdgConfigPath({ XDG_CONFIG_HOME: dir })).toBe(
+        join(dir, "model-router", "config.json"),
+      );
+    });
   });
 
   test("uses $HOME/.config when XDG_CONFIG_HOME is empty", () => {
@@ -233,10 +237,12 @@ describe("loadConfig path order", () => {
     });
   });
 
-  test("an explicit path that does not exist is config-invalid", () => {
-    expect(() => loadConfig({ explicitPath: "/nonexistent/path/config.json" })).toThrowError(
-      expect.objectContaining({ code: "config-invalid" }),
-    );
+  test("an explicit path that does not exist is config-invalid", async () => {
+    await withTempDir(async (dir) => {
+      expect(() => loadConfig({ explicitPath: join(dir, "missing.json") })).toThrowError(
+        expect.objectContaining({ code: "config-invalid" }),
+      );
+    });
   });
 
   test("a malformed file at the XDG path is config-invalid", async () => {

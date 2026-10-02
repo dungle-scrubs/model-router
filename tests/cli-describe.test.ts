@@ -177,45 +177,51 @@ describe("--describe privacy refusal", () => {
   });
 
   test("a description file that does not exist exits 2", async () => {
-    const result = await run([
-      "--describe",
-      "/nonexistent/work.txt",
-      "--registry",
-      FIXTURE,
-      '{"privacy":"normal"}',
-    ]);
-    expect(result.exitCode).toBe(2);
-    const error = await errorEnvelope(result.stderr);
-    expect(error.code).toBe("query-invalid");
-    expect(error.field).toBe("describe");
+    await withTempDir(async (dir) => {
+      const result = await run([
+        "--describe",
+        join(dir, "missing-work.txt"),
+        "--registry",
+        FIXTURE,
+        '{"privacy":"normal"}',
+      ]);
+      expect(result.exitCode).toBe(2);
+      const error = await errorEnvelope(result.stderr);
+      expect(error.code).toBe("query-invalid");
+      expect(error.field).toBe("describe");
+    });
   });
 
   test("a secret query exits 2 describe-private before the config loads", async () => {
-    const result = await run([
-      "--describe",
-      "/nonexistent/work.txt",
-      "--config",
-      "/nonexistent/config.json",
-      "--registry",
-      FIXTURE,
-      '{"privacy":"secret"}',
-    ]);
-    expect(result.exitCode).toBe(2);
-    const error = await errorEnvelope(result.stderr);
-    expect(error.code).toBe("describe-private");
+    await withTempDir(async (dir) => {
+      const result = await run([
+        "--describe",
+        join(dir, "missing-work.txt"),
+        "--config",
+        join(dir, "missing-config.json"),
+        "--registry",
+        FIXTURE,
+        '{"privacy":"secret"}',
+      ]);
+      expect(result.exitCode).toBe(2);
+      const error = await errorEnvelope(result.stderr);
+      expect(error.code).toBe("describe-private");
+    });
   });
 
   test("a secret query exits 2 describe-private before the description file is read", async () => {
-    const result = await run([
-      "--describe",
-      "/nonexistent/work.txt",
-      "--registry",
-      FIXTURE,
-      '{"privacy":"secret"}',
-    ]);
-    expect(result.exitCode).toBe(2);
-    const error = await errorEnvelope(result.stderr);
-    expect(error.code).toBe("describe-private");
+    await withTempDir(async (dir) => {
+      const result = await run([
+        "--describe",
+        join(dir, "missing-work.txt"),
+        "--registry",
+        FIXTURE,
+        '{"privacy":"secret"}',
+      ]);
+      expect(result.exitCode).toBe(2);
+      const error = await errorEnvelope(result.stderr);
+      expect(error.code).toBe("describe-private");
+    });
   });
 });
 
