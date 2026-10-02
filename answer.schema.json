@@ -105,6 +105,7 @@
         "family": { "type": "string" },
         "meter": { "type": "string" },
         "placedBy": { "enum": ["pin", "policy", "rank"] },
+        "policy": { "type": "string" },
         "floor": { "enum": ["clears", "below", "skipped"] },
         "availability": {
           "enum": ["ok", "projected", "exhausted", "unknown", "unmetered"]
@@ -125,6 +126,17 @@
         "floor",
         "availability",
         "reasons"
+      ],
+      "allOf": [
+        {
+          "description": "A policy-placed route names its policy; any other placement omits the field.",
+          "if": {
+            "properties": { "placedBy": { "const": "policy" } },
+            "required": ["placedBy"]
+          },
+          "then": { "required": ["policy"] },
+          "else": { "not": { "required": ["policy"] } }
+        }
       ]
     },
     "removedRoute": {

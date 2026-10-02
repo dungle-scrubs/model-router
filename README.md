@@ -76,7 +76,7 @@ The policy's routes follow the rank in written order, with `placedBy: "policy"` 
 7. Sort. Clearing routes order by cost (higher rating, so cheaper, first), then the rank in force (the task's `rank` or `router.rank` when no task resolves), then the model's route order, then file order; with `prefer: speed`, response time comes first. Routes below a floor order by the rank in force, then cost, then route order, then file order. `minimums: {}` states no floor explicitly: every route clears and orders by that clearing order. A query naming a task the registry does not declare, with no floor, orders every route most capable first, never cheapest first; with `minimums` floors, it uses the orders above. A missing value sorts below every route that has it.
 8. Build the answer: `contract`, `routerVersion`, `registryDigest`, the query as applied, `pin: null`, the ordered `routes`, `removed`, `warnings`, `availabilityNote: null`, `describe: null`.
 
-Each answer route carries `label`, `model`, `harness`, `modelId`, `provider` (when set), `hosted`, `family`, `meter` (when set), `placedBy` (`"pin"`, `"policy"` or `"rank"`), `floor` (`"clears"`, `"below"` or `"skipped"`), `availability` (`unknown` for metered routes, `unmetered` otherwise, because this release reads no availability document) and `reasons`. Routes below a floor carry one `floor-not-met` reason per failed floor.
+Each answer route carries `label`, `model`, `harness`, `modelId`, `provider` (when set), `hosted`, `family`, `meter` (when set), `placedBy` (`"pin"`, `"policy"` or `"rank"`), `policy` (the policy's name, only when `placedBy` is `"policy"`), `floor` (`"clears"`, `"below"` or `"skipped"`), `availability` (`unknown` for metered routes, `unmetered` otherwise, because this release reads no availability document) and `reasons`. Routes below a floor carry one `floor-not-met` reason per failed floor.
 
 The same registry and the same query always give the same answer.
 
@@ -167,6 +167,7 @@ import { listTasks, rank, RouterError } from "@dungle-scrubs/model-router";
 const answer = rank({ task: "task-a", stakes: "normal" }, { registry: "registry.json" });
 answer.routes[0]?.label;       // "model-c@harness-x"
 answer.routes[0]?.placedBy;    // "policy"
+answer.routes[0]?.policy;      // "policy-a"
 answer.routes[0]?.floor;       // "skipped"
 answer.registryDigest;         // "sha256:<hex>"
 

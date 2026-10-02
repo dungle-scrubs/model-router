@@ -60,7 +60,9 @@ export type PinReport = {
   readonly used: boolean;
 };
 
-/** One ranked route in the answer: identity, run facts and placement. */
+/** One ranked route in the answer: identity, run facts and placement. A
+ * policy-placed route names its policy in `policy`; every other placement
+ * omits the field. */
 export type AnswerRoute = {
   readonly availability: AvailabilityValue;
   readonly effort?: EffortLevel;
@@ -73,6 +75,7 @@ export type AnswerRoute = {
   readonly model: string;
   readonly modelId: string;
   readonly placedBy: PlacedBy;
+  readonly policy?: string;
   readonly provider?: string;
   readonly reasons: readonly Coded[];
 };

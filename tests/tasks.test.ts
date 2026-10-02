@@ -303,6 +303,20 @@ describe("rank places a policy's routes first", () => {
     expect(answer.routes[0]?.floor).toBe("skipped");
   });
 
+  test("a policy-placed route carries the policy name; rank-placed routes do not", () => {
+    const loaded = tasks();
+    const answer = rank({ task: "task-a", stakes: "normal" }, { registry: loaded });
+    expectValidAnswer(answer);
+    const placed = answer.routes.find((route) => route.placedBy === "policy");
+    expect(placed?.label).toBe("model-c@harness-x");
+    expect(placed?.policy).toBe("policy-a");
+    for (const route of answer.routes) {
+      if (route.placedBy !== "policy") {
+        expect("policy" in route).toBe(false);
+      }
+    }
+  });
+
   test("policy placement does not duplicate a route that the rank step also cleared", () => {
     const loaded = tasks();
     const answer = rank({ task: "task-a", stakes: "normal" }, { registry: loaded });

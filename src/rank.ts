@@ -212,6 +212,7 @@ function buildAnswerRoute(
   floor: "clears" | "below" | "skipped",
   reasons: readonly Coded[],
   placedBy: PlacedBy,
+  policy?: string,
 ): AnswerRoute {
   return {
     availability: availabilityOf(entry.route),
@@ -223,9 +224,10 @@ function buildAnswerRoute(
     model: entry.modelKey,
     modelId: entry.route.modelId,
     placedBy,
-    reasons,
+    ...(policy === undefined ? {} : { policy }),
     ...(entry.meter === undefined ? {} : { meter: entry.meter }),
     ...(entry.provider === undefined ? {} : { provider: entry.provider }),
+    reasons,
   };
 }
 
@@ -494,7 +496,7 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
         continue;
       }
       if (placedLabels.has(label)) continue;
-      policyPlaced.push(buildAnswerRoute(entry, "skipped", [], "policy"));
+      policyPlaced.push(buildAnswerRoute(entry, "skipped", [], "policy", policyMatch.name));
       placedLabels.add(label);
     }
   }
