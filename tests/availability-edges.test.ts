@@ -1,0 +1,123 @@
+import { describe, expect, test } from "vitest";
+import { applyAvailability } from "../src/availability.js";
+import { parseAvailabilityDocument } from "../src/availability-cli.js";
+import type { AvailabilityEntry } from "../src/types.js";
+
+describe("availability edge contracts", () => {
+  test("equal-percent ties name the first input's resetsAt", () => {
+    const first = {
+      meter: "meter-a",
+      status: "projected" as const,
+      percentRemaining: 12,
+      resetsAt: "2026-10-01T12:30:00Z",
+    };
+    const second = { ...first, resetsAt: "2026-10-01T13:30:00Z" };
+    const routes = [{ label: "model-a@harness-x", meter: "meter-a" }];
+    expect(applyAvailability(routes, [first, second]).routes[0]?.reasons?.[0]?.message).toBe(
+      'the route\'s meter "meter-a" is projected to exhaust (12% remaining, resets at 2026-10-01T12:30:00Z)',
+    );
+    expect(applyAvailability(routes, [second, first]).routes[0]?.reasons?.[0]?.message).toBe(
+      'the route\'s meter "meter-a" is projected to exhaust (12% remaining, resets at 2026-10-01T13:30:00Z)',
+    );
+  });
+
+  test("an empty route list is not all-exhausted", () => {
+    expect(applyAvailability([], [{ meter: "meter-a", status: "exhausted" }])).toEqual({
+      routes: [],
+      removed: [],
+      warnings: [],
+    });
+  });
+
+  test("an ok reading clears the reason left by all-exhausted", () => {
+    const once = applyAvailability(
+      [{ label: "model-a@harness-x", meter: "meter-a" }],
+      [{ meter: "meter-a", status: "exhausted" }],
+    );
+    expect(once.routes[0]?.reasons?.map((r) => r.code)).toEqual(["meter-exhausted"]);
+    const result = applyAvailability(once.routes, [{ meter: "meter-a", status: "ok" }]);
+    expect(result.routes[0]?.availability).toBe("ok");
+    expect(result.routes[0]?.reasons).toEqual([]);
+  });
+
+  test.each([
+    [
+      { percentRemaining: 12, resetsAt: "2026-10-01T12:30:00Z" },
+      " (12% remaining, resets at 2026-10-01T12:30:00Z)",
+    ],
+    [{ percentRemaining: 12 }, " (12% remaining)"],
+    [{ resetsAt: "2026-10-01T12:30:00Z" }, " (resets at 2026-10-01T12:30:00Z)"],
+    [{}, ""],
+  ] as const)("reason messages have the exact reading tail %j", (reading, tail) => {
+    const routes = [{ label: "model-a@harness-x", meter: "meter-a" }];
+    for (const [status, options, code, message] of [
+      [
+        "projected",
+        undefined,
+        "meter-projected",
+        'the route\'s meter "meter-a" is projected to exhaust',
+      ],
+      [
+        "projected",
+        { spendToZero: ["meter-a"] },
+        "meter-projected-spend-to-zero",
+        'the route\'s meter "meter-a" is projected to exhaust on a spend-to-zero meter; the route keeps its place',
+      ],
+      ["exhausted", undefined, "meter-exhausted", 'the route\'s meter "meter-a" is exhausted'],
+    ] as const) {
+      const result = applyAvailability(routes, [{ meter: "meter-a", status, ...reading }], options);
+      expect(result.routes[0]?.reasons?.[0]).toMatchObject({ code, message: message + tail });
+    }
+  });
+
+  test("the reader warns with code and index for every invalid-entry branch", () => {
+    const now = new Date("2026-10-01T12:00:00Z");
+    const result = parseAvailabilityDocument(
+      {
+        format: 1,
+        generatedAt: now.toISOString(),
+        entries: [
+          null,
+          { meter: "", status: "ok" },
+          { meter: "meter-a", status: "ok", resetsAt: 7 },
+          { meter: "meter-a", status: "ok", resetsAt: "not-a-date" },
+          { meter: "meter-a", status: "ok", note: 7 },
+          {
+            meter: "meter-a",
+            status: "ok",
+            note: "reading",
+            resetsAt: "2026-10-01T12:30:00Z",
+            percentRemaining: 12,
+          },
+        ],
+      },
+      { maxAgeSeconds: 300, now },
+    );
+    expect(result.note).toBeNull();
+    expect(result.entries).toEqual([
+      {
+        meter: "meter-a",
+        status: "ok",
+        note: "reading",
+        resetsAt: "2026-10-01T12:30:00Z",
+        percentRemaining: 12,
+      },
+    ]);
+    expect(result.warnings.map((w) => ({ code: w.code, field: w.field }))).toEqual(
+      [0, 1, 2, 3, 4].map((index) => ({
+        code: "availability-entry-invalid",
+        field: `$.entries[${index}]`,
+      })),
+    );
+  });
+
+  test("an inherited status does not cover a meter", () => {
+    const entry = Object.assign(Object.create({ status: "ok" }), {
+      meter: "meter-a",
+    }) as AvailabilityEntry;
+    expect(
+      applyAvailability([{ label: "model-a@harness-x", meter: "meter-a" }], [entry]).routes[0]
+        ?.availability,
+    ).toBe("unknown");
+  });
+});

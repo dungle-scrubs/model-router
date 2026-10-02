@@ -1,6 +1,8 @@
+import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { runAvailabilityCommand } from "../src/availability-cli.js";
 import { runCli } from "../src/cli-run.js";
 import {
   captureStream,
@@ -158,5 +160,111 @@ describe("repeated availability files", () => {
         problems: [],
       });
     });
+  });
+});
+
+describe("availability file boundary", () => {
+  test("a file load applies readings without starting a subprocess", async () => {
+    await withTempDir(async (dir) => {
+      const file = writeJson(dir, "avail.json", {
+        format: 1,
+        generatedAt: new Date().toISOString(),
+        entries: [{ meter: "meter-a", status: "ok" }],
+      });
+      vi.mocked(spawnSync).mockClear();
+      const answer = answerOf(await run([QUERY, "--registry", FULL, "--availability-file", file]));
+      expect(spawnSync).not.toHaveBeenCalled();
+      expect(answer.availabilityNote).toBeNull();
+      expect(answer.routes.find((r) => r.label === "model-a@harness-x")?.availability).toBe("ok");
+    });
+  });
+
+  test("other spawn errors report their actual cause", () => {
+    const error = Object.assign(new Error("blocked command"), { code: "EACCES" });
+    vi.mocked(spawnSync).mockReturnValueOnce({
+      error,
+      status: null,
+      signal: null,
+      output: [],
+      stdout: "",
+      stderr: "",
+      pid: 0,
+    });
+    const load = runAvailabilityCommand(["command-a"], { maxAgeSeconds: 300, timeoutSeconds: 1 });
+    expect(load.entries).toEqual([]);
+    expect(load.note?.code).toBe("availability-command-failed");
+    expect(load.note?.message).toBe("the availability command failed to run: blocked command");
+  });
+
+  test("the built CLI skips invalid entries and applies the good one", async () => {
+    await withTempDir(async (dir) => {
+      const file = writeJson(dir, "avail.json", {
+        format: 1,
+        generatedAt: new Date().toISOString(),
+        entries: [
+          { meter: "meter-a", status: "ok" },
+          { meter: "meter-b" },
+          { meter: "meter-c", status: "bogus" },
+          { meter: "meter-d", status: "ok", percentRemaining: "12" },
+        ],
+      });
+      const answer = answerOf(
+        runBuiltCli([QUERY, "--registry", FULL, "--availability-file", file]),
+      );
+      expect(answer.availabilityNote).toBeNull();
+      expect(answer.routes.find((r) => r.label === "model-a@harness-x")?.availability).toBe("ok");
+      expect(answer.warnings.map((w) => ({ code: w.code, field: w.field }))).toEqual(
+        [1, 2, 3].map((index) => ({
+          code: "availability-entry-invalid",
+          field: `$.entries[${index}]`,
+        })),
+      );
+    });
+  });
+});
+
+describe("ranking config snapshot", () => {
+  test("describe and rank share the settings loaded before the request", async () => {
+    await withEnv({ TYPESAFE_API_KEY: "key-a" }, async () =>
+      withTempDir(async (dir) => {
+        const config = writeJson(dir, "config.json", {
+          effort: { default: "low", ceiling: "high" },
+        });
+        const description = join(dir, "work.txt");
+        writeFileSync(description, "implement the change");
+        vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+          writeFileSync(config, "{not json");
+          return new Response(
+            JSON.stringify({
+              model: "jev-1.13.0",
+              answers: {
+                task: {
+                  type: "choice",
+                  choice: "task-a",
+                  confidence: 0.9,
+                  probabilities: { "task-a": 0.9, "task-b": 0.1 },
+                },
+                needs_browser: { type: "noul", noul: 0.1 },
+                "needs_repo-access": { type: "noul", noul: 0.1 },
+              },
+              usage: { input_tokens: 500, output_tokens: 30 },
+            }),
+            { status: 200 },
+          );
+        });
+        const answer = answerOf(
+          await run([
+            '{"privacy":"normal"}',
+            "--registry",
+            fixturePath("describe.json"),
+            "--config",
+            config,
+            "--describe",
+            description,
+          ]),
+        );
+        expect(answer.routes.map((r) => r.effort)).toEqual(["low", "low", "low"]);
+      }),
+    );
   });
 });

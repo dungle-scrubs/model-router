@@ -164,10 +164,12 @@ describe("applyAvailability in isolation", () => {
 
   test("several entries on one meter: same status picks the lowest percentRemaining", () => {
     const result = pureApplyAvailability(routes, [
-      { meter: "meter-a", status: "ok", percentRemaining: 60 },
-      { meter: "meter-a", status: "ok", percentRemaining: 12 },
+      { meter: "meter-a", status: "projected", percentRemaining: 60 },
+      { meter: "meter-a", status: "projected", percentRemaining: 12 },
     ]);
-    expect(result.routes[0]?.availability).toBe("ok");
+    expect(
+      result.routes.find((route) => route.meter === "meter-a")?.reasons?.[0]?.message,
+    ).toContain("12% remaining");
     expect(result.removed).toEqual([]);
   });
 
@@ -417,9 +419,26 @@ describe("parseAvailabilityDocument staleness boundaries", () => {
 
 describe("parseAvailabilityDocument", () => {
   test("accepts the RFC's worked example", () => {
-    const result = parseAvailabilityDocument(availabilityDoc(), { maxAgeSeconds: 300 });
-    expect(result.entries).toHaveLength(1);
+    const entries = [
+      {
+        meter: "meter-a",
+        status: "projected",
+        resetsAt: "2026-10-01T09:00:00Z",
+        percentRemaining: 12,
+        note: "weekly window",
+      },
+      { meter: "meter-b", status: "exhausted" },
+    ];
+    const result = parseAvailabilityDocument(
+      { format: 1, generatedAt: "2026-10-01T04:00:00Z", entries },
+      {
+        maxAgeSeconds: 300,
+        now: new Date("2026-10-01T04:00:01Z"),
+      },
+    );
+    expect(result.entries).toEqual(entries);
     expect(result.note).toBeNull();
+    expect(result.warnings).toEqual([]);
   });
 
   test("rejects a non-object top level with availability-reading-invalid", () => {
@@ -508,7 +527,11 @@ describe("parseAvailabilityDocument with skipped entries", () => {
     );
     expect(result.entries.map((e) => e.meter)).toEqual(["meter-a"]);
     expect(result.note).toBeNull();
-    expect(result.warnings).toHaveLength(3);
+    expect(result.warnings.map((w) => w.code)).toEqual([
+      "availability-entry-invalid",
+      "availability-entry-invalid",
+      "availability-entry-invalid",
+    ]);
     const fields = result.warnings.map((w) => w.field);
     expect(fields).toEqual(["$.entries[1]", "$.entries[2]", "$.entries[3]"]);
     expect(result.warnings[0]?.message).toContain("status");
@@ -598,7 +621,7 @@ describe("runAvailabilityCommand", () => {
     );
     expect(result.entries).toEqual([]);
     expect(result.note?.code).toBe("availability-command-failed");
-    expect(result.note?.message).toContain("killed after 1 second");
+    expect(result.note?.message).toBe("the availability command was killed after 1 second");
   });
 
   test("a timeoutSeconds other than 1 uses the plural form", () => {
@@ -750,12 +773,11 @@ describe("rank with the availability option", () => {
     ).toBe(true);
   });
 
-  test("rank with an exhausted entry whose resetsAt is in the past keeps the route", () => {
+  test("rank ignores expiry before and after the same resetsAt", () => {
     // Pin a fake-timer scenario so the test is deterministic: the CLI
     // owns the clock, and rank itself does not consult it. The same answer
     // comes back before and after the resetsAt.
-    const future = new Date(Date.now() + 60_000).toISOString();
-    const farFuture = new Date(Date.now() + 120_000).toISOString();
+    const resetsAt = "2026-10-01T12:30:00Z";
     vi.useFakeTimers();
     try {
       vi.setSystemTime(new Date("2026-10-01T12:00:00Z"));
@@ -763,7 +785,7 @@ describe("rank with the availability option", () => {
         { minimums: { coding: 5 } },
         {
           registry: FULL,
-          availability: [{ meter: "meter-a", status: "exhausted", resetsAt: future }],
+          availability: [{ meter: "meter-a", status: "exhausted", resetsAt }],
         },
       );
       expectValidAnswer(before);
@@ -772,11 +794,11 @@ describe("rank with the availability option", () => {
         { minimums: { coding: 5 } },
         {
           registry: FULL,
-          availability: [{ meter: "meter-a", status: "exhausted", resetsAt: farFuture }],
+          availability: [{ meter: "meter-a", status: "exhausted", resetsAt }],
         },
       );
       expectValidAnswer(after);
-      expect(before.routes.map((r) => r.label)).toEqual(after.routes.map((r) => r.label));
+      expect(before).toEqual(after);
       // rank ignores the clock: an entry is honored regardless of when the
       // call runs, so the route is removed in both cases.
       expect(before.routes.find((r) => r.label === "model-a@harness-x")).toBeUndefined();
@@ -1252,23 +1274,6 @@ describe("CLI availability flags", () => {
     expect(answer.availabilityNote?.code).toBe("availability-file-unreadable");
   });
 
-  test("--availability-file with a fresh document applies the readings", () => {
-    const result = runBuiltCli([
-      '{"minimums":{"coding":5}}',
-      "--registry",
-      FULL,
-      "--availability-file",
-      // The CLI ranks without availability when the load carries a note,
-      // so the test passes a fresh document with entries (no note) and
-      // the exhausted meter is applied.
-      // Write to a temp file at runtime.
-      "PLACEHOLDER",
-    ]);
-    expect(result.exitCode).toBe(0);
-    // Above test sets PLACEHOLDER; use a separate temp file path for the
-    // actual fresh-document check.
-  });
-
   test("--availability-file with a fresh document applies the readings (temp dir)", async () => {
     await withTempDir(async (dir) => {
       const path = writeJson(dir, "avail.json", {
@@ -1457,52 +1462,6 @@ describe("CLI availability flags", () => {
     expect(error.code).toBe("query-invalid");
     expect(error.field).toBe("availability");
     expect(error.message).toContain("empty path");
-  });
-
-  test("the CLI does not start a subprocess for --availability-file (vi.mock child_process)", async () => {
-    // Real subprocess calls are intercepted, not faked on a fresh object:
-    // a swallowed spawnSync would otherwise bypass a copy. The spies fire
-    // for direct calls made from this test (the mocked module is the one
-    // the runtime is using); a future change that starts a subprocess is
-    // caught by the assertion at the bottom.
-    vi.doMock("node:child_process", async () => {
-      const actual =
-        await vi.importActual<typeof import("node:child_process")>("node:child_process");
-      const wrap = <T extends (...args: never[]) => unknown>(fn: T): T => {
-        const spy = vi.fn(fn);
-        return spy as unknown as T;
-      };
-      return {
-        ...actual,
-        exec: wrap(actual.exec),
-        execFile: wrap(actual.execFile),
-        execFileSync: wrap(actual.execFileSync),
-        execSync: wrap(actual.execSync),
-        spawn: wrap(actual.spawn),
-        spawnSync: wrap(actual.spawnSync),
-      };
-    });
-    const cp = await import("node:child_process");
-    try {
-      await withTempDir(async (dir) => {
-        const path = writeJson(dir, "avail.json", {
-          format: 1,
-          generatedAt: new Date().toISOString(),
-          entries: [{ meter: "meter-a", status: "ok" }],
-        });
-        const result = runBuiltCli([
-          '{"minimums":{"coding":5}}',
-          "--registry",
-          FULL,
-          "--availability-file",
-          path,
-        ]);
-        expect(result.exitCode).toBe(0);
-        expect(cp.spawnSync).not.toHaveBeenCalled();
-      });
-    } finally {
-      vi.doUnmock("node:child_process");
-    }
   });
 });
 
