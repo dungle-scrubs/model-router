@@ -45,7 +45,7 @@ The answer is one JSON line on stdout, also when no route survives. `model-route
 | `prefer` | `cost`, `speed` | `cost` | how clearing routes are ordered |
 | `privacy` | `normal`, `secret` | `normal` | `secret` keeps only `privacyEligible` routes |
 | `excludeFamilies` | list of strings | `[]` | families removed as a hard limit |
-| `spec` | `open`, `settled` | `open` | `settled` matches a policy whose `spec` is `settled` (or unset); an unset `spec` matches any query. `spec: settled` with no policy to match warns `policy-none` |
+| `spec` | `open`, `settled` | `open` | `settled` matches a policy whose `spec` is `settled` (or unset); an unset policy `spec` matches any query, and a policy's `spec` accepts only `settled` |
 
 A query must carry `task` or `minimums` (a `pin` alone is invalid), and input is strict: a field the contract does not define is `query-invalid`. A check against registry content is a warning, never a failure: a minimum naming an undeclared rating makes every route count as below that floor, a need naming an undeclared capability removes every route lacking it, and an unknown family excludes nothing.
 
@@ -61,7 +61,7 @@ The order list is the task's `rank`. A misspelled task in the registry falls thr
 
 ### Resolving the policy
 
-At most one policy applies to a query. A policy is a candidate when its `task` is the query's task, its `stakes` include the query's, and its `spec` condition holds: a policy without `spec` applies whatever the query's `spec` is; a policy with `spec: "settled"` applies only to a `spec: "settled"` query; a policy with `spec: "open"` applies only to a `spec: "open"` query. When two candidates remain, the one with an explicit `spec` wins (open and settled never both match one query). Two policies that could match the same query at the same level - the same task, an overlapping stakes level, the same spec condition - make the file invalid (`policy-tie`).
+At most one policy applies to a query. A policy is a candidate when its `task` is the query's task, its `stakes` include the query's, and its `spec` condition holds: a policy without `spec` applies whatever the query's `spec` is, and a policy with `spec: "settled"` applies only to a `spec: "settled"` query. A policy's `spec` accepts only `settled`. When a specless policy and a settled policy are both candidates for a settled query, the settled one wins. Two policies that could match the same query at the same level - the same task, an overlapping stakes level, the same spec condition (both specless, or both settled) - make the file invalid (`policy-tie`).
 
 The policy's routes follow the rank in written order, with `placedBy: "policy"` and `floor: "skipped"`. No route appears twice. A policy route that a hard limit removed stays in `removed` with its hard-limit reason, and a `policy-route-removed` warning names the policy.
 
@@ -154,7 +154,7 @@ A `registry-sections-invalid` error carries one problem per finding in `problems
 | `policy-route-field-unknown` | a `policy` route carries a field other than `route` and `effort` |
 | `policy-reason-missing` | a `policy` entry has no `reason` |
 | `policy-reason-not-string` | a `policy` entry's `reason` is not a string |
-| `policy-spec-invalid` | a `policy` entry's `spec` is not open or settled |
+| `policy-spec-invalid` | a `policy` entry's `spec` is not `settled` |
 | `policy-since-not-string` | a `policy` entry's `since` is not a string |
 | `policy-field-unknown` | a `policy` entry carries a field other than the policy fields |
 | `policy-tie` | two policy entries match the same query at the same level |

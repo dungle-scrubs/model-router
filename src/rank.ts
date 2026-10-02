@@ -237,11 +237,11 @@ function matchPolicy(
   for (const policy of Object.values(sections.policies)) {
     if (policy.task !== applied.task) continue;
     if (!policy.stakes.includes(applied.stakes)) continue;
-    // A policy without spec applies whatever the query's spec is. A policy
-    // with an explicit spec matches only that spec.
+    // A policy without spec applies whatever the query's spec is. Only
+    // "settled" is a valid policy spec, and it matches only settled
+    // queries. A settled policy beats the specless fallback, so the first
+    // explicit-spec candidate is the winner.
     if (policy.spec !== undefined && policy.spec !== applied.spec) continue;
-    // A policy with spec beats one without. Open and settled never both
-    // match one query, so the first explicit-spec candidate is the winner.
     if (policy.spec !== undefined) return policy;
     fallback = policy;
   }

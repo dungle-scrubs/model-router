@@ -128,12 +128,17 @@ export interface PolicyRoute {
   readonly route: string;
 }
 
+/** A policy's spec condition. Only "settled" is valid: it applies solely to
+ * settled queries. A policy without `spec` applies to every query. */
+export type PolicySpec = "settled";
+
 /** A policy entry validated from the registry's policy section. A policy
- * without `spec` applies whatever the query's spec is. */
+ * without `spec` applies to every query; one with `spec: "settled"` applies
+ * only to settled queries and beats a specless policy for those. */
 export interface PolicyEntry {
   readonly name: string;
   readonly routes: readonly PolicyRoute[];
-  readonly spec?: Spec;
+  readonly spec?: PolicySpec;
   readonly stakes: readonly Stakes[];
   readonly task: string;
 }

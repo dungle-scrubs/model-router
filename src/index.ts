@@ -11,6 +11,7 @@ export type {
   PlacedBy,
   PolicyEntry,
   PolicyRoute,
+  PolicySpec,
   Prefer,
   Privacy,
   Query,

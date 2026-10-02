@@ -954,9 +954,40 @@ describe("validateRouterSections tasks and policy", () => {
     expect(error.problems[0]).toEqual({
       code: "policy-spec-invalid",
       field: '$["policy"]["policy-a"]["spec"]',
-      fix: 'Set the spec of "policy-a" to open or settled, or remove it.',
-      message: 'the policy "policy-a" spec must be open or settled',
+      fix: 'Set the spec of "policy-a" to settled, or remove it.',
+      message: 'the policy "policy-a" spec must be settled',
     });
+  });
+
+  test("a policy with spec open is invalid: a policy spec accepts only settled", async () => {
+    const error = withPolicy(
+      {
+        "policy-a": {
+          task: "task-a",
+          stakes: ["normal"],
+          routes: [{ route: "model-a@harness-x" }],
+          reason: "r",
+          spec: "open",
+        },
+      },
+      {
+        tasks: {
+          "task-a": {
+            description: "Code.",
+            minimums: { low: { coding: 6 }, normal: { coding: 7 }, high: { coding: 8 } },
+            rank: ["coding"],
+          },
+        },
+        models: {
+          "model-a": {
+            family: "family-a",
+            ratings: { coding: 7 },
+            routes: [{ harness: "harness-x", modelId: "model-id-a", hosted: true }],
+          },
+        },
+      },
+    );
+    expect(error.problems.map((problem) => problem.code)).toEqual(["policy-spec-invalid"]);
   });
 
   test("a policy with non-string since is invalid", async () => {
@@ -1123,23 +1154,8 @@ describe("validateRouterSections tasks and policy", () => {
     });
   });
 
-  test("two open policies that overlap on task and stakes are tied", () => {
-    expectTie({ "policy-1": tiePolicy({ spec: "open" }), "policy-2": tiePolicy({ spec: "open" }) });
-  });
-
-  test("a specless and an open policy are not a tie: spec beats no spec", () => {
-    expectNoTie({ "policy-1": tiePolicy({}), "policy-2": tiePolicy({ spec: "open" }) });
-  });
-
   test("a specless and a settled policy are not a tie: settled beats no spec", () => {
     expectNoTie({ "policy-1": tiePolicy({}), "policy-2": tiePolicy({ spec: "settled" }) });
-  });
-
-  test("open and settled policies never tie: they cannot match one query", () => {
-    expectNoTie({
-      "policy-1": tiePolicy({ spec: "open" }),
-      "policy-2": tiePolicy({ spec: "settled" }),
-    });
   });
 
   test("policies on disjoint stakes never tie", () => {

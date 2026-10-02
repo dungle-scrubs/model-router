@@ -241,45 +241,6 @@ describe("rank under spec: settled", () => {
     expect(answer.warnings.map((entry) => entry.code)).not.toContain("policy-none");
   });
 
-  test("an open query takes a spec: open policy over a specless one, and the file stays valid", () => {
-    const loaded = tasks();
-    // Two policies on task-b, overlapping stakes, different spec conditions:
-    // not a tie. A policy with spec beats one without. policy-open lists its
-    // routes in written order [model-a, model-b], against the cost order
-    // (model-b cost 9 before model-a cost 8), so written order is provable.
-    // If the specless policy-any won instead, model-b would be placed by
-    // rank, not policy, and model-a would not lead.
-    const openBeatsSpecless = {
-      ...loaded,
-      sections: {
-        ...loaded.sections,
-        policy: {
-          "policy-any": {
-            task: "task-b",
-            stakes: ["low", "normal", "high"],
-            routes: [{ route: "model-a@harness-x" }],
-            reason: "Any spec.",
-          },
-          "policy-open": {
-            task: "task-b",
-            stakes: ["low", "normal", "high"],
-            spec: "open",
-            routes: [{ route: "model-a@harness-x" }, { route: "model-b@harness-x" }],
-            reason: "Open specs prefer the cheap pair.",
-          },
-        },
-      },
-    };
-    const answer = rank({ task: "task-b", stakes: "normal" }, { registry: openBeatsSpecless });
-    expectValidAnswer(answer);
-    expect(answer.routes.map((entry) => [entry.label, entry.placedBy, entry.floor])).toEqual([
-      ["model-a@harness-x", "policy", "skipped"],
-      ["model-b@harness-x", "policy", "skipped"],
-      ["model-c@harness-x", "rank", "below"],
-    ]);
-    expect(answer.warnings).toEqual([]);
-  });
-
   test("a spec: open query never matches a spec: settled policy", () => {
     const loaded = tasks();
     const answer = rank({ task: "task-a", stakes: "normal" }, { registry: loaded });

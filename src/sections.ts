@@ -4,9 +4,9 @@ import { RouterError } from "./error.js";
 import type {
   PolicyEntry,
   PolicyRoute,
+  PolicySpec,
   RouterProblem,
   RouterSections,
-  Spec,
   Stakes,
 } from "./types.js";
 
@@ -25,7 +25,6 @@ function rankLine(loaded: LoadedRegistry): string {
 const TASK_FIELDS: readonly string[] = ["description", "minimums", "rank", "needs", "effort"];
 const POLICY_FIELDS: readonly string[] = ["task", "stakes", "routes", "reason", "since", "spec"];
 const STAKES_VALUES: readonly string[] = ["low", "normal", "high"];
-const SPEC_VALUES: readonly string[] = ["open", "settled"];
 
 /**
  * Read and validate the router's section of the registry file. The loader
@@ -617,18 +616,18 @@ function validatePolicy(
       });
     }
 
-    let spec: Spec | undefined;
+    let spec: PolicySpec | undefined;
     if (Object.hasOwn(policyRaw, "spec")) {
       const policySpec = policyRaw.spec;
-      if (typeof policySpec !== "string" || !SPEC_VALUES.includes(policySpec)) {
+      if (typeof policySpec !== "string" || policySpec !== "settled") {
         problems.push({
           code: "policy-spec-invalid",
           field: pathJoin(policyField, "spec"),
-          message: `the policy "${policyName}" spec must be open or settled`,
-          fix: `Set the spec of "${policyName}" to open or settled, or remove it.`,
+          message: `the policy "${policyName}" spec must be settled`,
+          fix: `Set the spec of "${policyName}" to settled, or remove it.`,
         });
       } else {
-        spec = policySpec as Spec;
+        spec = policySpec;
       }
     }
 
@@ -684,8 +683,8 @@ function detectPolicyTies(policies: PoliciesMap, problems: RouterProblem[]): voi
       if (shared.length === 0) continue;
       // A tie is two policies that match the same query at the same level:
       // the same task, an overlapping stakes level, the same spec condition.
-      // A policy with spec beats one without, so a specless policy and one
-      // with an explicit spec never tie, whatever their spec values.
+      // Only "settled" is a valid spec condition, so a specless policy and
+      // a settled one never tie: the settled policy beats it.
       if (a.spec !== b.spec) continue;
       const specText = a.spec === undefined ? "no spec" : `spec "${a.spec}"`;
       problems.push({
