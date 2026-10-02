@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { dropExpired } from "./availability.js";
 import type { RouterConfigAvailability } from "./config.js";
 import type {
   AvailabilityEntry,
@@ -423,14 +424,24 @@ export function loadAvailabilityForCli(source: AvailabilityCliSource): Availabil
         warnings: [],
       };
     }
-    return runAvailabilityCommand(source.config.command, {
+    const load = runAvailabilityCommand(source.config.command, {
       maxAgeSeconds,
       timeoutSeconds,
       now,
     });
+    return dropExpiredLoad(load, now);
   }
   if (source.file !== undefined) {
-    return readAvailabilityFile(source.file, { maxAgeSeconds, now });
+    const load = readAvailabilityFile(source.file, { maxAgeSeconds, now });
+    return dropExpiredLoad(load, now);
   }
   return { entries: [], note: null, warnings: [] };
+}
+
+/** A successful load's expired entries are dropped before the engine
+ * sees them; a load with a note is returned unchanged so the caller can
+ * still report the failure. The note and warnings survive the drop. */
+function dropExpiredLoad(load: AvailabilityLoad, now: Date): AvailabilityLoad {
+  if (load.note !== null) return load;
+  return { ...load, entries: dropExpired(load.entries, now) };
 }

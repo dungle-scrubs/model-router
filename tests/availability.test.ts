@@ -678,6 +678,24 @@ describe("loadAvailabilityForCli", () => {
       expect(result.note).toBeNull();
     });
   });
+
+  test("--availability with a command that prints an expired entry drops it", () => {
+    const result = loadAvailabilityForCli({
+      command: true,
+      config: {
+        command: ["node", fixturePath("availability-expired-print.js")],
+        // A generous staleness bound so the document is always fresh:
+        // the child's generatedAt may tick a few hundredths of a second
+        // after the parent's clock was read, and the "in the future"
+        // check fires when ageMs is negative.
+        maxAgeSeconds: 3600,
+        timeoutSeconds: 10,
+      },
+      file: undefined,
+    });
+    expect(result.note).toBeNull();
+    expect(result.entries).toEqual([]);
+  });
 });
 
 describe("rank with the availability option", () => {
@@ -1263,6 +1281,34 @@ describe("CLI availability flags", () => {
       expectValidAnswer(answer);
       expect(answer.removed.some((r: { label: string }) => r.label === "model-a@harness-x")).toBe(
         true,
+      );
+    });
+  });
+
+  test("--availability-file with an exhausted entry whose resetsAt has passed keeps the route", async () => {
+    await withTempDir(async (dir) => {
+      const path = writeJson(dir, "expired.json", {
+        format: 1,
+        generatedAt: new Date().toISOString(),
+        entries: [{ meter: "meter-a", status: "exhausted", resetsAt: "2000-01-01T00:00:00Z" }],
+      });
+      const result = runBuiltCli([
+        '{"minimums":{"coding":5}}',
+        "--registry",
+        FULL,
+        "--availability-file",
+        path,
+      ]);
+      expect(result.exitCode).toBe(0);
+      const answer = JSON.parse(result.stdout);
+      expectValidAnswer(answer);
+      // The CLI is supposed to drop the expired entry before the engine
+      // sees it, so model-a@harness-x stays and is not in removed.
+      expect(
+        answer.routes.find((r: { label: string }) => r.label === "model-a@harness-x"),
+      ).toBeDefined();
+      expect(answer.removed.some((r: { label: string }) => r.label === "model-a@harness-x")).toBe(
+        false,
       );
     });
   });
