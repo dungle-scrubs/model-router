@@ -172,12 +172,8 @@ function validateTasks(raw: unknown, loaded: LoadedRegistry, problems: RouterPro
   const declaredRatings = loaded.registry.ratings ?? {};
   const declaredCapabilities = loaded.registry.capabilities ?? {};
   const tasksMap: Record<string, import("./types.js").TaskEntry> = {};
-  const seen = new Set<string>();
 
   for (const [taskName, taskRaw] of Object.entries(raw)) {
-    if (!seen.add(taskName)) {
-      // Already validated below; no-op here.
-    }
     const taskField = pathJoin(sectionField, taskName);
     if (!isPlainObject(taskRaw)) {
       problems.push({
@@ -283,7 +279,7 @@ function validateTasks(raw: unknown, loaded: LoadedRegistry, problems: RouterPro
       });
     } else {
       rankList.forEach((entry, index) => {
-        const field = pathJoin(pathJoin(taskField, "rank"), String(index));
+        const field = `${pathJoin(taskField, "rank")}[${index}]`;
         if (typeof entry !== "string") {
           problems.push({
             code: "tasks-rank-entry-not-string",
@@ -315,7 +311,7 @@ function validateTasks(raw: unknown, loaded: LoadedRegistry, problems: RouterPro
         });
       } else {
         needs.forEach((entry, index) => {
-          const field = pathJoin(pathJoin(taskField, "needs"), String(index));
+          const field = `${pathJoin(taskField, "needs")}[${index}]`;
           if (typeof entry !== "string") {
             problems.push({
               code: "tasks-needs-entry-not-string",
@@ -487,7 +483,7 @@ function validatePolicy(
       });
     } else {
       stakes.forEach((entry, index) => {
-        const field = pathJoin(pathJoin(policyField, "stakes"), String(index));
+        const field = `${pathJoin(policyField, "stakes")}[${index}]`;
         if (typeof entry !== "string" || !STAKES_VALUES.includes(entry)) {
           problems.push({
             code: "policy-stakes-entry-invalid",
@@ -516,7 +512,7 @@ function validatePolicy(
       });
     } else {
       routes.forEach((entry, index) => {
-        const field = pathJoin(pathJoin(policyField, "routes"), String(index));
+        const field = `${pathJoin(policyField, "routes")}[${index}]`;
         if (!isPlainObject(entry)) {
           problems.push({
             code: "policy-route-not-object",

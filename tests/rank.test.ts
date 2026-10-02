@@ -186,6 +186,23 @@ describe("rank with inline minimums", () => {
     );
   });
 
+  test("a model whose rating exactly meets one floor but misses another has one reason, not two", () => {
+    const loaded = full();
+    // model-b has coding=5 and taste=4. Floor coding=5 (meets) and taste=5 (misses).
+    // Below-floor reasons: only taste, not coding.
+    const answer = rank({ minimums: { coding: 5, taste: 5 } }, { registry: loaded });
+    expectValidAnswer(answer);
+    const boundary = answer.routes.find((route) => route.label === "model-b@harness-x");
+    expect(boundary?.floor).toBe("below");
+    expect(boundary?.reasons).toEqual([
+      {
+        code: "floor-not-met",
+        field: '$.minimums["taste"]',
+        message: 'the model\'s rating for "taste" is 4, below the floor 5',
+      },
+    ]);
+  });
+
   test("a route with no cost sorts below every clearing route that has one", () => {
     const loaded = full();
     const answer = rank({ minimums: { coding: 6 } }, { registry: loaded });

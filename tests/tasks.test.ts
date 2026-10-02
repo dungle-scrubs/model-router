@@ -72,6 +72,15 @@ describe("rank with a known task", () => {
     expect(answer.query.effort).toBe("low");
     expect(answer.warnings.map((entry) => entry.code)).not.toContain("effort-unapplied");
   });
+
+  test("an inline effort alongside a task is echoed on the applied query without a warning", () => {
+    const loaded = tasks();
+    const answer = rank({ task: "task-a", stakes: "normal", effort: "" }, { registry: loaded });
+    expectValidAnswer(answer);
+    // Effort resolution is a later release: the value parses and is echoed
+    // verbatim, with no effort-unapplied warning because a task is named.
+    expect(answer.query.effort).toBe("");
+  });
 });
 
 describe("rank with a misspelled task", () => {
@@ -164,6 +173,53 @@ describe("rank places a policy's routes first", () => {
     // policy-a places model-c; rank has model-c in clearing too. The route must appear once.
     const labels = answer.routes.map((entry) => entry.label);
     expect(labels.filter((label) => label === "model-c@harness-x")).toHaveLength(1);
+  });
+});
+
+describe("rank with a known task uses cost-first clearing order", () => {
+  test("a known task without floors ranks clearing routes by cost first, not capability first", async () => {
+    const { writeJson, withTempDir } = await import("./helpers.js");
+    await withTempDir(async (dir) => {
+      const path = writeJson(dir, "registry.json", {
+        format: 1,
+        ratings: { coding: "Writes and changes code to a spec." },
+        router: { rank: ["coding"] },
+        tasks: {
+          "task-a": {
+            description: "Code.",
+            minimums: {
+              low: { coding: 6 },
+              normal: { coding: 7 },
+              high: { coding: 8 },
+            },
+            rank: ["coding"],
+          },
+        },
+        models: {
+          "model-x": {
+            family: "family-x",
+            ratings: { coding: 7 },
+            routes: [{ harness: "harness-x", modelId: "model-id-x", hosted: true, cost: 8 }],
+          },
+          "model-y": {
+            family: "family-y",
+            ratings: { coding: 9 },
+            routes: [{ harness: "harness-x", modelId: "model-id-y", hosted: true, cost: 5 }],
+          },
+        },
+      });
+      const { loadRegistry } = await import("@dungle-scrubs/model-registry");
+      const loaded = loadRegistry({ path });
+      const answer = rank({ task: "task-a", stakes: "low" }, { registry: loaded });
+      expectValidAnswer(answer);
+      // Cost is a rating where higher means cheaper, so clearing order is
+      // cost descending: model-x (cost 8) before model-y (cost 5), against
+      // model-y's higher coding rating.
+      expect(answer.routes.map((entry) => entry.label)).toEqual([
+        "model-x@harness-x",
+        "model-y@harness-x",
+      ]);
+    });
   });
 });
 
