@@ -866,6 +866,60 @@ describe("boundary and passthrough behavior", () => {
       spy.mockRestore();
     }));
 
+  test("the filled query carries no undefined key the caller did not state", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const body = {
+        model: "jev-1.13.0",
+        answers: {
+          task: choiceAnswer("task-a", 0.9, { "task-a": 0.9, "task-b": 0.1 }),
+          needs_browser: noulAnswer(0.1),
+          "needs_repo-access": noulAnswer(0.2),
+        },
+        usage: USAGE,
+      };
+      const { spy } = stubFetch(body);
+      const result = await describeStep("some work", '{"privacy":"normal"}', {
+        registry: FIXTURE,
+      });
+      expect(result.query).toStrictEqual({ needs: [], privacy: "normal", task: "task-a" });
+      spy.mockRestore();
+    }));
+
+  test("a caller's own undefined keys are dropped from the filled query", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const body = {
+        model: "jev-1.13.0",
+        answers: {
+          task: choiceAnswer("task-a", 0.9, { "task-a": 0.9, "task-b": 0.1 }),
+          needs_browser: noulAnswer(0.1),
+          "needs_repo-access": noulAnswer(0.2),
+        },
+        usage: USAGE,
+      };
+      const { spy } = stubFetch(body);
+      const result = await describeStep(
+        "some work",
+        { privacy: "normal", effort: undefined },
+        {
+          registry: FIXTURE,
+        },
+      );
+      expect(result.query).toStrictEqual({ needs: [], privacy: "normal", task: "task-a" });
+      spy.mockRestore();
+    }));
+
+  test("a stated need stays ahead of the needs Jev adds", async () =>
+    withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const { spy } = stubFetch(happyBody);
+      const result = await describeStep(
+        "some work",
+        '{"privacy":"normal","task":"task-b","needs":["repo-access"]}',
+        { registry: FIXTURE },
+      );
+      expect(result.query.needs).toStrictEqual(["repo-access", "browser"]);
+      spy.mockRestore();
+    }));
+
   test("the task question carries its instruction text", async () =>
     withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
       const { seen, spy } = stubFetch(happyBody);

@@ -126,20 +126,20 @@ function candidatesOf(probabilities: Readonly<Record<string, number>>): Describe
 }
 
 /** Copy the caller's query fields, replacing task and needs with the filled
- * values. Every other field is the caller's. */
+ * values. Every other field is the caller's, and an absent field stays
+ * absent: no own key holding undefined reaches the filled query, neither
+ * from the caller's object nor from this copy. */
 function filledQuery(partial: Query, task: string | undefined, needs: readonly string[]): Query {
-  return {
-    ...(partial.excludeFamilies !== undefined ? { excludeFamilies: partial.excludeFamilies } : {}),
-    ...(partial.effort !== undefined ? { effort: partial.effort } : {}),
-    ...(partial.minimums !== undefined ? { minimums: partial.minimums } : {}),
-    ...(partial.pin !== undefined ? { pin: partial.pin } : {}),
-    ...(partial.prefer !== undefined ? { prefer: partial.prefer } : {}),
-    ...(partial.privacy !== undefined ? { privacy: partial.privacy } : {}),
-    ...(partial.spec !== undefined ? { spec: partial.spec } : {}),
-    ...(partial.stakes !== undefined ? { stakes: partial.stakes } : {}),
-    ...(task !== undefined ? { task } : {}),
-    needs,
-  };
+  const query: Record<string, unknown> = { needs };
+  if (task !== undefined) {
+    query.task = task;
+  }
+  for (const [field, value] of Object.entries(partial)) {
+    if (field !== "needs" && value !== undefined) {
+      query[field] = value;
+    }
+  }
+  return query as unknown as Query;
 }
 
 /**
