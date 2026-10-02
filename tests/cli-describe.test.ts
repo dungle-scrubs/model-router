@@ -134,6 +134,48 @@ describe("--describe privacy refusal", () => {
       });
     }));
 
+  test("an empty description file is refused before the registry loads", async () => {
+    await withTempDir(async (dir) => {
+      const { writeFileSync } = await import("node:fs");
+      const file = join(dir, "work.txt");
+      writeFileSync(file, "   \n  ");
+      const result = await run([
+        "--describe",
+        file,
+        "--registry",
+        join(dir, "missing-registry.json"),
+        '{"privacy":"normal"}',
+      ]);
+      expect(result.exitCode).toBe(2);
+      const error = await errorEnvelope(result.stderr);
+      expect(error.code).toBe("query-invalid");
+      expect(error.field).toBe("text");
+      expect(error.message).toBe("the work description is empty");
+    });
+  });
+
+  test("an empty description file is refused before the config loads", async () => {
+    await withTempDir(async (dir) => {
+      const { writeFileSync } = await import("node:fs");
+      const file = join(dir, "work.txt");
+      writeFileSync(file, "   \n  ");
+      const result = await run([
+        "--describe",
+        file,
+        "--registry",
+        FIXTURE,
+        "--config",
+        join(dir, "missing-config.json"),
+        '{"privacy":"normal"}',
+      ]);
+      expect(result.exitCode).toBe(2);
+      const error = await errorEnvelope(result.stderr);
+      expect(error.code).toBe("query-invalid");
+      expect(error.field).toBe("text");
+      expect(error.message).toBe("the work description is empty");
+    });
+  });
+
   test("a description file that does not exist exits 2", async () => {
     const result = await run([
       "--describe",

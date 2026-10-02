@@ -47,6 +47,28 @@ function describePrivate(): RouterError {
   });
 }
 
+/** Check the work description itself: a string that is not blank. The
+ * library's `describe` step and the CLI run this same check, the CLI right
+ * after reading the `--describe` file, so a blank description is refused
+ * ahead of every registry and config load for both callers. Exported from
+ * the module for the CLI, not from the package entry. */
+export function checkDescribeText(text: unknown): void {
+  if (typeof text !== "string") {
+    throw invalid(
+      "text",
+      "the work description must be a string",
+      "Pass the work description as text; the describe step sends it to Jev as the state.",
+    );
+  }
+  if (text.trim().length === 0) {
+    throw invalid(
+      "text",
+      "the work description is empty",
+      "Describe the work in the description file, or rank without the describe step.",
+    );
+  }
+}
+
 /**
  * Parse the describe step's partial query and run the two privacy checks.
  * `describe` runs this gate first, before it loads the registry or the
@@ -145,20 +167,7 @@ export async function describe(
   // The privacy gate is the first check: no registry, section or config
   // load, and no request, happens before it passes.
   const partial = parseDescribeQuery(partialQuery);
-  if (typeof text !== "string") {
-    throw invalid(
-      "text",
-      "the work description must be a string",
-      "Pass the work description as text; the describe step sends it to Jev as the state.",
-    );
-  }
-  if (text.trim().length === 0) {
-    throw invalid(
-      "text",
-      "the work description is empty",
-      "Describe the work in the description file, or rank without the describe step.",
-    );
-  }
+  checkDescribeText(text);
   const loaded = resolveRegistry(options.registry);
   const sections = validateRouterSections(loaded);
 

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { loadRegistry, RegistryError } from "@dungle-scrubs/model-registry";
 import { Command, CommanderError } from "commander";
 import { type LoadedConfig, loadConfig } from "./config.js";
-import { describe as describeStep, parseDescribeQuery } from "./describe.js";
+import { checkDescribeText, describe as describeStep, parseDescribeQuery } from "./describe.js";
 import { RouterError } from "./error.js";
 import { listTasks, rank } from "./rank.js";
 import { validateRouterSections } from "./sections.js";
@@ -355,6 +355,10 @@ export async function runCli(argv: readonly string[], io: Partial<CliIo> = {}): 
         // every load, the same order the library's describe step uses.
         parseDescribeQuery(raw);
         const text = readDescribeFile(describeFile);
+        // The text gate runs before the registry and config loads: a blank
+        // description is query-invalid ahead of every load, the same order
+        // the library's describe step uses.
+        checkDescribeText(text);
         // Load the registry once and hand the loaded result to both the
         // describe step and rank: the task set offered to Jev and the
         // digest in the answer come from the same bytes.
