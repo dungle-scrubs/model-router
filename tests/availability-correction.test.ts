@@ -163,3 +163,22 @@ test("a null availability file ranks without availability", async () => {
     expect(answer.warnings.map((warning) => warning.code)).not.toContain("meter-no-reading");
   });
 });
+
+test("a stale percent is replaced while non-meter reasons survive", () => {
+  const floor = { code: "floor-not-met", message: "coding is below the floor" };
+  const first = applyAvailability(
+    [{ ...ROUTE, reasons: [floor] }],
+    [{ meter: "meter-a", status: "projected", percentRemaining: 60 }],
+  );
+  const result = applyAvailability(first.routes, [
+    { meter: "meter-a", status: "projected", percentRemaining: 12 },
+  ]);
+  expect(result.routes[0]).not.toBe(first.routes[0]);
+  expect(result.routes[0]?.reasons?.map((reason) => reason.code)).toEqual([
+    "floor-not-met",
+    "meter-projected",
+  ]);
+  expect(result.routes[0]?.reasons?.[0]).toBe(floor);
+  expect(result.routes[0]?.reasons?.[1]?.message).toContain("12%");
+  expect(result.routes[0]?.reasons?.[1]?.message).not.toContain("60%");
+});
