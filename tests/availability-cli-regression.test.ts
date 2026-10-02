@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { runAvailabilityCommand } from "../src/availability-cli.js";
+import { loadAvailabilityForCli, runAvailabilityCommand } from "../src/availability-cli.js";
 import { runCli } from "../src/cli-run.js";
 import {
   captureStream,
@@ -17,6 +17,11 @@ import {
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
   return { ...actual, spawnSync: vi.fn(actual.spawnSync) };
+});
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return { ...actual, readFileSync: vi.fn(actual.readFileSync) };
 });
 
 afterEach(() => vi.restoreAllMocks());
@@ -267,4 +272,63 @@ describe("ranking config snapshot", () => {
       }),
     );
   });
+});
+
+describe("availability source clock", () => {
+  test.each(["command", "file"])(
+    "%s uses one post-source instant for staleness and expiry",
+    async (source) => {
+      await withTempDir(async (dir) => {
+        const file = writeJson(dir, "avail.json", {});
+        const RealDate = Date;
+        const before = RealDate.parse("2026-10-01T12:00:00Z");
+        const after = RealDate.parse("2026-10-01T12:00:01Z");
+        const document = JSON.stringify({
+          format: 1,
+          generatedAt: "2026-10-01T12:00:01Z",
+          entries: [{ meter: "meter-a", status: "ok", resetsAt: "2026-10-01T12:00:01.100Z" }],
+        });
+        let returned = false;
+        let reads = 0;
+        const ClockDate = new Proxy(RealDate, {
+          construct(target, args) {
+            if (args.length !== 0) return Reflect.construct(target, args);
+            reads += 1;
+            return new RealDate(returned ? after + (reads - 1) * 200 : before);
+          },
+        });
+        const markReturned = () => {
+          returned = true;
+          return document;
+        };
+        if (source === "command") {
+          vi.mocked(spawnSync).mockImplementationOnce(() => ({
+            status: 0,
+            signal: null,
+            output: [],
+            stdout: markReturned(),
+            stderr: "",
+            pid: 0,
+          }));
+        } else {
+          vi.mocked(readFileSync).mockImplementationOnce(markReturned);
+        }
+        vi.stubGlobal("Date", ClockDate);
+        try {
+          const load = loadAvailabilityForCli({
+            command: source === "command",
+            config: { command: ["command-a"], maxAgeSeconds: 300, timeoutSeconds: 1 },
+            file: source === "file" ? file : undefined,
+          });
+          expect(load.note).toBeNull();
+          expect(load.entries).toEqual([
+            { meter: "meter-a", status: "ok", resetsAt: "2026-10-01T12:00:01.100Z" },
+          ]);
+          expect(reads).toBe(1);
+        } finally {
+          vi.unstubAllGlobals();
+        }
+      });
+    },
+  );
 });
