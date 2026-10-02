@@ -461,7 +461,7 @@ export async function askJev(
       if (delay > RETRY_DELAY_CAP_MS) {
         throw new JevError(
           "RATE_LIMITED",
-          `${ENDPOINT} returned HTTP ${lastStatus} and asked to wait ${delay} ms, above the ${RETRY_DELAY_CAP_MS} ms retry cap. This is a service failure, not a setup problem: the key resolved.`,
+          `${ENDPOINT} returned HTTP ${lastStatus} and the next retry would wait ${delay} ms, above the ${RETRY_DELAY_CAP_MS} ms retry cap. This is a service failure, not a setup problem: the key resolved.`,
           lastStatus,
         );
       }

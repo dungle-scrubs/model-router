@@ -623,7 +623,59 @@ describe("askJev retry and failure handling", () => {
         }),
       );
       expect(error.code).toBe("RATE_LIMITED");
-      expect(error.message).toContain("86400000");
+      expect(error.message).toBe(
+        `${ENDPOINT} returned HTTP 429 and the next retry would wait 86400000 ms, above the 30000 ms retry cap. This is a service failure, not a setup problem: the key resolved.`,
+      );
+      expect(calls).toBe(1);
+      expect(slept).toEqual([]);
+      fetchSpy.mockRestore();
+    }));
+
+  test("a Retry-After of exactly the cap retries and sleeps the capped delay", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const slept: number[] = [];
+      let attempt = 0;
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+        attempt++;
+        return attempt < 2
+          ? fail(429, { "Retry-After": "30" })
+          : ok({
+              model: "m",
+              answers: { urgent: { type: "noul", noul: 0.5 } },
+              usage: { input_tokens: 1, output_tokens: 1 },
+            });
+      });
+      const result = await askJev("state", QUESTIONS, {
+        sleep: (ms) => {
+          slept.push(ms);
+          return Promise.resolve();
+        },
+      });
+      expect(result.model).toBe("m");
+      expect(slept).toEqual([30000]);
+      fetchSpy.mockRestore();
+    }));
+
+  test("a Retry-After one second above the cap stops instead of sleeping", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const slept: number[] = [];
+      let calls = 0;
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+        calls++;
+        return fail(429, { "Retry-After": "31" });
+      });
+      const error = await rejected(
+        askJev("state", QUESTIONS, {
+          sleep: (ms) => {
+            slept.push(ms);
+            return Promise.resolve();
+          },
+        }),
+      );
+      expect(error.code).toBe("RATE_LIMITED");
+      expect(error.message).toBe(
+        `${ENDPOINT} returned HTTP 429 and the next retry would wait 31000 ms, above the 30000 ms retry cap. This is a service failure, not a setup problem: the key resolved.`,
+      );
       expect(calls).toBe(1);
       expect(slept).toEqual([]);
       fetchSpy.mockRestore();

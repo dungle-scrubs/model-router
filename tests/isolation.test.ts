@@ -66,7 +66,7 @@ describe("vitest isolation", () => {
     // setup installed. A stubbed spy replaces it per test and mockRestore
     // returns here.
     await expect(fetch("http://127.0.0.1:9/")).rejects.toThrow(
-      "tests make no network request; stub fetch in the test",
+      /^tests make no network request; stub fetch in the test$/,
     );
   });
 
@@ -74,7 +74,7 @@ describe("vitest isolation", () => {
     const spy = vi.spyOn(globalThis, "fetch");
     spy.mockRestore();
     await expect(fetch("http://127.0.0.1:9/")).rejects.toThrow(
-      "tests make no network request; stub fetch in the test",
+      /^tests make no network request; stub fetch in the test$/,
     );
   });
 
