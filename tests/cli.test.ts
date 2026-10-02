@@ -231,7 +231,7 @@ describe("registry failures exit 4", () => {
       expect(error).toEqual({
         code: "registry-missing",
         fix: "Create the file, or check an example by running model-registry check --registry examples/registry.json.",
-        message: `no registry file exists at ${JSON.stringify(missing)}`,
+        message: `no registry file exists at "${missing}"`,
         path: missing,
         problems: [],
       });

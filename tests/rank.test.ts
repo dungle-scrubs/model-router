@@ -507,6 +507,7 @@ describe("rank hard limits", () => {
       },
       { registry: loaded },
     );
+    expectValidAnswer(answer);
     const a1 = answer.removed.find((entry) => entry.label === "model-a@harness-x");
     expect(a1?.reason.code).toBe("family-excluded-by-query");
     const a2 = answer.removed.find((entry) => entry.label === "model-a@harness-y/provider-1");
