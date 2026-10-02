@@ -248,6 +248,26 @@ describe("askJev option checks", () => {
       fetchSpy.mockRestore();
     });
 
+  test("options are checked before the key is read: no key, bad option, no call", async () =>
+    withEnv({ TYPESAFE_API_KEY: undefined }, async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockRejectedValue(new Error("no request was expected"));
+      const error = await askJev("state", QUESTIONS, { maxAttempts: 0 }).then(
+        () => {
+          throw new Error("expected a rejection");
+        },
+        (caught: unknown) => caught,
+      );
+      expect(error, `expected a RangeError, got ${String(error)}`).toBeInstanceOf(RangeError);
+      expect(error).not.toBeInstanceOf(JevError);
+      expect((error as Error).message).toBe(
+        'askJev option "maxAttempts" must be a positive integer',
+      );
+      expect(fetchSpy).not.toHaveBeenCalled();
+      fetchSpy.mockRestore();
+    }));
+
   test("maxAttempts 0 is refused", () =>
     rejectsRangeError(
       () => askJev("state", QUESTIONS, { maxAttempts: 0 }),
