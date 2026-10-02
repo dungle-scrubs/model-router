@@ -500,6 +500,20 @@ describe("--describe flag handling", () => {
     }));
 });
 
+describe("--describe help", () => {
+  test("the --describe entry carries no collector default and the exit help names describe-private", async () => {
+    const result = await run(["--help"]);
+    expect(result.exitCode).toBe(0);
+    const describeLine = result
+      .stdout()
+      .split("\n")
+      .find((line) => line.includes("--describe <file>"));
+    expect(describeLine).toBeDefined();
+    expect(describeLine).not.toContain("(default:");
+    expect(result.stdout()).toContain("describe-private");
+  });
+});
+
 describe("without --describe nothing changes", () => {
   test("a rank call with no key set still succeeds: no Jev call is made", async () =>
     withEnv({ TYPESAFE_API_KEY: undefined }, async () => {

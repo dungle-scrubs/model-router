@@ -20,7 +20,7 @@ const EXIT_HELP = `
 
 Exit codes:
   0  an answer with at least one route (rank call); or tasks printed
-  2  invalid query, flag or subcommand (query-invalid)
+  2  invalid query, flag or subcommand (query-invalid), or the describe step refusing secret work (describe-private)
   3  an answer with no route; the answer is still printed
   4  the registry or its router section, or the config file, failed to load
   5  the describe step needed a Jev answer and the call failed (describe-failed)
@@ -157,8 +157,7 @@ function addDescribeOption(command: Command): Command {
   return command.option(
     "--describe <file>",
     "read the work description from <file> and fill the query's task and needs with a Jev call",
-    (value: string, previous: string[]) => [...previous, value],
-    [],
+    (value: string, previous: string[] | undefined) => [...(previous ?? []), value],
   );
 }
 
