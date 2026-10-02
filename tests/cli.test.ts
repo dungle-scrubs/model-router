@@ -509,6 +509,35 @@ describe("the check subcommand", () => {
     expect(error.problems).toEqual(rankProblems);
   });
 
+  test("check exits 4 on a malformed policy task without throwing", async () => {
+    // The registry schema lets a policy task carry a non-string foreign
+    // value. Validation must surface the malformed task as
+    // registry-sections-invalid (exit 4), not as internal-error (exit 1).
+    // A throw inside string coercion of the raw task value would land on
+    // the catch-all in runCli, which is exactly the regression this test
+    // guards: every malformed-task fixture exits 4, never 1.
+    await withTempDir(async (dir) => {
+      const path = writeJson(dir, "registry.json", {
+        format: 1,
+        ratings: { coding: "Writes and changes code to a spec." },
+        router: { rank: ["coding"] },
+        models: {},
+        policy: {
+          "policy-a": {
+            task: { toString: 7 },
+            stakes: ["normal"],
+            routes: [{ route: "model-a@harness-x" }],
+            reason: "r",
+          },
+        },
+      });
+      const result = run(["check", "--registry", path]);
+      expect(result.exitCode).toBe(4);
+      const error = errorEnvelope(result.stderr).error;
+      expect(error.code).toBe("registry-sections-invalid");
+    });
+  });
+
   test("a check parser failure exits 2 with the envelope instead of exiting", () => {
     const result = run(["check", "--matrix"]);
     expect(result.exitCode).toBe(2);

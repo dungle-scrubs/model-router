@@ -470,11 +470,16 @@ function validatePolicy(
         fix: `Add a task name to the policy "${policyName}".`,
       });
     } else if (typeof task !== "string" || !Object.hasOwn(tasksMap, task)) {
+      // The diagnostic must never interpolate the raw task value: the
+      // string check just failed, so formatting the unchecked value can
+      // throw (a foreign object with a non-callable toString). The fix
+      // names the policy and asks the caller to supply a string.
+      const taskRef = typeof task === "string" ? `"${task}"` : "the policy task";
       problems.push({
         code: "policy-task-unknown",
         field: pathJoin(policyField, "task"),
-        message: `the task "${task}" is not declared in the tasks section`,
-        fix: `Add "${task}" to the tasks section, or correct the policy "${policyName}" task.`,
+        message: `the task ${taskRef} is not declared in the tasks section`,
+        fix: `Add a declared task name to the policy "${policyName}", or correct the policy.`,
       });
     }
 

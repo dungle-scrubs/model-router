@@ -658,9 +658,31 @@ describe("validateRouterSections tasks and policy", () => {
     expect(error.problems[0]).toEqual({
       code: "policy-task-unknown",
       field: '$["policy"]["policy-a"]["task"]',
-      fix: 'Add "task-z" to the tasks section, or correct the policy "policy-a" task.',
+      fix: 'Add a declared task name to the policy "policy-a", or correct the policy.',
       message: 'the task "task-z" is not declared in the tasks section',
     });
+  });
+
+  test("a policy task that fails its string check still surfaces registry-sections-invalid", () => {
+    // The task value is `{toString: 7}`: it is non-null foreign JSON the
+    // registry schema permits, the validator detects the non-string task,
+    // and the diagnostic must not interpolate that unchecked object. A
+    // throw inside string coercion would land on `internal-error`, exit 1,
+    // which is what the test guards: every check call returns
+    // registry-sections-invalid with the policy-task-unknown code.
+    const error = withPolicy({
+      "policy-a": {
+        task: { toString: 7 },
+        stakes: ["normal"],
+        routes: [{ route: "model-a@harness-x" }],
+        reason: "r",
+      },
+    });
+    expect(error.code).toBe("registry-sections-invalid");
+    expect(error.problems[0]?.code).toBe("policy-task-unknown");
+    // The diagnostic names the field, never the raw object.
+    expect(error.problems[0]?.field).toBe('$["policy"]["policy-a"]["task"]');
+    expect(error.problems[0]?.message).not.toContain("undefined");
   });
 
   test("a policy missing stakes is invalid", async () => {
