@@ -55,7 +55,7 @@ A named task whose name is in `registry.tasks` resolves the query against the ta
 
 - `minimums` replaces the task's floor for each rating it names, at the query's stakes.
 - `needs` adds to the task's needs.
-- `effort` replaces the task's level.
+- `effort` is parsed and echoed on the applied query; this release resolves no effort levels, so neither the task's level nor the query's reaches a route.
 
 The order list is the task's `rank`. A misspelled task in the registry falls through to `router.rank` and adds the `task-unranked` warning.
 
