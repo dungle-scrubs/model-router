@@ -273,4 +273,64 @@ describe("answer.schema.json", () => {
     expect(validate({ ...baseAnswer, routes: [{ ...baseRoute, extra: 1 }] })).toBe(true);
     expect(validate({ ...baseAnswer, query: { ...appliedQuery, extra: true } })).toBe(true);
   });
+
+  const describeBlock = {
+    model: "jev-1.13.0",
+    taskGate: 0.85,
+    capabilityThreshold: 0.5,
+    task: {
+      source: "jev",
+      confidence: 0.9,
+      candidates: [
+        { task: "task-a", probability: 0.9 },
+        { task: "task-b", probability: 0.1 },
+      ],
+    },
+    needsAdded: [{ capability: "browser", probability: 0.8 }],
+    usage: { input_tokens: 500, output_tokens: 30 },
+  } as const;
+
+  test("accepts a describe block with every field", () => {
+    expect(validate({ ...baseAnswer, describe: describeBlock })).toBe(true);
+    expect(
+      validate({
+        ...baseAnswer,
+        describe: {
+          ...describeBlock,
+          model: null,
+          usage: null,
+          task: { source: "caller", confidence: null, candidates: [] },
+          needsAdded: [],
+        },
+      }),
+    ).toBe(true);
+  });
+
+  test("rejects a describe block with a bad source, gate, candidate or usage", () => {
+    expect(
+      validate({
+        ...baseAnswer,
+        describe: { ...describeBlock, task: { ...describeBlock.task, source: "guess" } },
+      }),
+    ).toBe(false);
+    expect(validate({ ...baseAnswer, describe: { ...describeBlock, taskGate: 1.5 } })).toBe(false);
+    expect(
+      validate({
+        ...baseAnswer,
+        describe: {
+          ...describeBlock,
+          task: { ...describeBlock.task, candidates: [{ task: "task-a" }] },
+        },
+      }),
+    ).toBe(false);
+    expect(
+      validate({ ...baseAnswer, describe: { ...describeBlock, usage: { input_tokens: 1 } } }),
+    ).toBe(false);
+    expect(
+      validate({
+        ...baseAnswer,
+        describe: { ...describeBlock, needsAdded: [{ capability: "browser" }] },
+      }),
+    ).toBe(false);
+  });
 });
