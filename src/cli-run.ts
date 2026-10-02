@@ -356,15 +356,18 @@ export async function runCli(argv: readonly string[], io: Partial<CliIo> = {}): 
         // every load, the same order the library's describe step uses.
         parseDescribeQuery(raw);
         const text = readDescribeFile(describeFile);
-        const rankOptions: Parameters<typeof rank>[1] =
-          explicitRegistry === ""
-            ? { config: configOptionFor(explicitConfig) }
-            : { registry: explicitRegistry, config: configOptionFor(explicitConfig) };
-        // The describe step reads the description file, fills the query's
-        // task and needs through a Jev call, then ranks the filled query
-        // and merges the describe block into the answer. The describe
-        // step's warnings lead the answer's warnings list: they happened
-        // first.
+        // Load the registry once and hand the loaded result to both the
+        // describe step and rank: the task set offered to Jev and the
+        // digest in the answer come from the same bytes.
+        const loadedRegistry = loadRegistryOption(explicitRegistry);
+        const rankOptions: Parameters<typeof rank>[1] = {
+          registry: loadedRegistry,
+          config: configOptionFor(explicitConfig),
+        };
+        // The describe step fills the query's task and needs through a Jev
+        // call, then ranks the filled query and merges the describe block
+        // into the answer. The describe step's warnings lead the answer's
+        // warnings list: they happened first.
         const described = await describeStep(text, raw, rankOptions);
         const answer = rank(described.query, rankOptions);
         const merged = {

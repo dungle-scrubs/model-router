@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import { runCli } from "../src/cli-run.js";
@@ -6,6 +6,7 @@ import {
   captureStream,
   expectValidAnswer,
   fixturePath,
+  loadLoaded,
   runBuiltCli,
   withEnv,
   withTempDir,
@@ -517,6 +518,41 @@ describe("without --describe nothing changes", () => {
     };
     expect(Object.keys(raw.router.questions).sort()).toEqual(["browser", "repo-access"]);
   });
+});
+
+describe("--describe registry loading", () => {
+  test("the registry is loaded once: a rewrite during the Jev call leaves the digest at the original bytes", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      await withTempDir(async (dir) => {
+        const registryCopy = join(dir, "registry.json");
+        copyFileSync(FIXTURE, registryCopy);
+        const original = loadLoaded(registryCopy);
+        const file = join(dir, "work.txt");
+        writeFileSync(file, "some work");
+        const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+          // Rewrite the registry while the Jev answer is being built: the
+          // answer must still carry the digest of the bytes that were
+          // loaded before the call.
+          appendFileSync(registryCopy, "\n");
+          return new Response(JSON.stringify(happyBody), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        });
+        const result = await run([
+          "--describe",
+          file,
+          "--registry",
+          registryCopy,
+          '{"privacy":"normal"}',
+        ]);
+        expect(result.exitCode).toBe(0);
+        const answer = JSON.parse(result.stdout());
+        expectValidAnswer(answer);
+        expect(answer.registryDigest).toBe(original.digest);
+        fetchSpy.mockRestore();
+      });
+    }));
 });
 
 describe("--describe warning order", () => {
