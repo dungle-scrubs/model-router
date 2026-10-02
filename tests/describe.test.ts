@@ -58,9 +58,9 @@ function stubFetch(
   return { seen: () => seen, spy };
 }
 
-async function catchRouterError(run: () => Promise<unknown>): Promise<RouterError> {
+async function catchRouterError(promise: Promise<unknown>): Promise<RouterError> {
   try {
-    await run();
+    await promise;
   } catch (error) {
     expect(error, `expected a RouterError, got ${String(error)}`).toBeInstanceOf(RouterError);
     return error as RouterError;

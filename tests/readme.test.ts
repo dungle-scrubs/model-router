@@ -31,7 +31,7 @@ describe("README problem codes", () => {
   test("documents every RouterError code the types union allows", () => {
     const source = readFileSync(join(repoRoot, "src", "types.ts"), "utf8");
     const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
-    const union = source.match(/export type RouterErrorCode = ([^;]+);/)?.[1] ?? "";
+    const union = source.match(/export type RouterErrorCode\s*=\s*([^;]+);/)?.[1] ?? "";
     const emitted = [...union.matchAll(/"([a-z-]+)"/g)].map((match) => match[1]);
     expect(emitted.length).toBeGreaterThanOrEqual(3);
     for (const code of emitted) {

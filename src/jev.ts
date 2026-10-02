@@ -27,12 +27,12 @@ export type JevErrorCode =
   | "BAD_RESPONSE";
 
 /** The one error the Jev client throws. `code` is stable; `status` carries
- * the HTTP status when one arrived. */
+ * the HTTP status when one arrived, else undefined. */
 export class JevError extends Error {
   readonly code: JevErrorCode;
-  readonly status?: number;
+  readonly status: number | undefined;
 
-  constructor(code: JevErrorCode, message: string, status?: number) {
+  constructor(code: JevErrorCode, message: string, status: number | undefined = undefined) {
     super(message);
     this.name = "JevError";
     this.code = code;

@@ -88,7 +88,7 @@ export type AnswerRoute = {
 export type Answer = {
   readonly availabilityNote: Coded | null;
   readonly contract: 1;
-  readonly describe: null;
+  readonly describe: DescribeBlock | null;
   readonly pin: PinReport | null;
   readonly query: AppliedQuery;
   readonly registryDigest: RegistryDigest;
@@ -98,7 +98,46 @@ export type Answer = {
   readonly warnings: readonly Coded[];
 };
 
-export type RouterErrorCode = "query-invalid" | "registry-sections-invalid" | "config-invalid";
+/** One candidate task from Jev's choice distribution. */
+export interface DescribeTaskCandidate {
+  readonly task: string;
+  readonly probability: number;
+}
+
+/** Where the query's task came from, what Jev thought, and the candidates.
+ * `confidence` and `candidates` are null and empty when no task question was
+ * asked: the caller named a task or stated minimums. */
+export interface DescribeTaskReport {
+  readonly source: "caller" | "jev" | "inline-need";
+  readonly confidence: number | null;
+  readonly candidates: readonly DescribeTaskCandidate[];
+}
+
+/** One capability the describe step added to the query's needs, with the
+ * probability that carried it over the threshold. */
+export interface DescribeNeedAdded {
+  readonly capability: string;
+  readonly probability: number;
+}
+
+/** The describe block: what answered, the gates applied, the task decision,
+ * the added capabilities and Jev's token counts. `model` and `usage` are
+ * null when Jev gave no answer. */
+export interface DescribeBlock {
+  readonly model: string | null;
+  readonly taskGate: number;
+  readonly capabilityThreshold: number;
+  readonly task: DescribeTaskReport;
+  readonly needsAdded: readonly DescribeNeedAdded[];
+  readonly usage: { readonly input_tokens: number; readonly output_tokens: number } | null;
+}
+
+export type RouterErrorCode =
+  | "query-invalid"
+  | "registry-sections-invalid"
+  | "config-invalid"
+  | "describe-private"
+  | "describe-failed";
 
 export interface RouterProblem {
   readonly code: string;
@@ -173,6 +212,22 @@ export interface TaskSummary {
 /** The router section shape from the registry file, after validation. */
 export interface RouterSections {
   readonly policies: Readonly<Record<string, PolicyEntry>>;
+  readonly questions: Readonly<Record<string, string>>;
   readonly rank: readonly string[];
   readonly tasks: Readonly<Record<string, TaskEntry>>;
+}
+
+/** Options the describe entry point accepts: the same registry and config
+ * forms rank accepts. */
+export interface DescribeOptions {
+  readonly config?: string | RouterConfigInput;
+  readonly registry?: string | LoadedRegistry;
+}
+
+/** The describe step's result: the filled query, the describe block, and
+ * the warnings the caller must merge into the answer's warnings list. */
+export interface DescribeResult {
+  readonly query: Query;
+  readonly describe: DescribeBlock;
+  readonly warnings: readonly Coded[];
 }

@@ -43,6 +43,7 @@ export function validateRouterSections(loaded: LoadedRegistry): RouterSections {
   const section = loaded.sections.router;
   const problems: RouterProblem[] = [];
   const rank: string[] = [];
+  const questionsMap: Record<string, string> = nullRecord<string>();
 
   if (section === undefined) {
     problems.push({
@@ -127,6 +128,8 @@ export function validateRouterSections(loaded: LoadedRegistry): RouterSections {
               message: `the question for "${capability}" must be a string`,
               fix: `Set the question for "${capability}" to a yes/no question sentence.`,
             });
+          } else {
+            questionsMap[capability] = question;
           }
         }
       }
@@ -155,7 +158,7 @@ export function validateRouterSections(loaded: LoadedRegistry): RouterSections {
     throw sectionsError(first, rest);
   }
 
-  return { policies: policiesMap, rank, tasks: tasksMap };
+  return { policies: policiesMap, questions: questionsMap, rank, tasks: tasksMap };
 }
 
 type TasksMap = RouterSections["tasks"];

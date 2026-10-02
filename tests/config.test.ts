@@ -35,6 +35,7 @@ describe("validateConfigObjectInput", () => {
 
   test("an explicit default and ceiling apply", () => {
     expect(validateConfigObjectInput({ effort: { ceiling: "high", default: "low" } })).toEqual({
+      ...defaultConfig(),
       effort: { ceiling: "high", default: "low" },
     });
   });
