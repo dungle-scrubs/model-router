@@ -590,6 +590,8 @@ function validatePolicy(
             if (model !== undefined) {
               const modelMax = model.maxEffort;
               const modelFixed = model.fixedEffort;
+              // Independent checks: an effort can differ from fixedEffort
+              // and exceed maxEffort at once, and both are reported.
               if (modelFixed !== undefined && policyEffort !== modelFixed) {
                 problems.push({
                   code: "policy-route-effort-fixed-mismatch",
@@ -597,7 +599,8 @@ function validatePolicy(
                   message: `the policy "${policyName}" route "${routeLabel}" effort "${policyEffort}" differs from the model's fixedEffort "${modelFixed}"`,
                   fix: `Remove the policy route's effort, or set it to "${modelFixed}".`,
                 });
-              } else if (modelMax !== undefined && exceedsLadder(policyEffort, modelMax)) {
+              }
+              if (modelMax !== undefined && exceedsLadder(policyEffort, modelMax)) {
                 problems.push({
                   code: "policy-route-effort-above-max",
                   field: pathJoin(field, "effort"),

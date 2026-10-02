@@ -542,6 +542,52 @@ describe("validateRouterSections tasks and policy", () => {
     });
   });
 
+  test("a policy effort that differs from fixedEffort and exceeds maxEffort reports both", async () => {
+    const error = withPolicy(
+      {
+        "policy-a": {
+          task: "task-a",
+          stakes: ["normal"],
+          routes: [{ route: "model-a@harness-x", effort: "high" }],
+          reason: "r",
+        },
+      },
+      {
+        models: {
+          "model-a": {
+            family: "family-a",
+            fixedEffort: "low",
+            maxEffort: "medium",
+            routes: [{ harness: "harness-x", modelId: "model-id-a", hosted: true }],
+          },
+        },
+        tasks: {
+          "task-a": {
+            description: "Code.",
+            minimums: { low: { coding: 6 }, normal: { coding: 7 }, high: { coding: 8 } },
+            rank: ["coding"],
+          },
+        },
+      },
+    );
+    expect(error.problems).toEqual([
+      {
+        code: "policy-route-effort-fixed-mismatch",
+        field: '$["policy"]["policy-a"]["routes"][0]["effort"]',
+        fix: 'Remove the policy route\'s effort, or set it to "low".',
+        message:
+          'the policy "policy-a" route "model-a@harness-x" effort "high" differs from the model\'s fixedEffort "low"',
+      },
+      {
+        code: "policy-route-effort-above-max",
+        field: '$["policy"]["policy-a"]["routes"][0]["effort"]',
+        fix: 'Lower the policy route\'s effort to "medium" or below, or remove it.',
+        message:
+          'the policy "policy-a" route "model-a@harness-x" effort "high" is above the model\'s maxEffort "medium"',
+      },
+    ]);
+  });
+
   test("a non-object policy section is invalid", async () => {
     const error = withPolicy("oops");
     expect(error.problems[0]).toEqual({
