@@ -236,6 +236,8 @@ describe("parseAvailabilityDocument", () => {
     const result = parseAvailabilityDocument(7, { maxAgeSeconds: 300 });
     expect(result.entries).toEqual([]);
     expect(result.note?.code).toBe("availability-reading-invalid");
+    expect(result.note?.message).toBe("the availability document must be a JSON object");
+    expect(result.note?.fix).toContain("Replace the document with an object");
   });
 
   test("rejects an unknown format with availability-reading-invalid", () => {
@@ -244,6 +246,27 @@ describe("parseAvailabilityDocument", () => {
     });
     expect(result.entries).toEqual([]);
     expect(result.note?.code).toBe("availability-reading-invalid");
+    expect(result.note?.message).toBe('the availability document "format" is not 1');
+    expect(result.note?.fix).toBe("Use a document at format version 1.");
+  });
+
+  test("rejects a missing generatedAt string with availability-reading-invalid", () => {
+    const result = parseAvailabilityDocument({ format: 1, entries: [] }, { maxAgeSeconds: 300 });
+    expect(result.entries).toEqual([]);
+    expect(result.note?.code).toBe("availability-reading-invalid");
+    expect(result.note?.message).toBe('the availability document has no "generatedAt" string');
+    expect(result.note?.fix).toContain('Add "generatedAt"');
+  });
+
+  test("rejects a non-array entries field with availability-reading-invalid", () => {
+    const result = parseAvailabilityDocument(
+      { format: 1, generatedAt: new Date().toISOString(), entries: "no" },
+      { maxAgeSeconds: 300 },
+    );
+    expect(result.entries).toEqual([]);
+    expect(result.note?.code).toBe("availability-reading-invalid");
+    expect(result.note?.message).toBe('the availability document "entries" is not an array');
+    expect(result.note?.fix).toContain('Replace "entries" with an array');
   });
 
   test("rejects an unparseable generatedAt with availability-reading-invalid", () => {
@@ -252,6 +275,9 @@ describe("parseAvailabilityDocument", () => {
     });
     expect(result.entries).toEqual([]);
     expect(result.note?.code).toBe("availability-reading-invalid");
+    expect(result.note?.message).toBe(
+      'the availability document "generatedAt" is not a parseable date',
+    );
   });
 
   test("flags an old document as stale", () => {
@@ -261,6 +287,8 @@ describe("parseAvailabilityDocument", () => {
     });
     expect(result.entries).toEqual([]);
     expect(result.note?.code).toBe("availability-reading-stale");
+    expect(result.note?.message).toContain("older than 60 seconds");
+    expect(result.note?.fix).toContain("Regenerate the document within 60 seconds");
   });
 
   test("flags a future generatedAt as stale", () => {
@@ -270,6 +298,7 @@ describe("parseAvailabilityDocument", () => {
     });
     expect(result.entries).toEqual([]);
     expect(result.note?.code).toBe("availability-reading-stale");
+    expect(result.note?.message).toBe("the availability document has a generatedAt in the future");
   });
 });
 
@@ -288,6 +317,7 @@ describe("readAvailabilityFile", () => {
       const result = readAvailabilityFile(join(dir, "missing.json"), { maxAgeSeconds: 300 });
       expect(result.entries).toEqual([]);
       expect(result.note?.code).toBe("availability-file-unreadable");
+      expect(result.note?.message).toContain("does not exist");
     });
   });
 
@@ -298,6 +328,7 @@ describe("readAvailabilityFile", () => {
       const result = readAvailabilityFile(path, { maxAgeSeconds: 300 });
       expect(result.entries).toEqual([]);
       expect(result.note?.code).toBe("availability-reading-invalid");
+      expect(result.note?.message).toContain("is not valid JSON");
     });
   });
 });
@@ -333,6 +364,7 @@ describe("runAvailabilityCommand", () => {
     });
     expect(result.entries).toEqual([]);
     expect(result.note?.code).toBe("availability-command-failed");
+    expect(result.note?.message).toContain("exited with code 1");
   });
 
   test("a command that exceeds the timeout is killed with availability-command-failed", () => {
@@ -342,7 +374,7 @@ describe("runAvailabilityCommand", () => {
     );
     expect(result.entries).toEqual([]);
     expect(result.note?.code).toBe("availability-command-failed");
-    expect(result.note?.message).toContain("killed");
+    expect(result.note?.message).toContain("killed after 1 seconds");
   });
 
   test("a command that emits bad JSON fails with availability-reading-invalid", () => {
@@ -352,12 +384,15 @@ describe("runAvailabilityCommand", () => {
     });
     expect(result.entries).toEqual([]);
     expect(result.note?.code).toBe("availability-reading-invalid");
+    expect(result.note?.message).toBe("the availability command output is not valid JSON");
   });
 
   test("an empty command fails with availability-command-missing", () => {
     const result = runAvailabilityCommand([], { maxAgeSeconds: 300, timeoutSeconds: 10 });
     expect(result.entries).toEqual([]);
     expect(result.note?.code).toBe("availability-command-missing");
+    expect(result.note?.message).toBe("the availability command was empty");
+    expect(result.note?.fix).toContain("non-empty argv array");
   });
 });
 
@@ -372,6 +407,22 @@ describe("loadAvailabilityForCli", () => {
     const result = loadAvailabilityForCli({ command: true, config: undefined, file: undefined });
     expect(result.entries).toEqual([]);
     expect(result.note?.code).toBe("availability-command-missing");
+    expect(result.note?.message).toContain(
+      "--availability was given but availability.command is not set",
+    );
+  });
+
+  test("--availability-file with a config that has no command reads the file", async () => {
+    await withTempDir(async (dir) => {
+      const path = writeJson(dir, "avail.json", availabilityDoc());
+      const result = loadAvailabilityForCli({
+        command: false,
+        config: { maxAgeSeconds: 300, timeoutSeconds: 10 },
+        file: path,
+      });
+      expect(result.entries).toHaveLength(1);
+      expect(result.note).toBeNull();
+    });
   });
 });
 
