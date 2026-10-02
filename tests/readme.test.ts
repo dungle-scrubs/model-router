@@ -1,26 +1,29 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { repoRoot } from "./helpers.js";
+import { repoRoot, withTempDir } from "./helpers.js";
 
 const SRC_DIR = join(repoRoot, "src");
 
-function sourceCodes(): readonly string[] {
+function sourceCodes(dir = SRC_DIR): readonly string[] {
   const seen = new Set<string>();
-  for (const file of readdirSync(SRC_DIR)) {
-    if (!file.endsWith(".ts")) continue;
-    const source = readFileSync(join(SRC_DIR, file), "utf8");
-    for (const match of source.matchAll(/\bcode: ?"([a-z][a-z0-9-]+)"/g)) {
+  for (const file of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, file.name);
+    if (file.isDirectory()) {
+      for (const code of sourceCodes(path)) seen.add(code);
+      continue;
+    }
+    if (!file.name.endsWith(".ts")) continue;
+    const source = readFileSync(path, "utf8");
+    for (const match of source.matchAll(/\b(?:code|reason)\s*:\s*["'`]([a-z][a-z0-9-]+)["'`]/g)) {
       seen.add(match[1] as string);
     }
-    // First argument of `note(...)`, with the opening paren followed by
-    // whitespace and a string literal (the multiline form has the string
-    // on the next line, indented).
-    for (const match of source.matchAll(/\bnote\([\s\n]+"([a-z][a-z0-9-]+)"/g)) {
+    for (const match of source.matchAll(
+      /\b(?:note|buildReason)\(\s*["'`]([a-z][a-z0-9-]+)["'`]/g,
+    )) {
       seen.add(match[1] as string);
     }
   }
-  seen.add("meter-exhausted");
   return [...seen].sort();
 }
 
@@ -49,12 +52,30 @@ describe("README problem codes", () => {
     }
   });
 
-  test("documents every code emitted across src/*.ts plus the pin reason", () => {
+  test("collects literal codes, reasons and builder calls recursively", async () => {
+    await withTempDir(async (dir) => {
+      const nested = join(dir, "nested");
+      mkdirSync(nested);
+      writeFileSync(
+        join(nested, "example.ts"),
+        'buildReason("reason-a");\nbuildReason(\n "reason-b");\nnote("note-a");\nconst value = { reason: "reason-c", code: "code-a" };\n',
+      );
+      expect(sourceCodes(dir)).toEqual(["code-a", "note-a", "reason-a", "reason-b", "reason-c"]);
+    });
+  });
+
+  test("documents every code emitted across src recursively", () => {
     const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
     const emitted = sourceCodes();
     expect(emitted.length).toBeGreaterThanOrEqual(20);
     for (const code of emitted) {
       expect(readme, `${code} is missing from README.md`).toContain(code);
+      if (code.startsWith("meter-")) {
+        expect(
+          readme.split("\n").some((line) => line.startsWith(`| \`${code}\` |`)),
+          `${code} is missing its README row`,
+        ).toBe(true);
+      }
     }
   });
 
