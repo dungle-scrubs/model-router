@@ -95,7 +95,7 @@ When the query names a route label, the pin is placed ahead of the policy and ra
 The router reads its `config.json` for `effort.ceiling`, `effort.default` and the `describe` group. The path order is `--config <path>`, `MODEL_ROUTER_CONFIG`, then `$XDG_CONFIG_HOME/model-router/config.json`. When no file is at the XDG path, every default applies and no warning is added. An explicit path that does not exist, or an invalid file, is `config-invalid`. Every key is OPTIONAL, and the schema is closed: an unknown key is `config-invalid`; `$schema` is allowed for editor support. A default above the ceiling is `config-invalid`. The file holds no registry path and no Jev key; the key comes from `TYPESAFE_API_KEY`.
 
 | Key | Default | Rule |
-|---|---|
+|---|---|---|
 | `effort.ceiling` | `xhigh` | a ladder level |
 | `effort.default` | `medium` | a ladder level, not above `effort.ceiling` |
 | `describe.taskGate` | `0.85` | a probability in `[0, 1]`; Jev's task is taken at or above it |

@@ -66,4 +66,26 @@ describe("README problem codes", () => {
     expect(readme).not.toMatch(/Inline `minimums`[^.]*arrive in later issues/);
     expect(readme).toContain("The policy's routes come before the ranked routes");
   });
+
+  test("every table's delimiter row has as many cells as its header", () => {
+    const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
+    const lines = readme.split("\n");
+    const cellCount = (row: string): number => (row.match(/\|/g) ?? []).length;
+    for (let index = 0; index < lines.length; index++) {
+      const line = lines[index] ?? "";
+      if (!line.trimStart().startsWith("|")) continue;
+      const previous = index > 0 ? (lines[index - 1] ?? "") : "";
+      if (previous.trimStart().startsWith("|")) continue;
+      // A new table block: the next line must be the delimiter row, and it
+      // must carry one cell per header cell or GFM renders plain text.
+      const header = line;
+      const delimiter = lines[index + 1] ?? "";
+      expect(delimiter, `table starting at line ${index + 1}: ${header}`).toMatch(
+        /^\s*\|(\s*:?-{3,}:?\s*\|)+\s*$/,
+      );
+      expect(cellCount(delimiter), `table starting at line ${index + 1}: ${header}`).toBe(
+        cellCount(header),
+      );
+    }
+  });
 });
