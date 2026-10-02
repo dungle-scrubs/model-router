@@ -210,6 +210,26 @@ describe("rank under spec: settled", () => {
     );
   });
 
+  test("a spec: open query with no matching policy warns policy-none", () => {
+    // Against a registry with no policy section at all, the stated spec
+    // names no matching policy, so the warning fires for open too.
+    const answer = rank({ minimums: {}, spec: "open" }, { registry: loadLoaded(EMPTY) });
+    expectValidAnswer(answer);
+    expect(answer.warnings.map((entry) => entry.code)).toEqual(["policy-none"]);
+    expect(answer.warnings[0]?.message).toBe(
+      'the spec "open" matched no policy; normal ranking was used',
+    );
+  });
+
+  test("a query that does not state spec stays silent when no policy matches", () => {
+    const loaded = tasks();
+    // task-b has no policy, but the query leaves spec unstated: the applied
+    // spec defaults to open without being asked for, so no warning.
+    const answer = rank({ task: "task-b", stakes: "normal" }, { registry: loaded });
+    expectValidAnswer(answer);
+    expect(answer.warnings).toEqual([]);
+  });
+
   test("a spec: settled query takes a policy without spec when no settled policy matches", () => {
     const loaded = tasks();
     // Keep only the unconditional policy-a: a policy without spec applies

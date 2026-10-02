@@ -45,7 +45,7 @@ The answer is one JSON line on stdout, also when no route survives. `model-route
 | `prefer` | `cost`, `speed` | `cost` | how clearing routes are ordered |
 | `privacy` | `normal`, `secret` | `normal` | `secret` keeps only `privacyEligible` routes |
 | `excludeFamilies` | list of strings | `[]` | families removed as a hard limit |
-| `spec` | `open`, `settled` | `open` | `settled` matches a policy whose `spec` is `settled` (or unset); an unset policy `spec` matches any query, and a policy's `spec` accepts only `settled` |
+| `spec` | `open`, `settled` | `open` | `settled` matches a policy whose `spec` is `settled` (or unset); an unset policy `spec` matches any query, and a policy's `spec` accepts only `settled`. A query that states `spec` and matches no policy warns `policy-none`; a query without `spec` stays silent |
 
 A query must carry `task` or `minimums` (a `pin` alone is invalid), and input is strict: a field the contract does not define is `query-invalid`. A check against registry content is a warning, never a failure: a minimum naming an undeclared rating makes every route count as below that floor, a need naming an undeclared capability removes every route lacking it, and an unknown family excludes nothing.
 
@@ -92,7 +92,7 @@ The RFC names the error codes; these warning and reason codes are this package's
 | `family-unknown` | warnings | an excluded family is not in the registry |
 | `effort-unapplied` | warnings | the query names an effort without a task; this release does not resolve effort levels |
 | `pin-unapplied` | warnings | the query names a pin this release does not place |
-| `policy-none` | warnings | `spec: settled` found no matching policy |
+| `policy-none` | warnings | the query stated a `spec` (`open` or `settled`) and no policy matched |
 | `local-or-nothing` | warnings | `privacy: secret` removed every route; the work runs locally or not at all |
 | `policy-route-removed` | warnings | a hard limit removed a route the matching policy names; the warning names the policy and the route |
 | `privacy-secret-not-eligible` | removed reasons | the route is not `privacyEligible` under `privacy: secret` |

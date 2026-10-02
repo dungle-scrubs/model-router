@@ -427,10 +427,12 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
   }
 
   const policyMatch = matchPolicy(sections, applied);
-  if (applied.spec === "settled" && policyMatch === undefined) {
+  // The warning fires only when the caller stated a spec: an unstated spec
+  // defaults to open without asking for a policy, so it stays silent.
+  if (parsed.spec !== undefined && policyMatch === undefined) {
     warnings.push({
       code: "policy-none",
-      message: 'the spec "settled" matched no policy; normal ranking was used',
+      message: `the spec "${applied.spec}" matched no policy; normal ranking was used`,
       fix: "Remove spec from the query, or add a policy matching the task, stakes and spec.",
     });
   }
