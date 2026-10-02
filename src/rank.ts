@@ -72,6 +72,7 @@ interface FlatRoute {
   readonly provider: string | undefined;
   readonly ratings: Readonly<Record<string, number>>;
   readonly route: Route;
+  readonly routeIndex: number;
   readonly responseSeconds: number | undefined;
 }
 
@@ -168,12 +169,18 @@ function byResponseTime(a: FlatRoute, b: FlatRoute): number {
   return 0;
 }
 
+/** The final tie-breaks: the route's place in its model, then file order. */
+function byRouteOrder(a: FlatRoute, b: FlatRoute): number {
+  if (a.routeIndex !== b.routeIndex) return a.routeIndex - b.routeIndex;
+  return a.order - b.order;
+}
+
 function compareCapabilityFirst(a: FlatRoute, b: FlatRoute, rank: readonly string[]): number {
   const byRank = byRankRatings(a, b, rank);
   if (byRank !== 0) return byRank;
   const byCost = byCostDescending(a, b);
   if (byCost !== 0) return byCost;
-  return a.order - b.order;
+  return byRouteOrder(a, b);
 }
 
 function compareCostFirst(a: FlatRoute, b: FlatRoute, rank: readonly string[]): number {
@@ -181,7 +188,7 @@ function compareCostFirst(a: FlatRoute, b: FlatRoute, rank: readonly string[]): 
   if (byCost !== 0) return byCost;
   const byRank = byRankRatings(a, b, rank);
   if (byRank !== 0) return byRank;
-  return a.order - b.order;
+  return byRouteOrder(a, b);
 }
 
 function availabilityOf(route: Route): AvailabilityValue {
@@ -300,7 +307,7 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
   const surviving: FlatRoute[] = [];
   let order = 0;
   for (const [modelKey, model] of Object.entries(loaded.registry.models)) {
-    for (const route of model.routes) {
+    for (const [routeIndex, route] of model.routes.entries()) {
       const label = buildRouteLabel(modelKey, route);
       const rejection = rejectByHardLimit(
         route,
@@ -327,6 +334,7 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
         ratings: (model.ratings ?? {}) as Readonly<Record<string, number>>,
         responseSeconds: route.responseSeconds,
         route,
+        routeIndex,
       });
     }
   }

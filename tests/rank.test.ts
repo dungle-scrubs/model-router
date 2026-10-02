@@ -316,6 +316,42 @@ describe("rank tie-breaking on the ties fixture", () => {
   });
 });
 
+describe("rank tie-breaking on the model's route order", () => {
+  const ROUTES = fixturePath("routes.json");
+  const tiedOrder = ["model-a@harness-x", "model-b@harness-z", "model-a@harness-y"];
+
+  test("routes tied on ratings and cost order by the route's place in its model, then file order", () => {
+    const loaded = loadRegistry({ path: ROUTES });
+    const answer = rank({ minimums: { coding: 5 } }, { registry: loaded });
+    expectValidAnswer(answer);
+    expect(labels(answer)).toEqual(tiedOrder);
+  });
+
+  test("the same route order decides ties under an unknown task", () => {
+    const loaded = loadRegistry({ path: ROUTES });
+    const answer = rank({ task: "ghost" }, { registry: loaded });
+    expectValidAnswer(answer);
+    expect(labels(answer)).toEqual(tiedOrder);
+  });
+
+  test("routes below a floor keep the same route-order tie-break", () => {
+    const loaded = loadRegistry({ path: ROUTES });
+    const answer = rank({ minimums: { coding: 9 } }, { registry: loaded });
+    expectValidAnswer(answer);
+    for (const route of answer.routes) {
+      expect(route.floor).toBe("below");
+    }
+    expect(labels(answer)).toEqual(tiedOrder);
+  });
+
+  test("an equal response time under prefer: speed falls through to the same route order", () => {
+    const loaded = loadRegistry({ path: ROUTES });
+    const answer = rank({ minimums: { coding: 5 }, prefer: "speed" }, { registry: loaded });
+    expectValidAnswer(answer);
+    expect(labels(answer)).toEqual(tiedOrder);
+  });
+});
+
 describe("rank hard limits", () => {
   test("privacy: secret keeps only privacyEligible routes", () => {
     const loaded = full();
