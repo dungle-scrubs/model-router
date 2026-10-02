@@ -14,6 +14,12 @@ function pathJoin(parent: string, child: string): string {
   return `${parent}[${JSON.stringify(child)}]`;
 }
 
+/** A record with no prototype, so a registry name such as "__proto__" is an
+ * ordinary own property instead of a prototype write. */
+function nullRecord<TValue>(): Record<string, TValue> {
+  return Object.create(null) as Record<string, TValue>;
+}
+
 function sampleRating(loaded: LoadedRegistry): string {
   return Object.keys(loaded.registry.ratings ?? {})[0] ?? "rating-a";
 }
@@ -178,7 +184,7 @@ function validateTasks(raw: unknown, loaded: LoadedRegistry, problems: RouterPro
 
   const declaredRatings = loaded.registry.ratings ?? {};
   const declaredCapabilities = loaded.registry.capabilities ?? {};
-  const tasksMap: Record<string, import("./types.js").TaskEntry> = {};
+  const tasksMap = nullRecord<import("./types.js").TaskEntry>();
   for (const [taskName, taskRaw] of Object.entries(raw)) {
     const taskField = pathJoin(sectionField, taskName);
     if (!isPlainObject(taskRaw)) {
@@ -383,11 +389,11 @@ function readTaskMinimums(
   raw: unknown,
 ): Readonly<Record<string, Readonly<Record<string, number>>>> {
   if (!isPlainObject(raw)) return {};
-  const out: Record<string, Record<string, number>> = {};
+  const out = nullRecord<Record<string, number>>();
   for (const stake of STAKES_VALUES) {
     const stakeFloors = raw[stake];
     if (!isPlainObject(stakeFloors)) continue;
-    const inner: Record<string, number> = {};
+    const inner = nullRecord<number>();
     for (const [rating, value] of Object.entries(stakeFloors)) {
       if (typeof value === "number" && Number.isFinite(value)) {
         inner[rating] = value;
@@ -432,7 +438,7 @@ function validatePolicy(
 
   const declaredRoutes = loaded.routes;
   const modelsByRoute = collectModelsByRoute(loaded);
-  const policiesMap: Record<string, PolicyEntry> = {};
+  const policiesMap = nullRecord<PolicyEntry>();
 
   for (const [policyName, policyRaw] of Object.entries(raw)) {
     const policyField = pathJoin(sectionField, policyName);

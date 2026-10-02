@@ -459,3 +459,154 @@ describe("rank answers validate against answer.schema.json", () => {
     expect(answer.routes[0]?.floor).toBe("skipped");
   });
 });
+
+describe("special names in the registry's sections", () => {
+  // Object.fromEntries builds own properties, so a JSON key such as
+  // "__proto__" survives JSON.stringify the way a file on disk carries it.
+  const specialTasks = Object.fromEntries([
+    [
+      "__proto__",
+      {
+        description: "A task with a special name.",
+        minimums: { low: { coding: 6 }, normal: { coding: 8 }, high: { coding: 9 } },
+        rank: ["coding"],
+      },
+    ],
+  ]);
+  const specialModels = {
+    "model-a": {
+      family: "family-a",
+      ratings: Object.fromEntries([["coding", 7]]),
+      routes: [{ harness: "harness-x", modelId: "model-id-a", hosted: true }],
+    },
+    "model-b": {
+      family: "family-b",
+      ratings: Object.fromEntries([
+        ["coding", 9],
+        ["__proto__", 9],
+      ]),
+      routes: [{ harness: "harness-x", modelId: "model-id-b", hosted: true }],
+    },
+  };
+
+  async function withSpecialRegistry(
+    sections: Record<string, unknown>,
+    fn: (loaded: ReturnType<typeof loadRegistry>) => void,
+  ): Promise<void> {
+    await withTempDir(async (dir) => {
+      const loaded = loadRegistry({
+        path: writeJson(dir, "registry.json", {
+          format: 1,
+          ratings: Object.fromEntries([
+            ["coding", "Writes and changes code to a spec."],
+            ["__proto__", "A special rating."],
+          ]),
+          router: { rank: ["coding"] },
+          models: specialModels,
+          ...sections,
+        }),
+      });
+      fn(loaded);
+    });
+  }
+
+  test("a task named __proto__ resolves and applies its floors like any other task", async () => {
+    await withSpecialRegistry({ tasks: specialTasks }, (loaded) => {
+      const answer = rank({ task: "__proto__", stakes: "normal" }, { registry: loaded });
+      expectValidAnswer(answer);
+      expect(answer.warnings).toEqual([]);
+      expect(answer.routes.map((entry) => [entry.label, entry.floor])).toEqual([
+        ["model-b@harness-x", "clears"],
+        ["model-a@harness-x", "below"],
+      ]);
+      expect(answer.routes[1]?.reasons).toEqual([
+        {
+          code: "floor-not-met",
+          field: '$.minimums["coding"]',
+          message: 'the model\'s rating for "coding" is 7, below the floor 8',
+        },
+      ]);
+    });
+  });
+
+  test("a floor on a rating named __proto__ counts a model without it as below", async () => {
+    await withSpecialRegistry(
+      {
+        tasks: {
+          "task-a": {
+            description: "Code.",
+            minimums: {
+              low: Object.fromEntries([["__proto__", 5]]),
+              normal: Object.fromEntries([["__proto__", 5]]),
+              high: Object.fromEntries([["__proto__", 5]]),
+            },
+            rank: ["coding"],
+          },
+        },
+      },
+      (loaded) => {
+        const answer = rank({ task: "task-a", stakes: "normal" }, { registry: loaded });
+        expectValidAnswer(answer);
+        expect(answer.warnings).toEqual([]);
+        expect(answer.routes.map((entry) => [entry.label, entry.floor])).toEqual([
+          ["model-b@harness-x", "clears"],
+          ["model-a@harness-x", "below"],
+        ]);
+        expect(answer.routes[1]?.reasons).toEqual([
+          {
+            code: "floor-not-met",
+            field: '$.minimums["__proto__"]',
+            message: 'the model has no value for rating "__proto__" (floor 5)',
+          },
+        ]);
+      },
+    );
+  });
+
+  test("two overlapping policies, one named __proto__, still tie", async () => {
+    await withSpecialRegistry(
+      {
+        tasks: {
+          "task-a": {
+            description: "Code.",
+            minimums: { low: { coding: 6 }, normal: { coding: 6 }, high: { coding: 6 } },
+            rank: ["coding"],
+          },
+        },
+        policy: Object.fromEntries([
+          [
+            "__proto__",
+            {
+              task: "task-a",
+              stakes: ["normal"],
+              routes: [{ route: "model-a@harness-x" }],
+              reason: "One.",
+            },
+          ],
+          [
+            "policy-b",
+            {
+              task: "task-a",
+              stakes: ["normal"],
+              routes: [{ route: "model-a@harness-x" }],
+              reason: "Two.",
+            },
+          ],
+        ]),
+      },
+      (loaded) => {
+        try {
+          rank({ task: "task-a" }, { registry: loaded });
+          throw new Error("expected rank to throw");
+        } catch (error) {
+          expect(error).toBeInstanceOf(RouterError);
+          const routerError = error as RouterError;
+          expect(routerError.code).toBe("registry-sections-invalid");
+          const tie = routerError.problems.find((problem) => problem.code === "policy-tie");
+          expect(tie?.message).toContain("__proto__");
+          expect(tie?.message).toContain("policy-b");
+        }
+      },
+    );
+  });
+});
