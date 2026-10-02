@@ -45,110 +45,102 @@ export function validateRouterSections(loaded: LoadedRegistry): RouterSections {
   const rank: string[] = [];
 
   if (section === undefined) {
-    throw sectionsError(
-      {
-        code: "router-section-missing",
-        field: '$["router"]',
-        message: "the registry file has no router section, which model-router requires",
-        fix: `Add the line ${rankLine(loaded)} to the registry file, with the ratings that order routes.`,
-      },
-      [],
-    );
-  }
-
-  if (!isPlainObject(section)) {
-    throw sectionsError(
-      {
-        code: "router-section-not-object",
-        field: '$["router"]',
-        message: "the router section must be a JSON object",
-        fix: `Replace the router section with an object such as ${rankLine(loaded)}.`,
-      },
-      [],
-    );
-  }
-
-  const rankField = section.rank;
-  if (rankField === undefined) {
     problems.push({
-      code: "router-rank-missing",
-      field: pathJoin('$["router"]', "rank"),
-      message: "the router section has no rank list, which model-router requires",
-      fix: `Add "rank": ["${sampleRating(loaded)}"] inside the router section, with the ratings that order routes.`,
+      code: "router-section-missing",
+      field: '$["router"]',
+      message: "the registry file has no router section, which model-router requires",
+      fix: `Add the line ${rankLine(loaded)} to the registry file, with the ratings that order routes.`,
     });
-  } else if (!Array.isArray(rankField) || rankField.length === 0) {
+  } else if (!isPlainObject(section)) {
     problems.push({
-      code: "router-rank-invalid",
-      field: pathJoin('$["router"]', "rank"),
-      message: "the router rank must be a non-empty array of rating names",
-      fix: `Set "rank" to a non-empty array of declared rating names, such as ["${sampleRating(loaded)}"].`,
+      code: "router-section-not-object",
+      field: '$["router"]',
+      message: "the router section must be a JSON object",
+      fix: `Replace the router section with an object such as ${rankLine(loaded)}.`,
     });
   } else {
-    const declaredRatings = loaded.registry.ratings ?? {};
-    rankField.forEach((entry, index) => {
-      const field = `$["router"]["rank"][${index}]`;
-      if (typeof entry !== "string") {
-        problems.push({
-          code: "router-rank-entry-not-string",
-          field,
-          message: `the router rank entry at index ${index} must be a string`,
-          fix: `Set the rank entry at index ${index} to a declared rating name.`,
-        });
-        return;
-      }
-      if (!Object.hasOwn(declaredRatings, entry)) {
-        problems.push({
-          code: "router-rank-unknown",
-          field,
-          message: `the rating "${entry}" is not declared in the ratings section`,
-          fix: `Add "${entry}" to the ratings section, or remove it from "router"."rank".`,
-        });
-        return;
-      }
-      rank.push(entry);
-    });
-  }
-
-  const questions = section.questions;
-  if (questions !== undefined) {
-    if (!isPlainObject(questions)) {
+    const rankField = section.rank;
+    if (rankField === undefined) {
       problems.push({
-        code: "router-questions-not-object",
-        field: pathJoin('$["router"]', "questions"),
-        message: "the router questions section must be a JSON object",
-        fix: "Replace the router questions section with a JSON object, or remove it.",
+        code: "router-rank-missing",
+        field: pathJoin('$["router"]', "rank"),
+        message: "the router section has no rank list, which model-router requires",
+        fix: `Add "rank": ["${sampleRating(loaded)}"] inside the router section, with the ratings that order routes.`,
+      });
+    } else if (!Array.isArray(rankField) || rankField.length === 0) {
+      problems.push({
+        code: "router-rank-invalid",
+        field: pathJoin('$["router"]', "rank"),
+        message: "the router rank must be a non-empty array of rating names",
+        fix: `Set "rank" to a non-empty array of declared rating names, such as ["${sampleRating(loaded)}"].`,
       });
     } else {
-      const declaredCapabilities = loaded.registry.capabilities ?? {};
-      for (const [capability, question] of Object.entries(questions)) {
-        if (!Object.hasOwn(declaredCapabilities, capability)) {
+      const declaredRatings = loaded.registry.ratings ?? {};
+      rankField.forEach((entry, index) => {
+        const field = `$["router"]["rank"][${index}]`;
+        if (typeof entry !== "string") {
           problems.push({
-            code: "router-question-capability-unknown",
-            field: pathJoin(pathJoin('$["router"]', "questions"), capability),
-            message: `the capability "${capability}" is not declared in the capabilities section`,
-            fix: `Add "${capability}" to the capabilities section, or remove it from "router"."questions".`,
+            code: "router-rank-entry-not-string",
+            field,
+            message: `the router rank entry at index ${index} must be a string`,
+            fix: `Set the rank entry at index ${index} to a declared rating name.`,
           });
+          return;
         }
-        if (typeof question !== "string") {
+        if (!Object.hasOwn(declaredRatings, entry)) {
           problems.push({
-            code: "router-question-not-string",
-            field: pathJoin(pathJoin('$["router"]', "questions"), capability),
-            message: `the question for "${capability}" must be a string`,
-            fix: `Set the question for "${capability}" to a yes/no question sentence.`,
+            code: "router-rank-unknown",
+            field,
+            message: `the rating "${entry}" is not declared in the ratings section`,
+            fix: `Add "${entry}" to the ratings section, or remove it from "router"."rank".`,
           });
+          return;
+        }
+        rank.push(entry);
+      });
+    }
+
+    const questions = section.questions;
+    if (questions !== undefined) {
+      if (!isPlainObject(questions)) {
+        problems.push({
+          code: "router-questions-not-object",
+          field: pathJoin('$["router"]', "questions"),
+          message: "the router questions section must be a JSON object",
+          fix: "Replace the router questions section with a JSON object, or remove it.",
+        });
+      } else {
+        const declaredCapabilities = loaded.registry.capabilities ?? {};
+        for (const [capability, question] of Object.entries(questions)) {
+          if (!Object.hasOwn(declaredCapabilities, capability)) {
+            problems.push({
+              code: "router-question-capability-unknown",
+              field: pathJoin(pathJoin('$["router"]', "questions"), capability),
+              message: `the capability "${capability}" is not declared in the capabilities section`,
+              fix: `Add "${capability}" to the capabilities section, or remove it from "router"."questions".`,
+            });
+          }
+          if (typeof question !== "string") {
+            problems.push({
+              code: "router-question-not-string",
+              field: pathJoin(pathJoin('$["router"]', "questions"), capability),
+              message: `the question for "${capability}" must be a string`,
+              fix: `Set the question for "${capability}" to a yes/no question sentence.`,
+            });
+          }
         }
       }
     }
-  }
 
-  for (const name of Object.keys(section)) {
-    if (name !== "rank" && name !== "questions") {
-      problems.push({
-        code: "router-field-unknown",
-        field: pathJoin('$["router"]', name),
-        message: `the field "${name}" is not part of the router section`,
-        fix: 'Remove the field; the router section accepts only "rank" and "questions".',
-      });
+    for (const name of Object.keys(section)) {
+      if (name !== "rank" && name !== "questions") {
+        problems.push({
+          code: "router-field-unknown",
+          field: pathJoin('$["router"]', name),
+          message: `the field "${name}" is not part of the router section`,
+          fix: 'Remove the field; the router section accepts only "rank" and "questions".',
+        });
+      }
     }
   }
 
@@ -260,7 +252,6 @@ function validateTasks(raw: unknown, loaded: LoadedRegistry, problems: RouterPro
               message: `the rating "${rating}" is not declared in the ratings section`,
               fix: `Add "${rating}" to the ratings section, or remove it from "${taskName}" minimums.`,
             });
-            continue;
           }
           if (typeof value !== "number" || !Number.isFinite(value)) {
             problems.push({
@@ -560,51 +551,52 @@ function validatePolicy(
             });
           }
         }
-        if (typeof routeLabel === "string" && Object.hasOwn(declaredRoutes, routeLabel)) {
-          // The loader's route index is the one label authority: it holds the
-          // exact label (including a present-but-empty provider) and the
-          // model that owns the route.
-          const modelKey = declaredRoutes[routeLabel]?.model;
-          if (modelKey !== undefined) {
-            const model = loaded.registry.models[modelKey];
-            if (model !== undefined) {
-              const modelMax = model.maxEffort;
-              const modelFixed = model.fixedEffort;
-              const policyEffort = entry.effort;
-              if (typeof policyEffort === "string") {
-                if (!(EFFORT_LADDER as readonly string[]).includes(policyEffort)) {
-                  problems.push({
-                    code: "policy-route-effort-invalid",
-                    field: pathJoin(field, "effort"),
-                    message: `the policy "${policyName}" route "${routeLabel}" effort must be one of ${EFFORT_LADDER.join(", ")}`,
-                    fix: `Set the effort of the policy "${policyName}" route "${routeLabel}" to one of ${EFFORT_LADDER.join(", ")}.`,
-                  });
-                } else if (modelFixed !== undefined && policyEffort !== modelFixed) {
-                  problems.push({
-                    code: "policy-route-effort-fixed-mismatch",
-                    field: pathJoin(field, "effort"),
-                    message: `the policy "${policyName}" route "${routeLabel}" effort "${policyEffort}" differs from the model's fixedEffort "${modelFixed}"`,
-                    fix: `Remove the policy route's effort, or set it to "${modelFixed}".`,
-                  });
-                } else if (modelMax !== undefined && exceedsLadder(policyEffort, modelMax)) {
-                  problems.push({
-                    code: "policy-route-effort-above-max",
-                    field: pathJoin(field, "effort"),
-                    message: `the policy "${policyName}" route "${routeLabel}" effort "${policyEffort}" is above the model's maxEffort "${modelMax}"`,
-                    fix: `Lower the policy route's effort to "${modelMax}" or below, or remove it.`,
-                  });
-                }
-              }
-            }
-          }
-        }
-        if (Object.hasOwn(entry, "effort") && typeof entry.effort !== "string") {
+        const policyEffort = entry.effort;
+        if (Object.hasOwn(entry, "effort") && typeof policyEffort !== "string") {
           problems.push({
             code: "policy-route-effort-not-string",
             field: pathJoin(field, "effort"),
             message: `the policy "${policyName}" route at index ${index} effort must be a string`,
             fix: `Set the effort of the policy "${policyName}" route at index ${index} to a string.`,
           });
+        }
+        if (typeof policyEffort === "string") {
+          // The ladder check needs no route or model: it is a fixed
+          // vocabulary, so an off-ladder effort is reported even when the
+          // label is unknown. The model-limit checks need the model.
+          if (!(EFFORT_LADDER as readonly string[]).includes(policyEffort)) {
+            problems.push({
+              code: "policy-route-effort-invalid",
+              field: pathJoin(field, "effort"),
+              message: `the policy "${policyName}" route "${routeLabel}" effort must be one of ${EFFORT_LADDER.join(", ")}`,
+              fix: `Set the effort of the policy "${policyName}" route "${routeLabel}" to one of ${EFFORT_LADDER.join(", ")}.`,
+            });
+          } else if (typeof routeLabel === "string" && Object.hasOwn(declaredRoutes, routeLabel)) {
+            // The loader's route index is the one label authority: it holds
+            // the exact label (including a present-but-empty provider) and
+            // the model that owns the route.
+            const modelKey = declaredRoutes[routeLabel]?.model;
+            const model = modelKey === undefined ? undefined : loaded.registry.models[modelKey];
+            if (model !== undefined) {
+              const modelMax = model.maxEffort;
+              const modelFixed = model.fixedEffort;
+              if (modelFixed !== undefined && policyEffort !== modelFixed) {
+                problems.push({
+                  code: "policy-route-effort-fixed-mismatch",
+                  field: pathJoin(field, "effort"),
+                  message: `the policy "${policyName}" route "${routeLabel}" effort "${policyEffort}" differs from the model's fixedEffort "${modelFixed}"`,
+                  fix: `Remove the policy route's effort, or set it to "${modelFixed}".`,
+                });
+              } else if (modelMax !== undefined && exceedsLadder(policyEffort, modelMax)) {
+                problems.push({
+                  code: "policy-route-effort-above-max",
+                  field: pathJoin(field, "effort"),
+                  message: `the policy "${policyName}" route "${routeLabel}" effort "${policyEffort}" is above the model's maxEffort "${modelMax}"`,
+                  fix: `Lower the policy route's effort to "${modelMax}" or below, or remove it.`,
+                });
+              }
+            }
+          }
         }
         for (const name of Object.keys(entry)) {
           if (name !== "route" && name !== "effort") {

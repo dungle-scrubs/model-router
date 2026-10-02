@@ -413,6 +413,83 @@ describe("validateRouterSections tasks and policy", () => {
     });
   });
 
+  test("wrong shapes in router, tasks and policy are reported together", () => {
+    const error = validate({
+      format: 1,
+      ratings: { coding: "Writes and changes code to a spec." },
+      router: "oops",
+      tasks: 7,
+      policy: false,
+      models: {},
+    });
+    expect(error.code).toBe("registry-sections-invalid");
+    expect(error.problems.map((problem) => problem.code)).toEqual([
+      "router-section-not-object",
+      "tasks-section-not-object",
+      "policy-section-not-object",
+    ]);
+    expect(error.message).toBe("the router section has 3 problems");
+  });
+
+  test("a missing router section still reports problems in tasks and policy", () => {
+    const error = validate({
+      format: 1,
+      ratings: { coding: "Writes and changes code to a spec." },
+      tasks: 7,
+      policy: false,
+      models: {},
+    });
+    expect(error.problems.map((problem) => problem.code)).toEqual([
+      "router-section-missing",
+      "tasks-section-not-object",
+      "policy-section-not-object",
+    ]);
+  });
+
+  test("a floor with an undeclared rating and a non-number value reports both", async () => {
+    const error = withTasks({
+      "task-a": {
+        description: "Code.",
+        minimums: { low: { vibes: "oops" }, normal: { coding: 7 }, high: { coding: 8 } },
+        rank: ["coding"],
+      },
+    });
+    expect(error.problems.map((problem) => problem.code)).toEqual([
+      "tasks-minimums-rating-unknown",
+      "tasks-minimums-rating-not-number",
+    ]);
+    expect(error.problems.map((problem) => problem.field)).toEqual([
+      '$["tasks"]["task-a"]["minimums"]["low"]["vibes"]',
+      '$["tasks"]["task-a"]["minimums"]["low"]["vibes"]',
+    ]);
+  });
+
+  test("an off-ladder policy effort is reported even when the label is unknown", async () => {
+    const error = withPolicy(
+      {
+        "policy-a": {
+          task: "task-a",
+          stakes: ["normal"],
+          routes: [{ route: "model-missing@harness-x", effort: "warp-nine" }],
+          reason: "r",
+        },
+      },
+      {
+        tasks: {
+          "task-a": {
+            description: "Code.",
+            minimums: { low: { coding: 6 }, normal: { coding: 7 }, high: { coding: 8 } },
+            rank: ["coding"],
+          },
+        },
+      },
+    );
+    expect(error.problems.map((problem) => problem.code)).toEqual([
+      "policy-route-label-unknown",
+      "policy-route-effort-invalid",
+    ]);
+  });
+
   test("a non-object policy section is invalid", async () => {
     const error = withPolicy("oops");
     expect(error.problems[0]).toEqual({
