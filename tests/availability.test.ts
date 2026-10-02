@@ -1224,7 +1224,7 @@ describe("CLI availability flags", () => {
     const answer = JSON.parse(result.stdout);
     expectValidAnswer(answer);
     expect(answer.availabilityNote?.code).toBe("availability-command-missing");
-    expect(answer.warnings.map((w) => w.code)).toContain("meter-no-reading");
+    expect(answer.warnings.map((w) => w.code)).not.toContain("meter-no-reading");
   });
 
   test("no --availability flag gives no availabilityNote and no meter-no-reading warning", () => {
