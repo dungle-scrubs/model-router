@@ -146,6 +146,34 @@ describe("--describe privacy refusal", () => {
     expect(error.code).toBe("query-invalid");
     expect(error.field).toBe("describe");
   });
+
+  test("a secret query exits 2 describe-private before the config loads", async () => {
+    const result = await run([
+      "--describe",
+      "/nonexistent/work.txt",
+      "--config",
+      "/nonexistent/config.json",
+      "--registry",
+      FIXTURE,
+      '{"privacy":"secret"}',
+    ]);
+    expect(result.exitCode).toBe(2);
+    const error = await errorEnvelope(result.stderr);
+    expect(error.code).toBe("describe-private");
+  });
+
+  test("a secret query exits 2 describe-private before the description file is read", async () => {
+    const result = await run([
+      "--describe",
+      "/nonexistent/work.txt",
+      "--registry",
+      FIXTURE,
+      '{"privacy":"secret"}',
+    ]);
+    expect(result.exitCode).toBe(2);
+    const error = await errorEnvelope(result.stderr);
+    expect(error.code).toBe("describe-private");
+  });
 });
 
 describe("--describe with a recorded Jev answer", () => {

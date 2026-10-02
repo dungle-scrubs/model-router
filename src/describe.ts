@@ -47,6 +47,28 @@ function describePrivate(): RouterError {
   });
 }
 
+/**
+ * Parse the describe step's partial query and run the two privacy checks.
+ * `describe` runs this gate first, before it loads the registry or the
+ * config, and the CLI runs the same gate before it loads the config or
+ * reads the description file, so the refusal comes ahead of every load
+ * for both callers. Returns the parsed query.
+ */
+export function parseDescribeQuery(input: unknown): Query {
+  const partial = parsePartialQuery(input);
+  if (partial.privacy === undefined) {
+    throw invalid(
+      "privacy",
+      'the query must state "privacy" for the describe step; the default does not apply',
+      'Add "privacy": "normal" to the query. Secret work never reaches the describe step.',
+    );
+  }
+  if (partial.privacy === "secret") {
+    throw describePrivate();
+  }
+  return partial;
+}
+
 function describeFailed(code: string, message: string): RouterError {
   return new RouterError({
     code: "describe-failed",
@@ -113,26 +135,15 @@ export async function describe(
   partialQuery: unknown,
   options: DescribeOptions = {},
 ): Promise<DescribeResult> {
+  // The privacy gate is the first check: no registry, section or config
+  // load, and no request, happens before it passes.
+  const partial = parseDescribeQuery(partialQuery);
   if (typeof text !== "string") {
     throw invalid(
       "text",
       "the work description must be a string",
       "Pass the work description as text; the describe step sends it to Jev as the state.",
     );
-  }
-  const loaded = resolveRegistry(options.registry);
-  const sections = validateRouterSections(loaded);
-  const partial = parsePartialQuery(partialQuery);
-
-  if (partial.privacy === undefined) {
-    throw invalid(
-      "privacy",
-      'the query must state "privacy" for the describe step; the default does not apply',
-      'Add "privacy": "normal" to the query. Secret work never reaches the describe step.',
-    );
-  }
-  if (partial.privacy === "secret") {
-    throw describePrivate();
   }
   if (text.trim().length === 0) {
     throw invalid(
@@ -141,6 +152,8 @@ export async function describe(
       "Describe the work in the description file, or rank without the describe step.",
     );
   }
+  const loaded = resolveRegistry(options.registry);
+  const sections = validateRouterSections(loaded);
 
   const loadedConfig = resolveConfig(options.config);
   const config = loadedConfig.config;

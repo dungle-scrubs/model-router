@@ -94,6 +94,17 @@ describe("the describe step's privacy gate", () => {
       fetchSpy.mockRestore();
     }));
 
+  test("privacy secret refuses before the registry loads: a missing registry path still gives describe-private", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const error = await catchRouterError(
+        describeStep("some work", '{"privacy":"secret"}', {
+          registry: "/nonexistent/registry.json",
+        }),
+      );
+      expect(error.code).toBe("describe-private");
+      expect(error.field).toBe("privacy");
+    }));
+
   test("a whitespace-only description is query-invalid and makes no request", async () =>
     withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
       const fetchSpy = vi.spyOn(globalThis, "fetch");

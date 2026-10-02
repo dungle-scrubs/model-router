@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { loadRegistry, RegistryError } from "@dungle-scrubs/model-registry";
 import { Command, CommanderError } from "commander";
 import { type LoadedConfig, loadConfig } from "./config.js";
-import { describe as describeStep } from "./describe.js";
+import { describe as describeStep, parseDescribeQuery } from "./describe.js";
 import { RouterError } from "./error.js";
 import { listTasks, rank } from "./rank.js";
 import { validateRouterSections } from "./sections.js";
@@ -346,19 +346,25 @@ export async function runCli(argv: readonly string[], io: Partial<CliIo> = {}): 
       // object: a loader that found a file passes the path so rank can
       // re-read it through the same loader, and a loader that fell
       // through to defaults passes the validated object directly.
-      const config = loadConfigOption(explicitConfig);
-      const configOption = config.configPath ?? config.config;
-      const rankOptions: Parameters<typeof rank>[1] =
-        explicitRegistry === ""
-          ? { config: configOption }
-          : { registry: explicitRegistry, config: configOption };
+      const configOptionFor = (explicit: string | undefined) => {
+        const config = loadConfigOption(explicit);
+        return config.configPath ?? config.config;
+      };
       if (describeFile !== undefined) {
+        // The privacy gate runs before the config is loaded and before the
+        // description file is read: a secret query is refused ahead of
+        // every load, the same order the library's describe step uses.
+        parseDescribeQuery(raw);
+        const text = readDescribeFile(describeFile);
+        const rankOptions: Parameters<typeof rank>[1] =
+          explicitRegistry === ""
+            ? { config: configOptionFor(explicitConfig) }
+            : { registry: explicitRegistry, config: configOptionFor(explicitConfig) };
         // The describe step reads the description file, fills the query's
         // task and needs through a Jev call, then ranks the filled query
         // and merges the describe block into the answer. The describe
         // step's warnings lead the answer's warnings list: they happened
         // first.
-        const text = readDescribeFile(describeFile);
         const described = await describeStep(text, raw, rankOptions);
         const answer = rank(described.query, rankOptions);
         const merged = {
@@ -370,6 +376,10 @@ export async function runCli(argv: readonly string[], io: Partial<CliIo> = {}): 
         answerExit = merged.routes.length === 0 ? EXIT_NO_ROUTE : EXIT_SUCCESS;
         return;
       }
+      const rankOptions: Parameters<typeof rank>[1] =
+        explicitRegistry === ""
+          ? { config: configOptionFor(explicitConfig) }
+          : { registry: explicitRegistry, config: configOptionFor(explicitConfig) };
       const answer = rank(raw, rankOptions);
       stdout.write(`${JSON.stringify(answer)}\n`);
       answerExit = answer.routes.length === 0 ? EXIT_NO_ROUTE : EXIT_SUCCESS;
