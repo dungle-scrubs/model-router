@@ -120,6 +120,25 @@ describe("validateRouterSections tasks and policy", () => {
     });
   });
 
+  test("a task description with a line break is invalid", async () => {
+    const error = withTasks({
+      "task-a": {
+        description: "First line\nSecond line",
+        minimums: { low: { coding: 6 }, normal: { coding: 7 }, high: { coding: 8 } },
+        rank: ["coding"],
+      },
+    });
+    expect(error.problems.map((problem) => problem.code)).toEqual([
+      "tasks-description-not-one-line",
+    ]);
+    expect(error.problems[0]).toEqual({
+      code: "tasks-description-not-one-line",
+      field: '$["tasks"]["task-a"]["description"]',
+      fix: 'Rewrite the description of "task-a" as one line.',
+      message: 'the task "task-a" description must be one line',
+    });
+  });
+
   test("a task missing minimums is invalid", async () => {
     const error = withTasks({
       "task-a": { description: "Code.", rank: ["coding"] },

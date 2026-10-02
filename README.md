@@ -120,6 +120,7 @@ A `registry-sections-invalid` error carries one problem per finding in `problems
 | `tasks-entry-not-object` | a `tasks` entry is not a JSON object |
 | `tasks-description-missing` | a `tasks` entry has no `description` |
 | `tasks-description-not-string` | a `tasks` entry's `description` is not a string |
+| `tasks-description-not-one-line` | a `tasks` entry's `description` contains a line break |
 | `tasks-minimums-missing` | a `tasks` entry has no `minimums` |
 | `tasks-minimums-not-object` | a `tasks` entry's `minimums` is not an object |
 | `tasks-minimums-stake-missing` | a `tasks` entry's `minimums` is missing a stakes level |

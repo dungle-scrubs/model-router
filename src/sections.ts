@@ -204,6 +204,13 @@ function validateTasks(raw: unknown, loaded: LoadedRegistry, problems: RouterPro
         message: `the task "${taskName}" description must be a string`,
         fix: `Set the description of "${taskName}" to a one-line sentence.`,
       });
+    } else if (description.includes("\n") || description.includes("\r")) {
+      problems.push({
+        code: "tasks-description-not-one-line",
+        field: pathJoin(taskField, "description"),
+        message: `the task "${taskName}" description must be one line`,
+        fix: `Rewrite the description of "${taskName}" as one line.`,
+      });
     }
 
     const minimums = taskRaw.minimums;
