@@ -234,4 +234,19 @@ describe("applyQueryDefaults", () => {
   test("minimums defaults to no floor when only a task is named", () => {
     expect(applyQueryDefaults({ task: "implement" }).minimums).toEqual({});
   });
+
+  test("a floor named __proto__ is an own property of a null-prototype map", () => {
+    // JSON.parse builds an own "__proto__" property the way the CLI's JSON
+    // text does; an object literal would set the prototype instead.
+    const applied = applyQueryDefaults(JSON.parse('{"minimums":{"__proto__":5,"coding":6}}'));
+    const protoKey = "__proto__";
+    expect(Object.hasOwn(applied.minimums, protoKey)).toBe(true);
+    expect(applied.minimums[protoKey]).toBe(5);
+    expect(applied.minimums.coding).toBe(6);
+    // The applied floor map is name-keyed with no prototype, like the
+    // registry's maps: inherited names are absent instead of leaking
+    // Object.prototype members.
+    expect(Object.getPrototypeOf(applied.minimums)).toBe(null);
+    expect(applied.minimums.toString).toBeUndefined();
+  });
 });

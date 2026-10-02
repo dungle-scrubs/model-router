@@ -623,6 +623,39 @@ describe("special names in the registry's sections", () => {
     );
   });
 
+  test("an inline floor named __proto__ is applied and echoed", async () => {
+    await withSpecialRegistry({}, (loaded) => {
+      // JSON.parse builds the own "__proto__" floor the way the CLI's JSON
+      // text path does; model-b carries the rating, model-a does not.
+      const answer = rank(JSON.parse('{"minimums":{"__proto__":5}}'), {
+        registry: loaded,
+      });
+      expectValidAnswer(answer);
+      expect(answer.warnings).toEqual([]);
+      expect(answer.routes.map((entry) => [entry.label, entry.floor])).toEqual([
+        ["model-b@harness-x", "clears"],
+        ["model-a@harness-x", "below"],
+      ]);
+      expect(answer.routes[1]?.reasons).toEqual([
+        {
+          code: "floor-not-met",
+          field: '$.minimums["__proto__"]',
+          message: 'the model has no value for rating "__proto__" (floor 5)',
+        },
+      ]);
+      // The echo carries the floor as an own property of a map with no
+      // prototype, so it survives serialization and leaks no inherited
+      // names back to the caller.
+      const protoKey = "__proto__";
+      expect(Object.hasOwn(answer.query.minimums, protoKey)).toBe(true);
+      expect(answer.query.minimums[protoKey]).toBe(5);
+      expect(answer.query.minimums.toString).toBeUndefined();
+      expect(Object.getPrototypeOf(answer.query.minimums)).toBe(null);
+      const echoed = JSON.parse(JSON.stringify(answer)).query.minimums;
+      expect(echoed).toEqual(Object.fromEntries([["__proto__", 5]]));
+    });
+  });
+
   test("two overlapping policies, one named __proto__, still tie", async () => {
     await withSpecialRegistry(
       {
