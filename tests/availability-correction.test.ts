@@ -124,14 +124,16 @@ test("removing another exhausted route leaves an unmetered pin used", () => {
 test("plain CLI ranking applies explicit config without a registry flag", async () => {
   await withTempDir(async (dir) => {
     const config = writeJson(dir, "config.json", { effort: { default: "low" } });
-    await withEnv(
-      { MODEL_REGISTRY_FILE: FULL, XDG_CONFIG_HOME: dir, MODEL_ROUTER_CONFIG: undefined },
-      async () => {
-        const answer = await run([QUERY, "--config", config]);
-        expect(answer.routes.length).toBeGreaterThan(0);
-        for (const route of answer.routes) expect(route.effort).toBe("low");
-      },
-    );
+    await withTempDir(async (xdg) => {
+      await withEnv(
+        { MODEL_REGISTRY_FILE: FULL, XDG_CONFIG_HOME: xdg, MODEL_ROUTER_CONFIG: undefined },
+        async () => {
+          const answer = await run([QUERY, "--config", config]);
+          expect(answer.routes.length).toBeGreaterThan(0);
+          for (const route of answer.routes) expect(route.effort).toBe("low");
+        },
+      );
+    });
   });
 });
 
