@@ -3,7 +3,7 @@ import { describe as describeStep } from "../src/describe.js";
 import { RouterError } from "../src/error.js";
 import { JevError } from "../src/jev.js";
 import { rank } from "../src/rank.js";
-import { fixturePath, withEnv } from "./helpers.js";
+import { fixturePath, withEnv, withTempDir, writeJson } from "./helpers.js";
 
 const FIXTURE = fixturePath("describe.json");
 const MINIMAL = fixturePath("minimal.json");
@@ -300,7 +300,7 @@ describe("the describe step's gate and result", () => {
         registry: FIXTURE,
       });
       expect(result.query.task).toBeUndefined();
-      expect(result.query.minimums).toEqual({});
+      expect(result.query.minimums).toStrictEqual({});
       expect(result.describe.task.source).toBe("inline-need");
       spy.mockRestore();
     }));
@@ -422,18 +422,31 @@ describe("the describe step's config gates", () => {
       spy.mockRestore();
     }));
 
-  test("a config file drives the gates the same way as the object form", async () => {
-    // Covered end to end in the CLI tests; the object form is the library
-    // seam and shares one validator with the file form.
-    await withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
-      const { spy } = stubFetch(happyBody);
-      const result = await describeStep("some work", '{"privacy":"normal"}', {
-        registry: FIXTURE,
-        config: { describe: { taskGate: 0.85, capabilityThreshold: 0.5 } },
+  test("a config file with non-default gates drives the block and the gating", async () => {
+    await withTempDir(async (dir) => {
+      const configPath = writeJson(dir, "config.json", {
+        describe: { taskGate: 0.5, capabilityThreshold: 0.9 },
       });
-      expect(result.describe.taskGate).toBe(0.85);
-      expect(result.describe.capabilityThreshold).toBe(0.5);
-      spy.mockRestore();
+      await withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+        const body = {
+          ...happyBody,
+          answers: {
+            task: choiceAnswer("task-b", 0.6, { "task-a": 0.4, "task-b": 0.6 }),
+            needs_browser: noulAnswer(0.8),
+            "needs_repo-access": noulAnswer(0.1),
+          },
+        };
+        const { spy } = stubFetch(body);
+        const result = await describeStep("some work", '{"privacy":"normal"}', {
+          registry: FIXTURE,
+          config: configPath,
+        });
+        expect(result.describe.taskGate).toBe(0.5);
+        expect(result.describe.capabilityThreshold).toBe(0.9);
+        expect(result.warnings).toEqual([]);
+        expect(result.query.needs).toEqual([]);
+        spy.mockRestore();
+      });
     });
   });
 });
@@ -475,13 +488,15 @@ describe("the describe step when Jev fails", () => {
       fetchSpy.mockRestore();
     }));
 
-  test("a missing key with a caller task continues with capabilities-unasked", async () =>
+  test("a missing key with a caller task continues with capabilities-unasked and keeps the caller's needs", async () =>
     withEnv({ TYPESAFE_API_KEY: undefined }, async () => {
-      const result = await describeStep("some work", '{"privacy":"normal","task":"task-b"}', {
-        registry: FIXTURE,
-      });
+      const result = await describeStep(
+        "some work",
+        '{"privacy":"normal","task":"task-b","needs":["repo-access","browser"]}',
+        { registry: FIXTURE },
+      );
       expect(result.query.task).toBe("task-b");
-      expect(result.query.needs).toEqual([]);
+      expect(result.query.needs).toEqual(["repo-access", "browser"]);
       expect(result.describe.model).toBeNull();
       expect(result.describe.task.source).toBe("caller");
       expect(result.describe.task.confidence).toBeNull();
@@ -814,7 +829,7 @@ describe("boundary and passthrough behavior", () => {
         },
         { registry: FIXTURE },
       );
-      expect(result.query).toEqual({
+      expect(result.query).toStrictEqual({
         effort: "high",
         excludeFamilies: ["family-b"],
         needs: ["browser"],
@@ -837,14 +852,15 @@ describe("boundary and passthrough behavior", () => {
       spy.mockRestore();
     }));
 
-  test("the describe block echoes the pinned model from the config", async () =>
+  test("the block reports the response's model while the request carries the configured one", async () =>
     withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
-      const { seen, spy } = stubFetch(happyBody);
-      await describeStep("some work", '{"privacy":"normal"}', {
+      const { seen, spy } = stubFetch({ ...happyBody, model: "jev-responding" });
+      const result = await describeStep("some work", '{"privacy":"normal"}', {
         registry: FIXTURE,
         config: { describe: { jevModel: "jev-test" } },
       });
       expect(seen()?.model).toBe("jev-test");
+      expect(result.describe.model).toBe("jev-responding");
       spy.mockRestore();
     }));
 });

@@ -7,8 +7,8 @@ const ENDPOINT = "https://api.typesafe.ai/v1/systemone";
 const QUESTIONS: Record<string, JevQuestion> = {
   urgent: {
     type: "noul",
-    instructions: "Does the work described in the state read secret material?",
-    criteria: { true: "A secret value passes through.", false: "Only a path or a name." },
+    instructions: "Does the work described in the state need to finish today?",
+    criteria: { true: "The state names a same-day deadline.", false: "No deadline is named." },
   },
 };
 
@@ -38,6 +38,16 @@ async function rejected(promise: Promise<unknown>): Promise<JevError> {
 describe("askJev key handling", () => {
   test("a missing key throws MISSING_KEY before any request", async () => {
     await withEnv({ TYPESAFE_API_KEY: undefined }, async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
+      const error = await rejected(askJev("state", QUESTIONS, { sleep: never }));
+      expect(error.code).toBe("MISSING_KEY");
+      expect(fetchSpy).not.toHaveBeenCalled();
+      fetchSpy.mockRestore();
+    });
+  });
+
+  test("an empty key throws MISSING_KEY before any call", async () => {
+    await withEnv({ TYPESAFE_API_KEY: "" }, async () => {
       const fetchSpy = vi.spyOn(globalThis, "fetch");
       const error = await rejected(askJev("state", QUESTIONS, { sleep: never }));
       expect(error.code).toBe("MISSING_KEY");
@@ -176,6 +186,83 @@ describe("askJev retry and failure handling", () => {
       fetchSpy.mockRestore();
     }));
 
+  test("a Retry-After of zero sleeps zero, including a non-integer zero", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const slept: number[] = [];
+      let attempt = 0;
+      const headers = [{ "Retry-After": "0" }, { "Retry-After": "0.0" }];
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+        const header = headers[attempt];
+        attempt++;
+        return header === undefined
+          ? ok({
+              model: "m",
+              answers: { urgent: { type: "noul", noul: 0.5 } },
+              usage: { input_tokens: 1, output_tokens: 1 },
+            })
+          : fail(429, header);
+      });
+      await askJev("state", QUESTIONS, {
+        backoffMs: 10,
+        sleep: (ms) => {
+          slept.push(ms);
+          return Promise.resolve();
+        },
+      });
+      expect(slept).toEqual([0, 0]);
+      fetchSpy.mockRestore();
+    }));
+
+  test("a negative Retry-After falls back to the exponential delay", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const slept: number[] = [];
+      let attempt = 0;
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+        attempt++;
+        return attempt < 2
+          ? fail(429, { "Retry-After": "-30" })
+          : ok({
+              model: "m",
+              answers: { urgent: { type: "noul", noul: 0.5 } },
+              usage: { input_tokens: 1, output_tokens: 1 },
+            });
+      });
+      await askJev("state", QUESTIONS, {
+        backoffMs: 10,
+        sleep: (ms) => {
+          slept.push(ms);
+          return Promise.resolve();
+        },
+      });
+      expect(slept).toEqual([10]);
+      fetchSpy.mockRestore();
+    }));
+
+  test("an unparseable Retry-After falls back to the exponential delay", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const slept: number[] = [];
+      let attempt = 0;
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+        attempt++;
+        return attempt < 2
+          ? fail(429, { "Retry-After": "soon" })
+          : ok({
+              model: "m",
+              answers: { urgent: { type: "noul", noul: 0.5 } },
+              usage: { input_tokens: 1, output_tokens: 1 },
+            });
+      });
+      await askJev("state", QUESTIONS, {
+        backoffMs: 10,
+        sleep: (ms) => {
+          slept.push(ms);
+          return Promise.resolve();
+        },
+      });
+      expect(slept).toEqual([10]);
+      fetchSpy.mockRestore();
+    }));
+
   test("a Retry-After date in the past clamps to zero", async () =>
     withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
       const slept: number[] = [];
@@ -223,8 +310,9 @@ describe("askJev retry and failure handling", () => {
       fetchSpy.mockRestore();
     }));
 
-  test("an exhausted backoff throws RATE_LIMITED with the status", async () =>
+  test("an exhausted backoff throws RATE_LIMITED with the status after one sleep per retry", async () =>
     withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const slept: number[] = [];
       let attempt = 0;
       const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
         attempt++;
@@ -234,10 +322,14 @@ describe("askJev retry and failure handling", () => {
         askJev("state", QUESTIONS, {
           maxAttempts: 3,
           backoffMs: 1,
-          sleep: () => Promise.resolve(),
+          sleep: (ms) => {
+            slept.push(ms);
+            return Promise.resolve();
+          },
         }),
       );
       expect(attempt).toBe(3);
+      expect(slept).toEqual([1, 2]);
       expect(error.code).toBe("RATE_LIMITED");
       expect(error.status).toBe(429);
       fetchSpy.mockRestore();
