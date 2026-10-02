@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { loadRegistry, RegistryError } from "@dungle-scrubs/model-registry";
 import { describe, expect, test } from "vitest";
 import packageJson from "../package.json" with { type: "json" };
 import { RouterError, rank } from "../src/index.js";
-import { expectValidAnswer, fixturePath, sha256Hex, withEnv } from "./helpers.js";
+import { expectValidAnswer, fixturePath, sha256Hex, withEnv, withTempDir } from "./helpers.js";
 
 const FULL = fixturePath("full.json");
 const SPEED = fixturePath("speed.json");
@@ -688,16 +689,19 @@ describe("rank registry input", () => {
     });
   });
 
-  test("a loader failure rethrows the RegistryError unchanged", () => {
-    try {
-      rank({ minimums: { coding: 5 } }, { registry: "/nonexistent/nope.json" });
-      throw new Error("expected rank to rethrow");
-    } catch (error) {
-      expect(error).toBeInstanceOf(RegistryError);
-      const registryError = error as RegistryError;
-      expect(registryError.code).toBe("registry-missing");
-      expect(registryError.path).toBe("/nonexistent/nope.json");
-    }
+  test("a loader failure rethrows the RegistryError unchanged", async () => {
+    await withTempDir(async (dir) => {
+      const missing = resolve(dir, "nonexistent", "nope.json");
+      try {
+        rank({ minimums: { coding: 5 } }, { registry: missing });
+        throw new Error("expected rank to rethrow");
+      } catch (error) {
+        expect(error).toBeInstanceOf(RegistryError);
+        const registryError = error as RegistryError;
+        expect(registryError.code).toBe("registry-missing");
+        expect(registryError.path).toBe(missing);
+      }
+    });
   });
 
   test("a bad router section fails before an invalid query is read", () => {

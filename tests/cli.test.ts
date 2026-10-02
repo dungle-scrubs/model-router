@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 import packageJson from "../package.json" with { type: "json" };
 import { runCli } from "../src/cli-run.js";
@@ -219,17 +220,20 @@ describe("registry failures exit 4", () => {
     expect(error.fix).toContain('"rank"');
   });
 
-  test("a missing registry file prints the loader's own envelope unchanged", () => {
-    const result = run(['{"minimums":{"coding":5}}', "--registry", "/nonexistent/nope.json"]);
-    expect(result.exitCode).toBe(4);
-    expect(result.stdout()).toBe("");
-    const error = errorEnvelope(result.stderr).error;
-    expect(error).toEqual({
-      code: "registry-missing",
-      fix: "Create the file, or check an example by running model-registry check --registry examples/registry.json.",
-      message: 'no registry file exists at "/nonexistent/nope.json"',
-      path: "/nonexistent/nope.json",
-      problems: [],
+  test("a missing registry file prints the loader's own envelope unchanged", async () => {
+    await withTempDir(async (dir) => {
+      const missing = resolve(dir, "nonexistent", "nope.json");
+      const result = run([`{"minimums":{"coding":5}}`, "--registry", missing]);
+      expect(result.exitCode).toBe(4);
+      expect(result.stdout()).toBe("");
+      const error = errorEnvelope(result.stderr).error;
+      expect(error).toEqual({
+        code: "registry-missing",
+        fix: "Create the file, or check an example by running model-registry check --registry examples/registry.json.",
+        message: `no registry file exists at ${JSON.stringify(missing)}`,
+        path: missing,
+        problems: [],
+      });
     });
   });
 
