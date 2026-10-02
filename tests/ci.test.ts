@@ -23,12 +23,12 @@ function stepBlocks(text: string): string[][] {
 describe("the CI workflow", () => {
   const text = readFileSync(WORKFLOW_PATH, "utf8");
 
-  test("every job's token step runs under bash on every runner", () => {
-    const tokenSteps = stepBlocks(text).filter((block) =>
-      block.join("\n").includes("MODEL_REGISTRY_READ_TOKEN"),
+  test("every job's deploy key step runs under bash on every runner", () => {
+    const keySteps = stepBlocks(text).filter((block) =>
+      block.join("\n").includes("MODEL_REGISTRY_DEPLOY_KEY"),
     );
-    expect(tokenSteps.length).toBe(2);
-    for (const block of tokenSteps) {
+    expect(keySteps.length).toBe(2);
+    for (const block of keySteps) {
       const step = block.join("\n");
       expect(step, step).toContain("shell: bash");
     }

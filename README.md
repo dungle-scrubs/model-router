@@ -120,4 +120,4 @@ $ pnpm verify          # lint, typecheck, build, tests
 $ pnpm test:mutation   # mutation score, break at 75
 ```
 
-Tests use placeholder registries only (`tests/fixtures/`): model keys like `model-a`, harnesses like `harness-x`, families like `family-a`. CI installs the private `model-registry` git dependency with the `MODEL_REGISTRY_READ_TOKEN` secret.
+Tests use placeholder registries only (`tests/fixtures/`): model keys like `model-a`, harnesses like `harness-x`, families like `family-a`. CI installs the private `model-registry` git dependency over SSH with a read-only deploy key held in the `MODEL_REGISTRY_DEPLOY_KEY` secret.
