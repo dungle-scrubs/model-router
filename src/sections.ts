@@ -272,6 +272,18 @@ function validateTasks(raw: unknown, loaded: LoadedRegistry, problems: RouterPro
           }
         }
       }
+      // The stakes map is closed: any key beyond low, normal and high is a
+      // problem, even when all three required entries are present.
+      for (const stakeKey of Object.keys(minimums)) {
+        if (!STAKES_VALUES.includes(stakeKey)) {
+          problems.push({
+            code: "tasks-minimums-stake-unknown",
+            field: pathJoin(pathJoin(taskField, "minimums"), stakeKey),
+            message: `the task "${taskName}" minimums carries the unknown stakes "${stakeKey}"`,
+            fix: `Remove "${stakeKey}" from the minimums of "${taskName}"; the stakes are low, normal and high.`,
+          });
+        }
+      }
     }
 
     const rankList = taskRaw.rank;

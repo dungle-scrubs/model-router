@@ -124,6 +124,7 @@ A `registry-sections-invalid` error carries one problem per finding in `problems
 | `tasks-minimums-not-object` | a `tasks` entry's `minimums` is not an object |
 | `tasks-minimums-stake-missing` | a `tasks` entry's `minimums` is missing a stakes level |
 | `tasks-minimums-stake-not-object` | a `tasks` entry's `minimums.<stakes>` is not an object |
+| `tasks-minimums-stake-unknown` | a `tasks` entry's `minimums` carries a stakes key other than low, normal and high |
 | `tasks-minimums-rating-unknown` | a `tasks` entry's `minimums.<stakes>` names a rating the registry does not declare |
 | `tasks-minimums-rating-not-number` | a `tasks` entry's `minimums.<stakes>` floor is not a finite number |
 | `tasks-rank-missing` | a `tasks` entry has no `rank` |

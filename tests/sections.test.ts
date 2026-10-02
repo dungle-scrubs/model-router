@@ -176,6 +176,28 @@ describe("validateRouterSections tasks and policy", () => {
     });
   });
 
+  test("a task minimums with an unknown stakes key is invalid", async () => {
+    const error = withTasks({
+      "task-a": {
+        description: "Code.",
+        minimums: {
+          low: { coding: 6 },
+          normal: { coding: 7 },
+          high: { coding: 8 },
+          urgent: { coding: 9 },
+        },
+        rank: ["coding"],
+      },
+    });
+    expect(error.problems.map((problem) => problem.code)).toEqual(["tasks-minimums-stake-unknown"]);
+    expect(error.problems[0]).toEqual({
+      code: "tasks-minimums-stake-unknown",
+      field: '$["tasks"]["task-a"]["minimums"]["urgent"]',
+      fix: 'Remove "urgent" from the minimums of "task-a"; the stakes are low, normal and high.',
+      message: 'the task "task-a" minimums carries the unknown stakes "urgent"',
+    });
+  });
+
   test("a task minimum that names an undeclared rating is invalid", async () => {
     const error = withTasks({
       "task-a": {
