@@ -78,6 +78,23 @@ The RFC names the error codes; these warning and reason codes are this package's
 | `needs-not-satisfied` | removed reasons | the route lacks a needed capability |
 | `floor-not-met` | route reasons | the model's rating is below a floor, or absent |
 
+## Registry-section problem codes
+
+A `registry-sections-invalid` error carries one problem per finding in `problems[]`. These are the `router`-section codes this package emits:
+
+| Code | Cause |
+|---|---|
+| `router-section-missing` | the registry file has no `router` section, which model-router requires |
+| `router-section-not-object` | the `router` section is not a JSON object |
+| `router-rank-missing` | the `router` section has no `rank` list |
+| `router-rank-invalid` | `router.rank` is not a non-empty array |
+| `router-rank-entry-not-string` | a `router.rank` entry is not a string |
+| `router-rank-unknown` | a `router.rank` entry names a rating the registry does not declare |
+| `router-questions-not-object` | `router.questions` is not a JSON object |
+| `router-question-capability-unknown` | a `router.questions` key names a capability the registry does not declare |
+| `router-question-not-string` | a `router.questions` value is not a string |
+| `router-field-unknown` | the `router` section carries a field other than `rank` and `questions` |
+
 ## Library
 
 ```ts
