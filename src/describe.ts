@@ -174,6 +174,25 @@ export async function describe(
     };
   }
 
+  // Nothing to ask: the task was not needed and the registry declares no
+  // capability question. No request leaves, no key is read, no warning is
+  // added; the caller's query is the answer.
+  if (Object.keys(questions).length === 0) {
+    const source = partial.task !== undefined ? "caller" : "inline-need";
+    return {
+      describe: {
+        model: null,
+        taskGate: config.describe.taskGate,
+        capabilityThreshold: config.describe.capabilityThreshold,
+        task: { source, confidence: null, candidates: [] },
+        needsAdded: [],
+        usage: null,
+      },
+      query: filledQuery(partial, partial.task, [...new Set(partial.needs ?? [])]),
+      warnings: [],
+    };
+  }
+
   let response: JevResponse;
   try {
     response = await askJev(text, questions, { model: config.describe.jevModel });

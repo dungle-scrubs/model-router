@@ -7,6 +7,7 @@ import { fixturePath, withEnv } from "./helpers.js";
 
 const FIXTURE = fixturePath("describe.json");
 const MINIMAL = fixturePath("minimal.json");
+const NO_QUESTIONS = fixturePath("no-questions.json");
 
 const USAGE = { input_tokens: 500, output_tokens: 30 };
 
@@ -336,6 +337,43 @@ describe("the describe step's gate and result", () => {
       expect(error.code).toBe("describe-failed");
       expect(error.message).toContain("BAD_RESPONSE");
       spy.mockRestore();
+    }));
+});
+
+describe("the describe step with nothing to ask", () => {
+  test("a task the caller named and no router.questions means no request, no key and no warning", async () =>
+    withEnv({ TYPESAFE_API_KEY: undefined }, async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
+      const result = await describeStep(
+        "some work",
+        '{"privacy":"normal","task":"task-b","needs":["repo-access"]}',
+        { registry: NO_QUESTIONS },
+      );
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(result.query.task).toBe("task-b");
+      expect(result.query.needs).toEqual(["repo-access"]);
+      expect(result.describe.model).toBeNull();
+      expect(result.describe.task.source).toBe("caller");
+      expect(result.describe.task.confidence).toBeNull();
+      expect(result.describe.task.candidates).toEqual([]);
+      expect(result.describe.needsAdded).toEqual([]);
+      expect(result.describe.usage).toBeNull();
+      expect(result.warnings).toEqual([]);
+      fetchSpy.mockRestore();
+    }));
+
+  test("inline minimums the caller stated mean the same: no request with nothing to ask", async () =>
+    withEnv({ TYPESAFE_API_KEY: undefined }, async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
+      const result = await describeStep(
+        "some work",
+        '{"privacy":"normal","minimums":{"coding":7}}',
+        { registry: NO_QUESTIONS },
+      );
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(result.describe.task.source).toBe("inline-need");
+      expect(result.warnings).toEqual([]);
+      fetchSpy.mockRestore();
     }));
 });
 

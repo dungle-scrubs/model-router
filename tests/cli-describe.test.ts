@@ -301,6 +301,25 @@ describe("--describe failures", () => {
       });
     }));
 
+  test("a missing key with nothing to ask still ranks: exit 0, no warning, no request", async () =>
+    withEnv({ TYPESAFE_API_KEY: undefined }, async () => {
+      await withDescriptionFile("some work", async (file) => {
+        const result = await run([
+          "--describe",
+          file,
+          "--registry",
+          fixturePath("no-questions.json"),
+          '{"privacy":"normal","task":"task-a"}',
+        ]);
+        expect(result.exitCode).toBe(0);
+        const answer = JSON.parse(result.stdout());
+        expectValidAnswer(answer);
+        expect(answer.describe?.model).toBeNull();
+        expect(answer.warnings).toEqual([]);
+        expect(answer.query.task).toBe("task-a");
+      });
+    }));
+
   test("a missing key with a caller task ranks anyway and warns capabilities-unasked", async () =>
     withEnv({ TYPESAFE_API_KEY: undefined }, async () => {
       await withDescriptionFile("some work", async (file) => {
