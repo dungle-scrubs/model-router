@@ -25,47 +25,51 @@ export function validateRouterSections(loaded: LoadedRegistry): RouterSections {
   const problems: RouterProblem[] = [];
 
   if (section === undefined) {
-    throw sectionsError([
+    throw sectionsError(
       {
         code: "router-section-missing",
         field: '$["router"]',
         message: "the registry file has no router section, which model-router requires",
         fix: `Add the line ${rankLine(loaded)} to the registry file, with the ratings that order routes.`,
       },
-    ]);
+      [],
+    );
   }
 
   if (!isPlainObject(section)) {
-    throw sectionsError([
+    throw sectionsError(
       {
         code: "router-section-not-object",
         field: '$["router"]',
         message: "the router section must be a JSON object",
         fix: `Replace the router section with an object such as ${rankLine(loaded)}.`,
       },
-    ]);
+      [],
+    );
   }
 
   const rankField = section.rank;
   if (rankField === undefined) {
-    throw sectionsError([
+    throw sectionsError(
       {
         code: "router-rank-missing",
         field: pathJoin('$["router"]', "rank"),
         message: "the router section has no rank list, which model-router requires",
         fix: `Add "rank": ["${sampleRating(loaded)}"] inside the router section, with the ratings that order routes.`,
       },
-    ]);
+      [],
+    );
   }
   if (!Array.isArray(rankField) || rankField.length === 0) {
-    throw sectionsError([
+    throw sectionsError(
       {
         code: "router-rank-invalid",
         field: pathJoin('$["router"]', "rank"),
         message: "the router rank must be a non-empty array of rating names",
         fix: `Set "rank" to a non-empty array of declared rating names, such as ["${sampleRating(loaded)}"].`,
       },
-    ]);
+      [],
+    );
   }
 
   const declaredRatings = loaded.registry.ratings ?? {};
@@ -137,33 +141,24 @@ export function validateRouterSections(loaded: LoadedRegistry): RouterSections {
   }
 
   if (problems.length > 0) {
-    throw sectionsError(problems);
+    const [first, ...rest] = problems as [RouterProblem, ...RouterProblem[]];
+    throw sectionsError(first, rest);
   }
 
   return { rank };
 }
 
-function sectionsError(problems: readonly RouterProblem[]): RouterError {
-  const first = problems[0];
-  if (first === undefined) {
-    return new RouterError({
-      code: "registry-sections-invalid",
-      field: '$["router"]',
-      fix: 'Add "rank": ["<rating>"] inside the router section, with the ratings that order routes.',
-      message: "the router section has no usable rank list",
-      problems: [],
-    });
-  }
+function sectionsError(first: RouterProblem, rest: readonly RouterProblem[]): RouterError {
   return new RouterError({
     code: "registry-sections-invalid",
     field: first.field,
     fix:
-      problems.length === 1
+      rest.length === 0
         ? first.fix
         : "Fix each problem listed in problems, then run model-router again.",
     message:
-      problems.length === 1 ? first.message : `the router section has ${problems.length} problems`,
-    problems: [...problems],
+      rest.length === 0 ? first.message : `the router section has ${rest.length + 1} problems`,
+    problems: [first, ...rest],
   });
 }
 

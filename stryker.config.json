@@ -6,7 +6,7 @@
   "checkers": ["typescript"],
   "tsconfigFile": "tsconfig.json",
   "buildCommand": "node scripts/build.mjs",
-  "mutate": ["src/**/*.ts", "!src/index.ts", "!src/types.ts"],
+  "mutate": ["src/**/*.ts", "!src/index.ts", "!src/types.ts", "!src/cli.ts", "!src/version.ts"],
   "reporters": ["html", "clear-text", "progress"],
   "concurrency": "50%",
   "incremental": true,

@@ -139,12 +139,16 @@ describe("rank with inline minimums", () => {
     ]);
   });
 
-  test("a minimum exactly at the floor clears it", () => {
+  test("a minimum exactly at the floor clears it, without a floor reason", () => {
     const loaded = full();
     const answer = rank({ minimums: { coding: 5 } }, { registry: loaded });
-    expect(answer.routes.find((route) => route.label === "model-b@harness-x")?.floor).toBe(
-      "clears",
-    );
+    const boundary = answer.routes.find((route) => route.label === "model-b@harness-x");
+    expect(boundary?.floor).toBe("clears");
+    expect(boundary?.reasons).toEqual([]);
+    const aboveFloor = rank({ minimums: { coding: 7 } }, { registry: loaded });
+    const justClears = aboveFloor.routes.find((route) => route.label === "model-a@harness-x");
+    expect(justClears?.floor).toBe("clears");
+    expect(justClears?.reasons).toEqual([]);
   });
 
   test("routes below a floor come after every clearing route, by rank ratings then cost", () => {
@@ -253,13 +257,13 @@ describe("rank under prefer: speed", () => {
     expect(labels(answer).at(-1)).toBe("no-speed@harness-x");
   });
 
-  test("under prefer: cost the response times are ignored and file order breaks the tie", () => {
+  test("under prefer: cost the response times are ignored and cost decides", () => {
     const loaded = loadRegistry({ path: SPEED });
     const answer = rank({ minimums: { coding: 5 }, prefer: "cost" }, { registry: loaded });
     expect(labels(answer)).toEqual([
+      "slow@harness-x",
       "fast@harness-x",
       "medium@harness-x",
-      "slow@harness-x",
       "no-speed@harness-x",
     ]);
   });
@@ -275,6 +279,20 @@ describe("rank under prefer: speed", () => {
       "model-c@harness-x",
       "model-a@harness-y/provider-1",
       "model-d@harness-z",
+    ]);
+  });
+});
+
+describe("rank tie-breaking on the ties fixture", () => {
+  test("rank ties fall through to cost, and missing values sort below", () => {
+    const loaded = loadRegistry({ path: fixturePath("ties.json") });
+    const answer = rank({ minimums: {} }, { registry: loaded });
+    expectValidAnswer(answer);
+    expect(labels(answer)).toEqual([
+      "model-q@harness-q",
+      "model-s@harness-s",
+      "model-r@harness-r",
+      "model-p@harness-p",
     ]);
   });
 });
@@ -403,14 +421,24 @@ describe("rank warnings for fields this slice does not apply", () => {
       { registry: loaded },
     );
     expectValidAnswer(answer);
-    expect(answer.warnings.map((warning) => warning.code)).toEqual([
-      "effort-unapplied",
-      "pin-unapplied",
-      "policy-none",
+    expect(answer.warnings).toEqual([
+      {
+        code: "effort-unapplied",
+        message:
+          'the query effort "high" was not applied; this release does not resolve effort levels',
+        fix: "Remove effort from the query; effort resolution arrives in a later release.",
+      },
+      {
+        code: "pin-unapplied",
+        message: 'the pin "model-a@harness-x" was not used; this release does not place pins',
+        fix: "Remove pin from the query; pins arrive in a later release.",
+      },
+      {
+        code: "policy-none",
+        message: 'the spec "settled" matched no policy; normal ranking was used',
+        fix: "Remove spec from the query, or add a matching policy when policies ship.",
+      },
     ]);
-    expect(answer.warnings[2]?.message).toBe(
-      'the spec "settled" matched no policy; normal ranking was used',
-    );
     expect(answer.pin).toBeNull();
     expect(answer.query.effort).toBe("high");
     expect(answer.query.pin).toBe("model-a@harness-x");
@@ -441,10 +469,95 @@ describe("rank warnings for fields this slice does not apply", () => {
   test("a task alongside minimums still warns that the task was not ranked", () => {
     const loaded = full();
     const answer = rank({ task: "implement", minimums: { coding: 5 } }, { registry: loaded });
-    expect(answer.warnings.map((warning) => warning.code)).toEqual(["task-unranked"]);
+    expect(answer.warnings).toEqual([
+      {
+        code: "task-unranked",
+        message: 'the task "implement" was not ranked; this release ranks by router.rank only',
+        fix: "State minimums for inline floors; ranking by task arrives in a later release.",
+      },
+    ]);
     expect(labels(answer)).toEqual(
       rank({ minimums: { coding: 5 } }, { registry: loaded }).routes.map((route) => route.label),
     );
+  });
+
+  test("every removal reason carries its full coded shape", () => {
+    const loaded = full();
+    const privacy = rank({ minimums: { coding: 5 }, privacy: "secret" }, { registry: loaded });
+    expect(privacy.removed[0]).toEqual({
+      label: "model-a@harness-y/provider-1",
+      reason: {
+        code: "privacy-secret-not-eligible",
+        fix: "Mark the route's privacyEligible field true, or run the work without privacy: secret.",
+        message: "privacy: secret material never goes to a route that is not privacyEligible",
+      },
+    });
+
+    const family = rank(
+      { minimums: { coding: 5 }, excludeFamilies: ["family-a"] },
+      { registry: loaded },
+    );
+    expect(family.removed[0]).toEqual({
+      label: "model-a@harness-x",
+      reason: {
+        code: "family-excluded-by-query",
+        fix: "Remove the family from excludeFamilies, or change the route's family.",
+        message: "the route's family is in the query's excludeFamilies",
+        field: '$.excludeFamilies["family-a"]',
+      },
+    });
+
+    const needs = rank({ minimums: { coding: 5 }, needs: ["repo-access"] }, { registry: loaded });
+    expect(needs.removed[0]).toEqual({
+      label: "model-a@harness-x",
+      reason: {
+        code: "needs-not-satisfied",
+        fix: "Add the missing capabilities to the route, or remove them from needs.",
+        message: "the route does not list every capability the query needs: repo-access",
+        field: '$.needs["repo-access"]',
+      },
+    });
+  });
+
+  test("the family-unknown and capability-unknown warnings carry their fixes", () => {
+    const loaded = full();
+    const answer = rank(
+      {
+        excludeFamilies: ["family-z"],
+        minimums: { coding: 5 },
+        needs: ["telepathy"],
+      },
+      { registry: loaded },
+    );
+    expect(answer.warnings).toEqual([
+      {
+        code: "capability-unknown",
+        field: '$.needs["telepathy"]',
+        message:
+          'the need "telepathy" names a capability the registry does not declare; every route lacking it is removed',
+        fix: 'Declare "telepathy" in the registry\'s capabilities section, or remove it from needs.',
+      },
+      {
+        code: "family-unknown",
+        field: '$.excludeFamilies["family-z"]',
+        message: 'the family "family-z" is not in the registry; it excludes nothing',
+        fix: "Name a family the registry declares, or remove it from excludeFamilies.",
+      },
+    ]);
+  });
+
+  test("the rating-unknown warning carries its fix and field", () => {
+    const loaded = full();
+    const answer = rank({ minimums: { vibes: 5 } }, { registry: loaded });
+    expect(answer.warnings).toEqual([
+      {
+        code: "rating-unknown",
+        field: '$.minimums["vibes"]',
+        message:
+          'the minimum "vibes" names a rating the registry does not declare; every route counts as below that floor',
+        fix: 'Declare "vibes" in the registry\'s ratings section, or remove it from minimums.',
+      },
+    ]);
   });
 
   test("the answered query reports what was applied, deduplicated", () => {

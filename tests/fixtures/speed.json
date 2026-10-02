@@ -9,7 +9,9 @@
   "models": {
     "fast": {
       "family": "family-fast",
-      "ratings": { "coding": 5 },
+      "ratings": {
+        "coding": 5
+      },
       "routes": [
         {
           "harness": "harness-x",
@@ -22,7 +24,9 @@
     },
     "medium": {
       "family": "family-med",
-      "ratings": { "coding": 5 },
+      "ratings": {
+        "coding": 5
+      },
       "routes": [
         {
           "harness": "harness-x",
@@ -35,20 +39,24 @@
     },
     "slow": {
       "family": "family-slow",
-      "ratings": { "coding": 5 },
+      "ratings": {
+        "coding": 5
+      },
       "routes": [
         {
           "harness": "harness-x",
           "modelId": "slow-1",
           "hosted": true,
-          "cost": 5,
+          "cost": 9,
           "responseSeconds": 10
         }
       ]
     },
     "no-speed": {
       "family": "family-none",
-      "ratings": { "coding": 5 },
+      "ratings": {
+        "coding": 5
+      },
       "routes": [
         {
           "harness": "harness-x",

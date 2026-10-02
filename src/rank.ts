@@ -99,16 +99,14 @@ function rejectByHardLimit(
   if (excludeFamilies.includes(family)) {
     return removalReason(REMOVAL_FAMILY, `$.excludeFamilies[${JSON.stringify(family)}]`);
   }
-  if (needs.length > 0) {
-    const routeCapabilities = new Set(route.capabilities ?? []);
-    const missing = needs.filter((capability) => !routeCapabilities.has(capability));
-    if (missing.length > 0) {
-      return removalReason(
-        REMOVAL_NEEDS,
-        `$.needs[${JSON.stringify(missing[0] ?? "")}]`,
-        `the route does not list every capability the query needs: ${missing.join(", ")}`,
-      );
-    }
+  const needsCapabilities = new Set(route.capabilities ?? []);
+  const missing = needs.filter((capability) => !needsCapabilities.has(capability));
+  if (missing.length > 0) {
+    return removalReason(
+      REMOVAL_NEEDS,
+      `$.needs[${JSON.stringify(missing[0] ?? "")}]`,
+      `the route does not list every capability the query needs: ${missing.join(", ")}`,
+    );
   }
   return null;
 }
@@ -151,7 +149,7 @@ function byRankRatings(a: FlatRoute, b: FlatRoute, rank: readonly string[]): num
     if (bValue === undefined) return -1;
     if (aValue !== bValue) return bValue - aValue;
   }
-  return a.order - b.order;
+  return 0;
 }
 
 function byCostDescending(a: FlatRoute, b: FlatRoute): number {

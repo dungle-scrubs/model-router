@@ -9,14 +9,7 @@ const AJV_OPTIONS = { allErrors: true, strictNumbers: true } as const;
 const QUERY_FIELD_LIST =
   "task, minimums, needs, effort, pin, stakes, prefer, privacy, excludeFamilies and spec";
 
-let validator: ReturnType<Ajv2020["compile"]> | undefined;
-
-function getValidator(): ReturnType<Ajv2020["compile"]> {
-  if (validator === undefined) {
-    validator = new Ajv2020(AJV_OPTIONS).compile(querySchema);
-  }
-  return validator;
-}
+const validateQueryShape = new Ajv2020(AJV_OPTIONS).compile(querySchema);
 
 function invalid(field: string, message: string, fix: string): RouterError {
   return new RouterError({ code: "query-invalid", field, fix, message, problems: [] });
@@ -113,7 +106,7 @@ export function parseQuery(input: unknown): Query {
       "Give the query as a JSON object with at least task or minimums.",
     );
   }
-  const validate = getValidator();
+  const validate = validateQueryShape;
   if (!validate(raw)) {
     throw curatedError(validate.errors ?? []);
   }

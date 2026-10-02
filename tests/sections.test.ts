@@ -70,11 +70,73 @@ describe("validateRouterSections", () => {
         }),
       });
       const error = catchSectionsError(() => validateRouterSections(loaded));
-      expect(error.code).toBe("registry-sections-invalid");
-      expect(error.problems[0]?.code).toBe("router-rank-missing");
-      expect(error.problems[0]?.field).toBe('$["router"]["rank"]');
-      expect(error.fix).toContain('"rank"');
-      expect(error.fix).toContain('"coding"');
+      expect(error.toJSON()).toEqual({
+        code: "registry-sections-invalid",
+        field: '$["router"]["rank"]',
+        fix: 'Add "rank": ["coding"] inside the router section, with the ratings that order routes.',
+        message: "the router section has no rank list, which model-router requires",
+        problems: [
+          {
+            code: "router-rank-missing",
+            field: '$["router"]["rank"]',
+            fix: 'Add "rank": ["coding"] inside the router section, with the ratings that order routes.',
+            message: "the router section has no rank list, which model-router requires",
+          },
+        ],
+      });
+    });
+  });
+
+  test("a router section that is not an object is invalid", async () => {
+    await withTempDir(async (dir) => {
+      const base = {
+        format: 1,
+        ratings: { coding: "Writes and changes code to a spec." },
+        models: {
+          "model-a": {
+            family: "family-a",
+            routes: [{ harness: "harness-x", modelId: "model-id-a", hosted: true }],
+          },
+        },
+      };
+      for (const router of ["oops", 7, ["coding"]]) {
+        const loaded = loadRegistry({ path: writeJson(dir, "registry.json", { ...base, router }) });
+        const error = catchSectionsError(() => validateRouterSections(loaded));
+        expect(error.toJSON()).toEqual({
+          code: "registry-sections-invalid",
+          field: '$["router"]',
+          fix: 'Replace the router section with an object such as "router": { "rank": ["coding"] }.',
+          message: "the router section must be a JSON object",
+          problems: [
+            {
+              code: "router-section-not-object",
+              field: '$["router"]',
+              fix: 'Replace the router section with an object such as "router": { "rank": ["coding"] }.',
+              message: "the router section must be a JSON object",
+            },
+          ],
+        });
+      }
+    });
+  });
+
+  test("a registry with no ratings section still names a concrete line to add", async () => {
+    await withTempDir(async (dir) => {
+      const loaded = loadRegistry({
+        path: writeJson(dir, "registry.json", {
+          format: 1,
+          models: {
+            "model-a": {
+              family: "family-a",
+              routes: [{ harness: "harness-x", modelId: "model-id-a", hosted: true }],
+            },
+          },
+        }),
+      });
+      const error = catchSectionsError(() => validateRouterSections(loaded));
+      expect(error.fix).toBe(
+        'Add the line "router": { "rank": ["rating-a"] } to the registry file, with the ratings that order routes.',
+      );
     });
   });
 
@@ -95,8 +157,20 @@ describe("validateRouterSections", () => {
           }),
         });
         const error = catchSectionsError(() => validateRouterSections(loaded));
-        expect(error.code).toBe("registry-sections-invalid");
-        expect(error.problems[0]?.code).toBe("router-rank-invalid");
+        expect(error.toJSON()).toEqual({
+          code: "registry-sections-invalid",
+          field: '$["router"]["rank"]',
+          fix: 'Set "rank" to a non-empty array of declared rating names, such as ["coding"].',
+          message: "the router rank must be a non-empty array of rating names",
+          problems: [
+            {
+              code: "router-rank-invalid",
+              field: '$["router"]["rank"]',
+              fix: 'Set "rank" to a non-empty array of declared rating names, such as ["coding"].',
+              message: "the router rank must be a non-empty array of rating names",
+            },
+          ],
+        });
       }
     });
   });
@@ -117,8 +191,13 @@ describe("validateRouterSections", () => {
         }),
       });
       const error = catchSectionsError(() => validateRouterSections(loaded));
-      expect(error.problems[0]?.code).toBe("router-rank-entry-not-string");
-      expect(error.problems[0]?.field).toBe('$["router"]["rank"][1]');
+      expect(error.message).toBe("the router rank entry at index 1 must be a string");
+      expect(error.problems[0]).toEqual({
+        code: "router-rank-entry-not-string",
+        field: '$["router"]["rank"][1]',
+        fix: "Set the rank entry at index 1 to a declared rating name.",
+        message: "the router rank entry at index 1 must be a string",
+      });
     });
   });
 
@@ -138,8 +217,12 @@ describe("validateRouterSections", () => {
         }),
       });
       const error = catchSectionsError(() => validateRouterSections(loaded));
-      expect(error.problems[0]?.code).toBe("router-rank-unknown");
-      expect(error.problems[0]?.message).toContain("vibes");
+      expect(error.problems[0]).toEqual({
+        code: "router-rank-unknown",
+        field: '$["router"]["rank"][1]',
+        fix: 'Add "vibes" to the ratings section, or remove it from "router"."rank".',
+        message: 'the rating "vibes" is not declared in the ratings section',
+      });
     });
   });
 
@@ -159,8 +242,12 @@ describe("validateRouterSections", () => {
         }),
       });
       const error = catchSectionsError(() => validateRouterSections(loaded));
-      expect(error.problems[0]?.code).toBe("router-field-unknown");
-      expect(error.problems[0]?.field).toBe('$["router"]["matrix"]');
+      expect(error.problems[0]).toEqual({
+        code: "router-field-unknown",
+        field: '$["router"]["matrix"]',
+        fix: 'Remove the field; the router section accepts only "rank" and "questions".',
+        message: 'the field "matrix" is not part of the router section',
+      });
     });
   });
 
@@ -192,17 +279,32 @@ describe("validateRouterSections", () => {
       });
 
       const notObject = catchSectionsError(() => validateRouterSections(withQuestions("browser")));
-      expect(notObject.problems[0]?.code).toBe("router-questions-not-object");
+      expect(notObject.problems[0]).toEqual({
+        code: "router-questions-not-object",
+        field: '$["router"]["questions"]',
+        fix: "Replace the router questions section with a JSON object, or remove it.",
+        message: "the router questions section must be a JSON object",
+      });
 
       const unknownCapability = catchSectionsError(() =>
         validateRouterSections(withQuestions({ telepathy: "Can it read minds?" })),
       );
-      expect(unknownCapability.problems[0]?.code).toBe("router-question-capability-unknown");
+      expect(unknownCapability.problems[0]).toEqual({
+        code: "router-question-capability-unknown",
+        field: '$["router"]["questions"]["telepathy"]',
+        fix: 'Add "telepathy" to the capabilities section, or remove it from "router"."questions".',
+        message: 'the capability "telepathy" is not declared in the capabilities section',
+      });
 
       const notString = catchSectionsError(() =>
         validateRouterSections(withQuestions({ browser: 7 })),
       );
-      expect(notString.problems[0]?.code).toBe("router-question-not-string");
+      expect(notString.problems[0]).toEqual({
+        code: "router-question-not-string",
+        field: '$["router"]["questions"]["browser"]',
+        fix: 'Set the question for "browser" to a yes/no question sentence.',
+        message: 'the question for "browser" must be a string',
+      });
     });
   });
 

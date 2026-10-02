@@ -151,18 +151,18 @@ describe("parseQuery rejects invalid input with query-invalid", () => {
   });
 
   test("a field of the wrong type", () => {
-    expect(catchRouterError(() => parseQuery({ task: 7, minimums: {} })).message).toBe(
-      'the field "task" must be of type string',
-    );
+    const task = catchRouterError(() => parseQuery({ task: 7, minimums: {} }));
+    expect(task.message).toBe('the field "task" must be of type string');
+    expect(task.field).toBe("task");
     expect(catchRouterError(() => parseQuery({ minimums: [], task: "x" })).message).toContain(
       "minimums",
     );
     expect(catchRouterError(() => parseQuery({ task: "x", needs: "browser" })).message).toBe(
       'the field "needs" must be of type array',
     );
-    expect(
-      catchRouterError(() => parseQuery({ task: "x", minimums: { coding: "7" } })).message,
-    ).toBe('the field "coding" must be of type number');
+    const minimum = catchRouterError(() => parseQuery({ task: "x", minimums: { coding: "7" } }));
+    expect(minimum.message).toBe('the field "coding" must be of type number');
+    expect(minimum.field).toBe("coding");
     expect(catchRouterError(() => parseQuery({ task: "x", pin: 9 })).message).toBe(
       'the field "pin" must be of type string',
     );

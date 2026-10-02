@@ -1,0 +1,56 @@
+{
+  "format": 1,
+  "ratings": {
+    "coding": "Writes and changes code to a spec.",
+    "intelligence": "General capability."
+  },
+  "router": {
+    "rank": ["coding", "intelligence"]
+  },
+  "models": {
+    "model-p": {
+      "family": "family-p",
+      "routes": [
+        {
+          "harness": "harness-p",
+          "modelId": "model-id-p",
+          "hosted": true
+        }
+      ]
+    },
+    "model-s": {
+      "family": "family-s",
+      "ratings": { "coding": 6 },
+      "routes": [
+        {
+          "harness": "harness-s",
+          "modelId": "model-id-s",
+          "hosted": true
+        }
+      ]
+    },
+    "model-q": {
+      "family": "family-q",
+      "ratings": { "coding": 6 },
+      "routes": [
+        {
+          "harness": "harness-q",
+          "modelId": "model-id-q",
+          "hosted": true,
+          "cost": 5
+        }
+      ]
+    },
+    "model-r": {
+      "family": "family-r",
+      "routes": [
+        {
+          "harness": "harness-r",
+          "modelId": "model-id-r",
+          "hosted": true,
+          "cost": 1
+        }
+      ]
+    }
+  }
+}
