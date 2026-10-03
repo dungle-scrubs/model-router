@@ -2,6 +2,7 @@
   "name": "@dungle-scrubs/model-router",
   "version": "0.0.0",
   "description": "Rank model routes for a structured query against a versioned model registry.",
+  "license": "MIT",
   "type": "module",
   "repository": {
     "type": "git",
@@ -28,7 +29,8 @@
     "availability.schema.json",
     "query.schema.json",
     "answer.schema.json",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "publishConfig": {
     "access": "public"
