@@ -538,6 +538,55 @@ describe("parseAvailabilityDocument with skipped entries", () => {
     expect(result.warnings[1]?.message).toContain("exausted");
     expect(result.warnings[2]?.message).toContain("percentRemaining");
   });
+
+  test("non-object entries are warned with the not-a-JSON-object message at every index", () => {
+    const now = new Date("2026-10-01T12:00:00Z");
+    const result = parseAvailabilityDocument(
+      availabilityDoc({
+        generatedAt: now.toISOString(),
+        entries: ["x", null, [], 5] as unknown as {
+          meter: string;
+          status: string;
+        }[],
+      }),
+      { maxAgeSeconds: 300, now },
+    );
+    expect(result.note).toBeNull();
+    expect(result.entries).toEqual([]);
+    expect(
+      result.warnings.map((w) => ({ code: w.code, field: w.field, message: w.message })),
+    ).toEqual(
+      [0, 1, 2, 3].map((index) => ({
+        code: "availability-entry-invalid",
+        field: `$.entries[${index}]`,
+        message: "the entry is not a JSON object",
+      })),
+    );
+  });
+
+  test("status text reflects the actual received type for number, undefined and bogus string", () => {
+    const now = new Date("2026-10-01T12:00:00Z");
+    const result = parseAvailabilityDocument(
+      availabilityDoc({
+        generatedAt: now.toISOString(),
+        entries: [
+          { meter: "meter-a", status: 5 },
+          { meter: "meter-a" },
+          { meter: "meter-a", status: "bogus" },
+        ] as unknown as { meter: string; status: string }[],
+      }),
+      { maxAgeSeconds: 300, now },
+    );
+    expect(result.note).toBeNull();
+    expect(result.entries).toEqual([]);
+    expect(result.warnings.map((w) => w.field).sort()).toEqual(
+      ["$.entries[0]", "$.entries[1]", "$.entries[2]"].sort(),
+    );
+    const messages = result.warnings.map((w) => w.message);
+    expect(messages.some((m) => m.includes("(received number)"))).toBe(true);
+    expect(messages.some((m) => m.includes("(received undefined)"))).toBe(true);
+    expect(messages.some((m) => m.includes('(received "bogus")'))).toBe(true);
+  });
 });
 
 describe("readAvailabilityFile", () => {
@@ -681,6 +730,16 @@ describe("runAvailabilityCommand", () => {
     expect(result.note?.code).toBe("availability-command-missing");
     expect(result.note?.message).toBe("the availability command was empty");
     expect(result.note?.fix).toContain("non-empty argv array");
+  });
+
+  test("a non-zero exit with stderr reports the trimmed stderr", () => {
+    const result = runAvailabilityCommand(
+      [process.execPath, "-e", "process.stderr.write('boom\\n'); process.exit(3)"],
+      { maxAgeSeconds: 300, timeoutSeconds: 10 },
+    );
+    expect(result.entries).toEqual([]);
+    expect(result.note?.code).toBe("availability-command-failed");
+    expect(result.note?.message).toBe("the availability command exited with code 3 (stderr: boom)");
   });
 });
 
