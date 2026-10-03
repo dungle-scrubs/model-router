@@ -200,7 +200,7 @@ describe("availability file boundary", () => {
     expect(load.entries).toEqual([]);
     expect(load.note?.code).toBe("availability-command-failed");
     expect(load.note?.message).toBe("the availability command failed to run: blocked command");
-    expectActionable(load.note!);
+    expectActionable(load.note);
   });
 
   test("the built CLI skips invalid entries and applies the good one", async () => {
