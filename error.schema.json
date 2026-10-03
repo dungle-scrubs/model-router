@@ -10,7 +10,9 @@
       "description": "The single envelope the CLI prints on stderr. Carries a code, a one-line message and a one-sentence fix. When the failure is a file-level problem, a `field` (RouterError) or a `path` (RegistryError) names the field or file. The full list of findings lives in `problems` for validation failures.",
       "properties": {
         "code": {
-          "enum": [
+          "type": "string",
+          "minLength": 1,
+          "examples": [
             "query-invalid",
             "registry-sections-invalid",
             "config-invalid",
@@ -27,7 +29,7 @@
             "backup-exists",
             "internal-error"
           ],
-          "description": "The current RouterError and RegistryError codes, plus the internal-error CLI fallback."
+          "description": "The error code. `examples` lists the current RouterError and RegistryError codes plus the internal-error CLI fallback. The schema accepts any non-empty code so that a consumer validating against it tolerates a code added in a later minor version, as RFC-01 asks consumers to do."
         },
         "field": {
           "type": "string",
@@ -57,7 +59,7 @@
               "code": {
                 "type": "string",
                 "minLength": 1,
-                "description": "A problem code. RouterError codes start with `query-`, `config-`, `router-`, `tasks-`, `policy-`, `availability-` or `describe-`; RegistryError codes match the envelope's code."
+                "description": "A problem code. RouterError problem codes start with `config-`, `router-`, `tasks-` or `policy-`; RegistryError problem codes are model-registry's."
               },
               "field": {
                 "type": "string",

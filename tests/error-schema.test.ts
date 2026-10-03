@@ -100,9 +100,23 @@ describe("error.schema.json", () => {
       "registry-unreadable": true,
     } satisfies Record<RouterErrorCode | RegistryErrorCode | "internal-error", true>;
     const codes = (
-      errorSchema as { properties: { error: { properties: { code: { enum: string[] } } } } }
-    ).properties.error.properties.code.enum;
+      errorSchema as { properties: { error: { properties: { code: { examples: string[] } } } } }
+    ).properties.error.properties.code.examples;
     expect([...codes].sort()).toEqual(Object.keys(emittedCodes).sort());
+  });
+
+  test("accepts a code added in a later version and rejects an empty code", () => {
+    const envelope = (code: string) => ({
+      error: {
+        code,
+        field: "query",
+        fix: "Upgrade the consumer to read the new code.",
+        message: "a code this schema version does not list.",
+        problems: [],
+      },
+    });
+    expect(validateError(envelope("future-code"))).toBe(true);
+    expect(validateError(envelope(""))).toBe(false);
   });
 
   test("accepts a query-invalid envelope with no problems", () => {
@@ -186,19 +200,6 @@ describe("error.schema.json", () => {
       },
     };
     expect(validateError(envelope)).toBe(true);
-  });
-
-  test("rejects an envelope whose code is not on the published list", () => {
-    const envelope = {
-      error: {
-        code: "made-up-code",
-        field: "query",
-        fix: "Fix the input.",
-        message: "x",
-        problems: [],
-      },
-    };
-    expect(validateError(envelope)).toBe(false);
   });
 
   test("rejects an envelope missing the required fix or message", () => {
