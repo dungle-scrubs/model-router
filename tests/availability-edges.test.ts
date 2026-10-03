@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { applyAvailability } from "../src/availability.js";
 import { parseAvailabilityDocument } from "../src/availability-cli.js";
 import type { AvailabilityEntry } from "../src/types.js";
+import { expectActionable } from "./helpers.js";
 
 describe("availability edge contracts", () => {
   test("equal-percent ties name the first input's resetsAt", () => {
@@ -67,6 +68,7 @@ describe("availability edge contracts", () => {
     ] as const) {
       const result = applyAvailability(routes, [{ meter: "meter-a", status, ...reading }], options);
       expect(result.routes[0]?.reasons?.[0]).toMatchObject({ code, message: message + tail });
+      expectActionable(result.routes[0]?.reasons?.[0]);
     }
   });
 
@@ -103,12 +105,25 @@ describe("availability edge contracts", () => {
         percentRemaining: 12,
       },
     ]);
-    expect(result.warnings.map((w) => ({ code: w.code, field: w.field }))).toEqual(
-      [0, 1, 2, 3, 4].map((index) => ({
+    const expectedMessages = [
+      "the entry is not a JSON object",
+      "the entry has no meter string",
+      "the entry has a resetsAt of type number",
+      "the entry has an unparseable resetsAt",
+      "the entry has a note of type number",
+    ];
+    expect(
+      result.warnings.map((w) => ({ code: w.code, field: w.field, message: w.message })),
+    ).toEqual(
+      expectedMessages.map((message, index) => ({
         code: "availability-entry-invalid",
         field: `$.entries[${index}]`,
+        message,
       })),
     );
+    for (const warning of result.warnings) {
+      expectActionable(warning);
+    }
   });
 
   test("an inherited status does not cover a meter", () => {

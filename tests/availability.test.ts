@@ -9,7 +9,14 @@ import {
   runAvailabilityCommand,
 } from "../src/availability-cli.js";
 import { type AnswerRoute, rank } from "../src/index.js";
-import { expectValidAnswer, fixturePath, runBuiltCli, withTempDir, writeJson } from "./helpers.js";
+import {
+  expectActionable,
+  expectValidAnswer,
+  fixturePath,
+  runBuiltCli,
+  withTempDir,
+  writeJson,
+} from "./helpers.js";
 
 const FULL = fixturePath("full.json");
 const PRINT = fixturePath("availability-print.js");
@@ -75,6 +82,7 @@ describe("applyAvailability in isolation", () => {
     ]);
     expect(result.routes[2]?.availability).toBe("projected");
     expect(result.routes[2]?.reasons?.map((r) => r.code)).toEqual(["meter-projected"]);
+    expectActionable(result.routes[2]?.reasons?.[0]);
     expect(result.removed).toEqual([]);
   });
 
@@ -91,6 +99,7 @@ describe("applyAvailability in isolation", () => {
     expect(result.routes[0]?.reasons?.map((r) => r.code)).toEqual([
       "meter-projected-spend-to-zero",
     ]);
+    expectActionable(result.routes[0]?.reasons?.[0]);
   });
 
   test("an exhausted reading removes the route with reason meter-exhausted", () => {
@@ -106,6 +115,7 @@ describe("applyAvailability in isolation", () => {
         },
       },
     ]);
+    expectActionable(result.removed[0]?.reason);
   });
 
   test("the all-exhausted case keeps every route as exhausted with a warning", () => {
@@ -121,6 +131,10 @@ describe("applyAvailability in isolation", () => {
     expect(result.routes.every((r) => r.availability === "exhausted")).toBe(true);
     expect(result.removed).toEqual([]);
     expect(result.warnings.map((w) => w.code)).toEqual(["availability-exhausted-all"]);
+    expect(result.warnings[0]?.message).toBe(
+      "exhaustion would remove every route; none was removed and each carries exhausted",
+    );
+    expectActionable(result.warnings[0]);
   });
 
   test("routes with no covering entry keep their availability and place", () => {
@@ -447,6 +461,7 @@ describe("parseAvailabilityDocument", () => {
     expect(result.note?.code).toBe("availability-reading-invalid");
     expect(result.note?.message).toBe("the availability document must be a JSON object");
     expect(result.note?.fix).toContain("Replace the document with an object");
+    expectActionable(result.note);
   });
 
   test("rejects an unknown format with availability-reading-invalid", () => {
@@ -457,6 +472,7 @@ describe("parseAvailabilityDocument", () => {
     expect(result.note?.code).toBe("availability-reading-invalid");
     expect(result.note?.message).toContain("format is not 1");
     expect(result.note?.fix).toBe("Use a document at format version 1.");
+    expectActionable(result.note);
   });
 
   test("rejects a missing generatedAt string with availability-reading-invalid", () => {
@@ -466,6 +482,7 @@ describe("parseAvailabilityDocument", () => {
     expect(result.note?.message).toContain("no");
     expect(result.note?.message).toContain("generatedAt");
     expect(result.note?.fix).toContain("Add");
+    expectActionable(result.note);
   });
 
   test("rejects a non-array entries field with availability-reading-invalid", () => {
@@ -477,6 +494,7 @@ describe("parseAvailabilityDocument", () => {
     expect(result.note?.code).toBe("availability-reading-invalid");
     expect(result.note?.message).toContain("entries is not an array");
     expect(result.note?.fix).toContain("Replace");
+    expectActionable(result.note);
   });
 
   test("rejects an unparseable generatedAt with availability-reading-invalid", () => {
@@ -486,6 +504,7 @@ describe("parseAvailabilityDocument", () => {
     expect(result.entries).toEqual([]);
     expect(result.note?.code).toBe("availability-reading-invalid");
     expect(result.note?.message).toContain("not a parseable date");
+    expectActionable(result.note);
   });
 
   test("flags an old document as stale", () => {
@@ -497,6 +516,7 @@ describe("parseAvailabilityDocument", () => {
     expect(result.note?.code).toBe("availability-reading-stale");
     expect(result.note?.message).toContain("older than 60 seconds");
     expect(result.note?.fix).toContain("Regenerate the document within 60 seconds");
+    expectActionable(result.note);
   });
 
   test("flags a future generatedAt as stale", () => {
@@ -507,6 +527,7 @@ describe("parseAvailabilityDocument", () => {
     expect(result.entries).toEqual([]);
     expect(result.note?.code).toBe("availability-reading-stale");
     expect(result.note?.message).toBe("the availability document has a generatedAt in the future");
+    expectActionable(result.note);
   });
 });
 
@@ -537,6 +558,9 @@ describe("parseAvailabilityDocument with skipped entries", () => {
     expect(result.warnings[0]?.message).toContain("status");
     expect(result.warnings[1]?.message).toContain("exausted");
     expect(result.warnings[2]?.message).toContain("percentRemaining");
+    for (const warning of result.warnings) {
+      expectActionable(warning);
+    }
   });
 
   test("non-object entries are warned with the not-a-JSON-object message at every index", () => {
@@ -605,6 +629,7 @@ describe("readAvailabilityFile", () => {
       expect(result.entries).toEqual([]);
       expect(result.note?.code).toBe("availability-file-unreadable");
       expect(result.note?.message).toContain("does not exist");
+      expectActionable(result.note);
     });
   });
 
@@ -614,6 +639,10 @@ describe("readAvailabilityFile", () => {
       expect(result.entries).toEqual([]);
       expect(result.note?.code).toBe("availability-file-unreadable");
       expect(result.note?.message).toContain("could not be read");
+      expect(result.note?.fix).toBe(
+        `Make the file ${dir} readable as a regular file, or pass a different --availability-file path.`,
+      );
+      expectActionable(result.note);
     });
   });
 
@@ -625,6 +654,7 @@ describe("readAvailabilityFile", () => {
       expect(result.entries).toEqual([]);
       expect(result.note?.code).toBe("availability-reading-invalid");
       expect(result.note?.message).toContain("is not valid JSON");
+      expectActionable(result.note);
     });
   });
 });
@@ -651,6 +681,7 @@ describe("runAvailabilityCommand", () => {
     expect(result.entries).toEqual([]);
     expect(result.note?.code).toBe("availability-command-failed");
     expect(result.note?.message).toMatch(/not found|did not start/);
+    expectActionable(result.note);
   });
 
   test("a non-zero exit fails with availability-command-failed", () => {
@@ -661,6 +692,7 @@ describe("runAvailabilityCommand", () => {
     expect(result.entries).toEqual([]);
     expect(result.note?.code).toBe("availability-command-failed");
     expect(result.note?.message).toContain("exited with code 1");
+    expectActionable(result.note);
   });
 
   test("a command that exceeds the timeout fails with availability-command-failed", () => {
@@ -671,6 +703,7 @@ describe("runAvailabilityCommand", () => {
     expect(result.entries).toEqual([]);
     expect(result.note?.code).toBe("availability-command-failed");
     expect(result.note?.message).toBe("the availability command was killed after 1 second");
+    expectActionable(result.note);
   });
 
   test("a timeoutSeconds other than 1 uses the plural form", () => {
@@ -679,6 +712,7 @@ describe("runAvailabilityCommand", () => {
       { maxAgeSeconds: 300, timeoutSeconds: 2 },
     );
     expect(result.note?.message).toContain("killed after 2 seconds");
+    expectActionable(result.note);
   });
 
   test.skipIf(process.platform === "win32")(
@@ -695,6 +729,7 @@ describe("runAvailabilityCommand", () => {
       );
       expect(result.note?.code).toBe("availability-command-failed");
       expect(result.note?.message).toContain("killed by signal SIGKILL");
+      expectActionable(result.note);
     },
   );
 
@@ -711,6 +746,7 @@ describe("runAvailabilityCommand", () => {
       });
       expect(result.note?.code).toBe("availability-command-failed");
       expect(result.note?.message).toContain("exceeded 8 MiB");
+      expectActionable(result.note);
     });
   });
 
@@ -722,6 +758,7 @@ describe("runAvailabilityCommand", () => {
     expect(result.entries).toEqual([]);
     expect(result.note?.code).toBe("availability-reading-invalid");
     expect(result.note?.message).toBe("the availability command output is not valid JSON");
+    expectActionable(result.note);
   });
 
   test("an empty command fails with availability-command-missing", () => {
@@ -730,6 +767,7 @@ describe("runAvailabilityCommand", () => {
     expect(result.note?.code).toBe("availability-command-missing");
     expect(result.note?.message).toBe("the availability command was empty");
     expect(result.note?.fix).toContain("non-empty argv array");
+    expectActionable(result.note);
   });
 
   test("a non-zero exit with stderr reports the trimmed stderr", () => {
@@ -740,6 +778,26 @@ describe("runAvailabilityCommand", () => {
     expect(result.entries).toEqual([]);
     expect(result.note?.code).toBe("availability-command-failed");
     expect(result.note?.message).toBe("the availability command exited with code 3 (stderr: boom)");
+    expectActionable(result.note);
+  });
+
+  test("a synchronous spawnSync throw (null byte in the command) is caught and reported", () => {
+    // Node validates arguments for null bytes in JavaScript before
+    // spawning, on every platform, so spawnSync("a\u0000b", ...) throws
+    // ERR_INVALID_ARG_VALUE synchronously. The reader's catch branch
+    // turns that into a note, the same shape as a runtime spawn error.
+    const result = runAvailabilityCommand(["a\u0000b"], {
+      maxAgeSeconds: 300,
+      timeoutSeconds: 10,
+    });
+    expect(result.entries).toEqual([]);
+    expect(result.warnings).toEqual([]);
+    expect(result.note?.code).toBe("availability-command-failed");
+    expect(result.note?.message?.startsWith("the availability command failed to run: ")).toBe(true);
+    expect(result.note?.message?.length).toBeGreaterThan(
+      "the availability command failed to run: ".length,
+    );
+    expectActionable(result.note);
   });
 });
 
@@ -757,6 +815,7 @@ describe("loadAvailabilityForCli", () => {
     expect(result.note?.message).toContain(
       "--availability was given but availability.command is not set",
     );
+    expectActionable(result.note);
   });
 
   test("--availability-file with a config that has no command reads the file", async () => {
@@ -941,6 +1000,9 @@ describe("rank with the availability option", () => {
       );
       expectValidAnswer(answer);
       expect(answer.warnings.map((w) => w.code)).toContain("meter-undeclared");
+      const undeclared = answer.warnings.find((w) => w.code === "meter-undeclared");
+      expect(undeclared).toBeDefined();
+      expectActionable(undeclared);
     });
   });
 
@@ -1004,6 +1066,9 @@ describe("rank with the availability option", () => {
       );
       expectValidAnswer(answer);
       expect(answer.warnings.map((w) => w.code)).toContain("meter-no-reading");
+      const noReading = answer.warnings.find((w) => w.code === "meter-no-reading");
+      expect(noReading).toBeDefined();
+      expectActionable(noReading);
     });
   });
 
@@ -1104,6 +1169,7 @@ describe("rank with the availability option", () => {
     expect(warning?.field).toBe("$.pin");
     expect(warning?.message).toContain("model-a@harness-x");
     expect(warning?.message).toContain("exhausted");
+    expectActionable(warning);
     expect(answer.routes.find((r) => r.label === "model-a@harness-x")).toBeUndefined();
     expect(answer.removed.some((r) => r.label === "model-a@harness-x")).toBe(true);
   });
@@ -1307,6 +1373,7 @@ describe("CLI availability flags", () => {
     const answer = JSON.parse(result.stdout);
     expectValidAnswer(answer);
     expect(answer.availabilityNote?.code).toBe("availability-command-missing");
+    expectActionable(answer.availabilityNote);
     expect(answer.warnings.map((w) => w.code)).not.toContain("meter-no-reading");
   });
 
@@ -1333,6 +1400,7 @@ describe("CLI availability flags", () => {
       expectValidAnswer(answer);
       expect(answer.availabilityNote?.code).toBe("availability-file-unreadable");
       expect(answer.warnings.map((w) => w.code)).not.toContain("meter-no-reading");
+      expectActionable(answer.availabilityNote);
     });
   });
 
@@ -1484,6 +1552,7 @@ describe("CLI availability flags", () => {
       const answer = JSON.parse(result.stdout);
       expectValidAnswer(answer);
       expect(answer.availabilityNote?.code).toBe("availability-command-failed");
+      expectActionable(answer.availabilityNote);
     });
   });
 
@@ -1508,6 +1577,7 @@ describe("CLI availability flags", () => {
       expectValidAnswer(answer);
       expect(answer.availabilityNote?.code).toBe("availability-command-failed");
       expect(answer.availabilityNote?.message).toContain("killed");
+      expectActionable(answer.availabilityNote);
     });
   });
 

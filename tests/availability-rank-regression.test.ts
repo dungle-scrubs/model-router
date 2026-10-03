@@ -1,7 +1,13 @@
 import { describe, expect, test } from "vitest";
 import { rank } from "../src/rank.js";
 import type { AvailabilityEntry } from "../src/types.js";
-import { expectValidAnswer, fixturePath, withTempDir, writeJson } from "./helpers.js";
+import {
+  expectActionable,
+  expectValidAnswer,
+  fixturePath,
+  withTempDir,
+  writeJson,
+} from "./helpers.js";
 
 const FULL = fixturePath("full.json");
 
@@ -24,6 +30,9 @@ describe("rank availability usability", () => {
         message: 'the meter "meter-a" is used by routes but has no availability entry',
       }),
     ]);
+    const noReading = answer.warnings.find((w) => w.code === "meter-no-reading");
+    expect(noReading).toBeDefined();
+    expectActionable(noReading);
   });
 
   test.each([
@@ -52,6 +61,9 @@ describe("rank availability usability", () => {
       field: "$.entries",
       message: 'the meter "meter-zzz" is not declared in the registry\'s meters section',
     });
+    const undeclared = answer.warnings.find((w) => w.code === "meter-undeclared");
+    expect(undeclared).toBeDefined();
+    expectActionable(undeclared);
   });
 
   test("all-exhausted keeps a used pin and removes nothing", async () => {

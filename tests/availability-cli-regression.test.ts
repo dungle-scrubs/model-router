@@ -6,6 +6,7 @@ import { loadAvailabilityForCli, runAvailabilityCommand } from "../src/availabil
 import { runCli } from "../src/cli-run.js";
 import {
   captureStream,
+  expectActionable,
   expectValidAnswer,
   fixturePath,
   runBuiltCli,
@@ -224,6 +225,9 @@ describe("availability file boundary", () => {
           field: `$.entries[${index}]`,
         })),
       );
+      for (const warning of answer.warnings) {
+        expectActionable(warning);
+      }
     });
   });
 });
