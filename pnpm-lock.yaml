@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@dungle-scrubs/model-registry':
-        specifier: github:dungle-scrubs/model-registry#fc801cd27288c6bf873c39ef7834cbed82599046
-        version: git+https://github.com/dungle-scrubs/model-registry.git#fc801cd27288c6bf873c39ef7834cbed82599046
+        specifier: ^0.1.0
+        version: 0.1.0
       commander:
         specifier: 15.0.0
         version: 15.0.0
@@ -290,9 +290,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@dungle-scrubs/model-registry@git+https://github.com/dungle-scrubs/model-registry.git#fc801cd27288c6bf873c39ef7834cbed82599046':
-    resolution: {commit: fc801cd27288c6bf873c39ef7834cbed82599046, repo: https://github.com/dungle-scrubs/model-registry.git, type: git}
-    version: 0.1.0
+  '@dungle-scrubs/model-registry@0.1.0':
+    resolution: {integrity: sha512-NGezlW2Zkme+RHCZbFqvS9vAiKDOyk21tIMPRRu4HUsAeNUWBkFfjdrEBX88RGPoFwceAMzFnjiHIAzrZuGwEw==}
     engines: {node: '>=22.14.0'}
     hasBin: true
 
@@ -1744,7 +1743,7 @@ snapshots:
   '@biomejs/cli-win32-x64@2.5.14':
     optional: true
 
-  '@dungle-scrubs/model-registry@git+https://github.com/dungle-scrubs/model-registry.git#fc801cd27288c6bf873c39ef7834cbed82599046':
+  '@dungle-scrubs/model-registry@0.1.0':
     dependencies:
       ajv: 8.20.0
       commander: 15.0.0

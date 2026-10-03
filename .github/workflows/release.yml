@@ -32,17 +32,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.release-please.outputs.tag_name }}
-      - name: Grant git access to the private model-registry dependency
-        shell: bash
-        run: |
-          mkdir -p "$HOME/.ssh"
-          printf '%s\n' "$MODEL_REGISTRY_DEPLOY_KEY" > "$HOME/.ssh/model_registry"
-          chmod 600 "$HOME/.ssh/model_registry"
-          ssh-keyscan -t ed25519 github.com >> "$HOME/.ssh/known_hosts"
-          git config --global core.sshCommand "ssh -i '$HOME/.ssh/model_registry' -o IdentitiesOnly=yes"
-          git config --global url."git@github.com:dungle-scrubs/model-registry".insteadOf "https://github.com/dungle-scrubs/model-registry"
-        env:
-          MODEL_REGISTRY_DEPLOY_KEY: ${{ secrets.MODEL_REGISTRY_DEPLOY_KEY }}
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
