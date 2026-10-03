@@ -1,9 +1,13 @@
 {
   "name": "@dungle-scrubs/model-router",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "description": "Rank model routes for a structured query against a versioned model registry.",
+  "license": "MIT",
   "type": "module",
-  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dungle-scrubs/model-router.git"
+  },
   "packageManager": "pnpm@11.28.2",
   "engines": {
     "node": ">=22.14.0"
@@ -31,7 +35,8 @@
     "error.schema.json",
     "config.schema.json",
     "router-sections.schema.json",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "publishConfig": {
     "access": "public"

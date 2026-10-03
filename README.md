@@ -2,7 +2,7 @@
 
 Rank model routes for a structured query against the shared model registry.
 
-A route is one model reached through one harness. The caller states what the work needs; the router orders the registry's routes into one ranked list, contract version 1. This package is the router half of the design in the model-registry RFC; the loader and validator half is [`@dungle-scrubs/model-registry`](https://github.com/dungle-scrubs/model-registry). Development release: the package is private and unpublished.
+A route is one model reached through one harness. The caller states what the work needs; the router orders the registry's routes into one ranked list, contract version 1. This package is the router half of the design in the model-registry RFC; the loader and validator half is [`@dungle-scrubs/model-registry`](https://github.com/dungle-scrubs/model-registry). Development release: the package is unpublished.
 
 This release implements issues #29, #30 and #31: pins, effort resolution, `config.json`, the `check` subcommand, meter availability, the describe step, and the Jev client.
 
