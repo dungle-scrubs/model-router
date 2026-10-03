@@ -36,6 +36,24 @@ function codesInSource(source: string): readonly string[] {
   return [...seen].sort();
 }
 
+function typeCodesInSource(source: string, name: string): readonly string[] {
+  const file = ts.createSourceFile(
+    "source.ts",
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const alias = file.statements.find(
+    (node) => ts.isTypeAliasDeclaration(node) && node.name.text === name,
+  );
+  if (alias === undefined || !ts.isTypeAliasDeclaration(alias)) return [];
+  const members = ts.isUnionTypeNode(alias.type) ? alias.type.types : [alias.type];
+  return members.flatMap((node) =>
+    ts.isLiteralTypeNode(node) && ts.isStringLiteral(node.literal) ? [node.literal.text] : [],
+  );
+}
+
 function sourceCodes(dir = SRC_DIR): readonly string[] {
   const seen = new Set<string>();
   for (const file of readdirSync(dir, { withFileTypes: true })) {
@@ -94,6 +112,14 @@ describe("README problem codes", () => {
     });
   });
 
+  test("collects every union member with or without a leading bar", () => {
+    for (const source of [
+      'export type Code = "CODE_A" | "CODE_B";',
+      'export type Code =\n | "CODE_A"\n | "CODE_B";',
+    ])
+      expect(typeCodesInSource(source, "Code")).toEqual(["CODE_A", "CODE_B"]);
+  });
+
   test("documents every code emitted across src recursively", () => {
     const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
     const emitted = sourceCodes();
@@ -112,8 +138,7 @@ describe("README problem codes", () => {
   test("documents every RouterError code the types union allows", () => {
     const source = readFileSync(join(repoRoot, "src", "types.ts"), "utf8");
     const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
-    const union = source.match(/export type RouterErrorCode\s*=\s*([^;]+);/)?.[1] ?? "";
-    const emitted = [...union.matchAll(/"([a-z-]+)"/g)].map((match) => match[1]);
+    const emitted = typeCodesInSource(source, "RouterErrorCode");
     expect(emitted.length).toBeGreaterThanOrEqual(3);
     for (const code of emitted) {
       expect(readme, `${code} is missing from README.md`).toContain(code);
@@ -133,7 +158,7 @@ describe("README problem codes", () => {
   test("documents every JevError code the Jev client defines", () => {
     const source = readFileSync(join(repoRoot, "src", "jev.ts"), "utf8");
     const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
-    const emitted = [...source.matchAll(/\| "([A-Z_]+)"/g)].map((match) => match[1]);
+    const emitted = typeCodesInSource(source, "JevErrorCode");
     expect(emitted.length).toBeGreaterThanOrEqual(5);
     for (const code of emitted) {
       expect(readme, `${code} is missing from README.md`).toContain(code);
