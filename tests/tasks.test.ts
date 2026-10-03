@@ -1,7 +1,15 @@
 import { loadRegistry } from "@dungle-scrubs/model-registry";
 import { describe, expect, test } from "vitest";
 import { listTasks, RouterError, rank } from "../src/index.js";
-import { expectValidAnswer, fixturePath, loadLoaded, withTempDir, writeJson } from "./helpers.js";
+import {
+  errorMatching,
+  expectValidAnswer,
+  expectValidRouterError,
+  fixturePath,
+  loadLoaded,
+  withTempDir,
+  writeJson,
+} from "./helpers.js";
 
 const TASKS = fixturePath("tasks.json");
 const EMPTY = fixturePath("empty-models.json");
@@ -452,11 +460,14 @@ describe("rank with a known task uses cost-first clearing order", () => {
 describe("registry section validation for tasks and policy", () => {
   test("two policies that tie, a policy effort above the model's maxEffort, an undeclared label and an unknown field fail together", () => {
     const loaded = policyBroken();
-    expect(() => rank({ task: "task-a" }, { registry: loaded })).toThrowError(RouterError);
+    expect(() => rank({ task: "task-a" }, { registry: loaded })).toThrowError(
+      errorMatching({ code: "registry-sections-invalid" }),
+    );
     try {
       rank({ task: "task-a" }, { registry: loaded });
       throw new Error("expected throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       const routerError = error as RouterError;
       expect(routerError.code).toBe("registry-sections-invalid");
@@ -494,6 +505,7 @@ describe("listTasks", () => {
       rank({ task: "task-a" }, { registry: loaded });
       throw new Error("expected rank to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       rankProblems = (error as RouterError).problems;
     }
@@ -502,6 +514,7 @@ describe("listTasks", () => {
       listTasks({ registry: loaded });
       throw new Error("expected listTasks to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       const routerError = error as RouterError;
       expect(routerError.code).toBe("registry-sections-invalid");
@@ -692,6 +705,7 @@ describe("special names in the registry's sections", () => {
           rank({ task: "task-a" }, { registry: loaded });
           throw new Error("expected rank to throw");
         } catch (error) {
+          if (error instanceof RouterError) expectValidRouterError(error);
           expect(error).toBeInstanceOf(RouterError);
           const routerError = error as RouterError;
           expect(routerError.code).toBe("registry-sections-invalid");
@@ -738,6 +752,7 @@ describe("special names in the registry's sections", () => {
           call();
           throw new Error("expected the call to throw");
         } catch (error) {
+          if (error instanceof RouterError) expectValidRouterError(error);
           expect(error).toBeInstanceOf(RouterError);
           const routerError = error as RouterError;
           expect(routerError.code).toBe("registry-sections-invalid");

@@ -8,6 +8,7 @@ import { RouterError, rank } from "../src/index.js";
 import {
   captureStream,
   expectValidAnswer,
+  expectValidRouterError,
   fixturePath,
   runBuiltCli,
   withTempDir,
@@ -365,6 +366,7 @@ describe("the tasks subcommand", () => {
       rank({ task: "task-a" }, { registry: POLICY_BROKEN });
       throw new Error("expected rank to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       rankProblems = (error as RouterError).problems;
     }
@@ -498,6 +500,7 @@ describe("the check subcommand", () => {
       rank({ task: "task-a" }, { registry: POLICY_BROKEN });
       throw new Error("expected rank to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       rankProblems = (error as RouterError).problems;
     }

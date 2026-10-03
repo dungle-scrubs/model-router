@@ -1,11 +1,13 @@
 import { describe, expect, test } from "vitest";
 import { RouterError } from "../src/error.js";
 import { applyQueryDefaults, parseQuery } from "../src/query.js";
+import { expectValidRouterError } from "./helpers.js";
 
 function catchRouterError(fn: () => unknown): RouterError {
   try {
     fn();
   } catch (error) {
+    if (error instanceof RouterError) expectValidRouterError(error);
     if (error instanceof RouterError) return error;
     throw error;
   }
