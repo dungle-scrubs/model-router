@@ -9,11 +9,15 @@ const ENTRY_POINTS = vi.hoisted(
 
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
-  const mocked: Record<string, unknown> = { ...actual };
+  // The namespace and the default export get separate spies, so each
+  // assertion below fails on its own when only that binding is called.
+  const namespace: Record<string, unknown> = { ...actual };
+  const defaultExport: Record<string, unknown> = { ...actual };
   for (const name of ENTRY_POINTS) {
-    mocked[name] = vi.fn(actual[name]);
+    namespace[name] = vi.fn(actual[name]);
+    defaultExport[name] = vi.fn(actual[name]);
   }
-  return { ...mocked, default: mocked };
+  return { ...namespace, default: defaultExport };
 });
 
 afterEach(() => {
@@ -32,6 +36,14 @@ test("node:child_process entry points are fully covered by the isolation wrapper
     )
     .sort();
   expect(functionKeys).toEqual([...ENTRY_POINTS].sort());
+});
+
+test("the namespace and default spies are independent", () => {
+  for (const name of ENTRY_POINTS) {
+    expect((childProcessDefault as Record<string, unknown>)[name], `default ${name}`).not.toBe(
+      childProcess[name as keyof typeof childProcess],
+    );
+  }
 });
 
 test.each([false, true])(
