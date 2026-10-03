@@ -20,10 +20,12 @@
       "import": "./dist/index.js"
     },
     "./query.schema.json": "./query.schema.json",
-    "./answer.schema.json": "./answer.schema.json"
+    "./answer.schema.json": "./answer.schema.json",
+    "./availability.schema.json": "./availability.schema.json"
   },
   "files": [
     "dist",
+    "availability.schema.json",
     "query.schema.json",
     "answer.schema.json",
     "README.md"

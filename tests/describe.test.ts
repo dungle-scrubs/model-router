@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import { describe as describeStep } from "../src/describe.js";
 import { RouterError } from "../src/error.js";
@@ -96,13 +97,15 @@ describe("the describe step's privacy gate", () => {
 
   test("privacy secret refuses before the registry loads: a missing registry path still gives describe-private", async () =>
     withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
-      const error = await catchRouterError(
-        describeStep("some work", '{"privacy":"secret"}', {
-          registry: "/nonexistent/registry.json",
-        }),
-      );
-      expect(error.code).toBe("describe-private");
-      expect(error.field).toBe("privacy");
+      await withTempDir(async (dir) => {
+        const error = await catchRouterError(
+          describeStep("some work", '{"privacy":"secret"}', {
+            registry: join(dir, "missing-registry.json"),
+          }),
+        );
+        expect(error.code).toBe("describe-private");
+        expect(error.field).toBe("privacy");
+      });
     }));
 
   test("a whitespace-only description is query-invalid and makes no request", async () =>

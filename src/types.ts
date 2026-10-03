@@ -12,6 +12,12 @@ export type PlacedBy = "pin" | "policy" | "rank";
 export type Floor = "clears" | "below" | "skipped";
 export type AvailabilityValue = "ok" | "projected" | "exhausted" | "unknown" | "unmetered";
 
+/** The three statuses an availability entry can carry. An entry whose
+ * status is not one of these three is ignored by the engine: it does not
+ * cover the meter it names. "unknown" and "unmetered" describe a route,
+ * not an entry. */
+export type AvailabilityEntryStatus = "ok" | "projected" | "exhausted";
+
 /**
  * A contract 1 query. Input is strict: a field the contract does not define
  * is query-invalid. `effort` and `pin` parse; this release applies neither.
@@ -154,11 +160,56 @@ export interface RouterErrorDetails {
   readonly problems: readonly RouterProblem[];
 }
 
-/** Options the rank entry point accepts. `registry` is a path or a loaded registry.
- * `config` is a path string or a plain settings object. The library has no
- * pre-loaded config shortcut: callers that already ran the loader must pass
- * the path string it consumed. */
+/** A single reading from an availability document. `meter` names the
+ * meter the entry covers; `status` is the worst-case state the reading
+ * reports; `resetsAt` (when present) drops the entry once that time
+ * passes (callers pass the clock); `note` is free-form, also for the user.
+ * `percentRemaining` decides ties among same-status entries on one meter.
+ * The status is one of three values; the engine ignores any other. */
+export interface AvailabilityEntry {
+  readonly meter: string;
+  readonly note?: string;
+  readonly percentRemaining?: number;
+  readonly resetsAt?: string;
+  readonly status: AvailabilityEntryStatus;
+}
+
+/** The availability document the engine accepts. `format` is the contract
+ * version, `generatedAt` is checked against `maxAgeSeconds`, and `entries`
+ * is the list of meter readings. The CLI ranks without availability on a
+ * broken top level (not JSON, missing fields, unknown format), and skips
+ * a single bad entry with a warning. */
+export interface AvailabilityDocument {
+  readonly entries: readonly AvailabilityEntry[];
+  readonly format: number;
+  readonly generatedAt: string;
+}
+
+/** The result of `applyAvailability`: the reordered routes (with their
+ * `availability` set and any reason appended), the routes removed by
+ * `exhausted`, and warnings raised during the call (the
+ * `availability-exhausted-all` case). The result routes carry the same shape the input routes carried, plus the `availability` and (when
+ * present) the `reasons` fields the function filled in. */
+export interface AvailabilityResult<R extends { readonly label: string; readonly meter?: string }> {
+  readonly removed: readonly { readonly label: string; readonly reason: Coded }[];
+  readonly routes: readonly (R & {
+    readonly availability: AvailabilityValue;
+    readonly reasons?: readonly Coded[];
+  })[];
+  readonly warnings: readonly Coded[];
+}
+
+/** Options the rank entry point accepts. `registry` is a path or a loaded
+ * registry. `config` is a path string or a plain settings object. The
+ * library accepts validated settings from callers that already ran the
+ * config loader, avoiding a second file read. `availability` passes
+ * entries the caller has already gathered (and `dropExpired`'d); the
+ * library reads the spend-to-zero meter names from the registry, so
+ * nothing about the spend-to-zero list is taken from the option. The
+ * library never reads the clock: a caller that wants stale entries
+ * dropped must run `dropExpired` first. */
 export interface RankOptions {
+  readonly availability?: readonly AvailabilityEntry[];
   readonly config?: string | RouterConfigInput;
   readonly registry?: string | LoadedRegistry;
 }

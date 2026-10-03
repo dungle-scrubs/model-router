@@ -1,12 +1,13 @@
 import { readFileSync } from "node:fs";
 import { loadRegistry, RegistryError } from "@dungle-scrubs/model-registry";
 import { Command, CommanderError } from "commander";
+import { type AvailabilityLoad, loadAvailabilityForCli } from "./availability-cli.js";
 import { type LoadedConfig, loadConfig } from "./config.js";
 import { checkDescribeText, describe as describeStep, parseDescribeQuery } from "./describe.js";
 import { RouterError } from "./error.js";
 import { listTasks, rank } from "./rank.js";
 import { validateRouterSections } from "./sections.js";
-import type { RouterErrorCode } from "./types.js";
+import type { Answer, Coded, RouterErrorCode } from "./types.js";
 import { ROUTER_VERSION } from "./version.js";
 
 const EXIT_SUCCESS = 0;
@@ -102,6 +103,56 @@ function addConfigOption(command: Command): Command {
   );
 }
 
+interface AvailabilityOptionState {
+  readonly file: string | undefined;
+  readonly fromCommand: boolean;
+}
+
+function addAvailabilityOptions(command: Command): Command {
+  command
+    .option("--availability", "run availability.command from config.json", false)
+    .option(
+      "--availability-file <path>",
+      "read an availability document from <path>",
+      (value: string, previous: string[] | undefined) => [...(previous ?? []), value],
+    );
+  return command;
+}
+
+function readAvailabilityOptionState(
+  options: { readonly availability?: unknown; readonly availabilityFile?: unknown },
+  field: string,
+): AvailabilityOptionState {
+  const fromCommand = options.availability === true;
+  const files = options.availabilityFile as readonly string[] | undefined;
+  if (files !== undefined && files.length > 1) {
+    throw queryInvalid(
+      field,
+      "the --availability-file option was given more than once.",
+      "Give model-router exactly one --availability-file path.",
+    );
+  }
+  const fileRaw = files?.[0];
+  if (fromCommand && fileRaw !== undefined) {
+    throw queryInvalid(
+      field,
+      "--availability and --availability-file cannot be used together.",
+      "Pass only one of --availability or --availability-file <path>.",
+    );
+  }
+  if (fileRaw === "") {
+    throw queryInvalid(
+      field,
+      "the --availability-file option was given an empty path.",
+      "Give --availability-file a non-empty path to an availability document.",
+    );
+  }
+  if (typeof fileRaw === "string") {
+    return { file: fileRaw, fromCommand };
+  }
+  return { file: undefined, fromCommand };
+}
+
 function queryInvalid(field: string, message: string, fix: string): RouterError {
   return new RouterError({ code: "query-invalid", field, fix, message, problems: [] });
 }
@@ -188,10 +239,24 @@ function loadRegistryOption(explicit: string): ReturnType<typeof loadRegistry> {
  * both go through this helper. */
 function loadConfigOption(explicit: string | undefined): LoadedConfig {
   return loadConfig(
-    explicit === undefined
+    explicit === undefined || explicit === ""
       ? { env: process.env as Record<string, string | undefined> }
       : { explicitPath: explicit },
   );
+}
+
+/** Both ranking paths merge describe, engine and reader warnings in that order. */
+function assembleAnswer(
+  answer: Answer,
+  load: AvailabilityLoad,
+  described?: { readonly describe: Answer["describe"]; readonly warnings: readonly Coded[] },
+): Answer {
+  return {
+    ...answer,
+    availabilityNote: load.note,
+    describe: described?.describe ?? answer.describe,
+    warnings: [...(described?.warnings ?? []), ...answer.warnings, ...load.warnings],
+  };
 }
 
 /** Run the model-router CLI. Returns the exit code instead of exiting, so
@@ -221,6 +286,7 @@ export async function runCli(argv: readonly string[], io: Partial<CliIo> = {}): 
 
   addRegistryOption(program);
   addConfigOption(program);
+  addAvailabilityOptions(program);
   addDescribeOption(program);
 
   const tasksCommand = addRegistryOption(
@@ -243,6 +309,8 @@ export async function runCli(argv: readonly string[], io: Partial<CliIo> = {}): 
       registry?: string[];
       config?: string[];
       describe?: string[];
+      availability?: unknown;
+      availabilityFile?: unknown;
     };
     const explicitRegistry = resolveRegistryOption(options.registry ?? []);
     const configValues = options.config ?? [];
@@ -263,6 +331,15 @@ export async function runCli(argv: readonly string[], io: Partial<CliIo> = {}): 
         "describe",
         "the --describe option does not apply to the tasks subcommand.",
         "Run model-router '<query>' --describe <file> to use --describe.",
+      );
+    }
+    if (options.availability === true || options.availabilityFile !== undefined) {
+      throw queryInvalid(
+        "availability",
+        options.availability === true
+          ? "the --availability option does not apply to the tasks subcommand."
+          : "the --availability-file option does not apply to the tasks subcommand.",
+        "Run model-router '<query>' to use --availability.",
       );
     }
     const tasks = listTasks(explicitRegistry === "" ? {} : { registry: explicitRegistry });
@@ -293,6 +370,8 @@ export async function runCli(argv: readonly string[], io: Partial<CliIo> = {}): 
       registry?: string[];
       config?: string[];
       describe?: string[];
+      availability?: unknown;
+      availabilityFile?: unknown;
     };
     const explicitRegistry = resolveRegistryOption(options.registry ?? []);
     const explicitConfig = resolveConfigOption(options.config ?? []);
@@ -306,6 +385,15 @@ export async function runCli(argv: readonly string[], io: Partial<CliIo> = {}): 
         "describe",
         "the --describe option does not apply to the check subcommand.",
         "Run model-router '<query>' --describe <file> to use --describe.",
+      );
+    }
+    if (options.availability === true || options.availabilityFile !== undefined) {
+      throw queryInvalid(
+        "availability",
+        options.availability === true
+          ? "the --availability option does not apply to the check subcommand."
+          : "the --availability-file option does not apply to the check subcommand.",
+        "Run model-router '<query>' to use --availability.",
       );
     }
     const loaded = loadRegistryOption(explicitRegistry);
@@ -326,11 +414,18 @@ export async function runCli(argv: readonly string[], io: Partial<CliIo> = {}): 
   program.action(
     async (
       query: string | undefined,
-      options: { registry?: string[]; config?: string[]; describe?: string[] },
+      options: {
+        registry?: string[];
+        config?: string[];
+        describe?: string[];
+        availability?: unknown;
+        availabilityFile?: unknown;
+      },
     ) => {
       const explicitRegistry = resolveRegistryOption(options.registry ?? []);
       const explicitConfig = resolveConfigOption(options.config ?? []);
       const describeFile = resolveDescribeOption(options.describe ?? []);
+      const availabilityState = readAvailabilityOptionState(options, "availability");
       if (query === undefined) {
         throw queryInvalid("query", "no query argument was given.", NO_QUERY_FIX);
       }
@@ -338,55 +433,68 @@ export async function runCli(argv: readonly string[], io: Partial<CliIo> = {}): 
         throw queryInvalid("query", `unknown command ${JSON.stringify(query)}.`, TASKS_FIX);
       }
       const raw = query === "-" ? readStdin() : query;
-      // The config option goes through the same loader the check command
-      // uses. When the caller leaves it off, rank's documented env path
-      // order applies (process.env read by the loader itself). The
-      // library's `config` option is a path string or a plain settings
-      // object: a loader that found a file passes the path so rank can
-      // re-read it through the same loader, and a loader that fell
-      // through to defaults passes the validated object directly.
-      const configOptionFor = (explicit: string | undefined) => {
-        const config = loadConfigOption(explicit);
-        return config.configPath ?? config.config;
-      };
+      // The describe step gates run before any load so a secret or empty
+      // description is rejected ahead of every file read. The privacy gate
+      // is the first: it parses the query and refuses `secret`. The text
+      // gate is the second: it reads the description file (only with a
+      // valid privacy) and refuses an empty description. Only after both
+      // gates does the CLI load the registry and config.
+      let describeText: string | undefined;
       if (describeFile !== undefined) {
-        // The privacy gate runs before the config is loaded and before the
-        // description file is read: a secret query is refused ahead of
-        // every load, the same order the library's describe step uses.
         parseDescribeQuery(raw);
-        const text = readDescribeFile(describeFile);
-        // The text gate runs before the registry and config loads: a blank
-        // description is query-invalid ahead of every load, the same order
-        // the library's describe step uses.
-        checkDescribeText(text);
+        describeText = readDescribeFile(describeFile);
+        checkDescribeText(describeText);
+      }
+      // Load config once. Describe, availability and rank use the same
+      // validated settings, not a path that rank would read again.
+      const config = loadConfigOption(explicitConfig);
+      const availabilityLoad = loadAvailabilityForCli({
+        command: availabilityState.fromCommand,
+        config: config.config.availability,
+        file: availabilityState.file,
+      });
+      const availabilityOption =
+        availabilityLoad.note === null &&
+        (availabilityState.file !== undefined || availabilityState.fromCommand)
+          ? availabilityLoad.entries
+          : undefined;
+      if (describeText !== undefined) {
         // Load the registry once and hand the loaded result to both the
         // describe step and rank: the task set offered to Jev and the
         // digest in the answer come from the same bytes.
         const loadedRegistry = loadRegistryOption(explicitRegistry);
-        const rankOptions: Parameters<typeof rank>[1] = {
-          registry: loadedRegistry,
-          config: configOptionFor(explicitConfig),
-        };
+        const rankOptions: Parameters<typeof rank>[1] =
+          availabilityOption === undefined
+            ? { registry: loadedRegistry, config: config.config }
+            : {
+                registry: loadedRegistry,
+                config: config.config,
+                availability: availabilityOption,
+              };
         // The describe step fills the query's task and needs through a Jev
         // call, then ranks the filled query and merges the describe block
         // into the answer. The describe step's warnings lead the answer's
         // warnings list: they happened first.
-        const described = await describeStep(text, raw, rankOptions);
+        const described = await describeStep(describeText, raw, rankOptions);
         const answer = rank(described.query, rankOptions);
-        const merged = {
-          ...answer,
-          describe: described.describe,
-          warnings: [...described.warnings, ...answer.warnings],
-        };
+        const merged = assembleAnswer(answer, availabilityLoad, described);
         stdout.write(`${JSON.stringify(merged)}\n`);
         answerExit = merged.routes.length === 0 ? EXIT_NO_ROUTE : EXIT_SUCCESS;
         return;
       }
       const rankOptions: Parameters<typeof rank>[1] =
         explicitRegistry === ""
-          ? { config: configOptionFor(explicitConfig) }
-          : { registry: explicitRegistry, config: configOptionFor(explicitConfig) };
-      const answer = rank(raw, rankOptions);
+          ? availabilityOption === undefined
+            ? { config: config.config }
+            : { availability: availabilityOption, config: config.config }
+          : availabilityOption === undefined
+            ? { registry: explicitRegistry, config: config.config }
+            : {
+                registry: explicitRegistry,
+                availability: availabilityOption,
+                config: config.config,
+              };
+      const answer = assembleAnswer(rank(raw, rankOptions), availabilityLoad);
       stdout.write(`${JSON.stringify(answer)}\n`);
       answerExit = answer.routes.length === 0 ? EXIT_NO_ROUTE : EXIT_SUCCESS;
     },

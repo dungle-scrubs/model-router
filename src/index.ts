@@ -1,3 +1,4 @@
+export { applyAvailability, dropExpired } from "./availability.js";
 export { defaultConfig, loadConfig, validateConfigObjectInput } from "./config.js";
 export { describe } from "./describe.js";
 export { RouterError } from "./error.js";
@@ -18,6 +19,10 @@ export type {
   Answer,
   AnswerRoute,
   AppliedQuery,
+  AvailabilityDocument,
+  AvailabilityEntry,
+  AvailabilityEntryStatus,
+  AvailabilityResult,
   AvailabilityValue,
   Coded,
   DescribeBlock,

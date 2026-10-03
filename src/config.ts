@@ -38,7 +38,7 @@ interface ConfigEnv {
   readonly [key: string]: string | undefined;
 }
 
-const KNOWN_KEYS = new Set(["effort", "describe"]);
+const KNOWN_KEYS = new Set(["availability", "describe", "effort"]);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -58,6 +58,94 @@ function exceedsLadder(value: string, top: string): boolean {
   const topIndex = ladder.indexOf(top);
   if (valueIndex === -1 || topIndex === -1) return false;
   return valueIndex > topIndex;
+}
+
+const DEFAULT_TIMEOUT_SECONDS = 10;
+const DEFAULT_MAX_AGE_SECONDS = 300;
+
+function validateAvailability(
+  raw: unknown,
+  problems: ConfigProblem[],
+): RouterConfigAvailability | undefined {
+  if (raw === undefined) return undefined;
+  if (!isPlainObject(raw)) {
+    problems.push({
+      code: "config-availability-not-object",
+      field: pathJoin("$", "availability"),
+      fix: 'Replace "availability" with an object such as "availability": { "command": ["availability-to-neutral", "--json"] }.',
+      message: 'the "availability" section must be a JSON object',
+    });
+    return undefined;
+  }
+  let command: readonly string[] | undefined;
+  if (hasOwn(raw, "command")) {
+    const cmdRaw = raw.command;
+    if (!Array.isArray(cmdRaw)) {
+      problems.push({
+        code: "config-availability-command-not-array",
+        field: pathJoin(pathJoin("$", "availability"), "command"),
+        fix: 'Replace "availability"."command" with an argv array such as ["availability-to-neutral", "--json"].',
+        message: '"availability"."command" must be an array of strings',
+      });
+    } else if (cmdRaw.length === 0) {
+      problems.push({
+        code: "config-availability-command-empty",
+        field: pathJoin(pathJoin("$", "availability"), "command"),
+        fix: 'Pass at least one argv string in "availability"."command", or remove the field to disable the source.',
+        message: '"availability"."command" must be a non-empty array',
+      });
+    } else if (!cmdRaw.every((entry): entry is string => typeof entry === "string")) {
+      problems.push({
+        code: "config-availability-command-entry-not-string",
+        field: pathJoin(pathJoin("$", "availability"), "command"),
+        fix: 'Set every entry of "availability"."command" to a string; argv runs without a shell.',
+        message: 'every entry of "availability"."command" must be a string',
+      });
+    } else {
+      command = cmdRaw as readonly string[];
+    }
+  }
+  let timeoutSeconds = DEFAULT_TIMEOUT_SECONDS;
+  if (hasOwn(raw, "timeoutSeconds")) {
+    const timeoutRaw = raw.timeoutSeconds;
+    if (typeof timeoutRaw !== "number" || !Number.isFinite(timeoutRaw) || timeoutRaw <= 0) {
+      problems.push({
+        code: "config-availability-timeout-invalid",
+        field: pathJoin(pathJoin("$", "availability"), "timeoutSeconds"),
+        fix: `Set "availability"."timeoutSeconds" to a positive number of seconds; the default is ${DEFAULT_TIMEOUT_SECONDS}.`,
+        message: '"availability"."timeoutSeconds" must be a positive number',
+      });
+    } else {
+      timeoutSeconds = timeoutRaw;
+    }
+  }
+  let maxAgeSeconds = DEFAULT_MAX_AGE_SECONDS;
+  if (hasOwn(raw, "maxAgeSeconds")) {
+    const ageRaw = raw.maxAgeSeconds;
+    if (typeof ageRaw !== "number" || !Number.isFinite(ageRaw) || ageRaw <= 0) {
+      problems.push({
+        code: "config-availability-max-age-invalid",
+        field: pathJoin(pathJoin("$", "availability"), "maxAgeSeconds"),
+        fix: `Set "availability"."maxAgeSeconds" to a positive number of seconds; the default is ${DEFAULT_MAX_AGE_SECONDS}.`,
+        message: '"availability"."maxAgeSeconds" must be a positive number',
+      });
+    } else {
+      maxAgeSeconds = ageRaw;
+    }
+  }
+  for (const key of Object.keys(raw)) {
+    if (key !== "command" && key !== "timeoutSeconds" && key !== "maxAgeSeconds") {
+      problems.push({
+        code: "config-availability-key-unknown",
+        field: pathJoin(pathJoin("$", "availability"), key),
+        fix: `Remove the field "availability"."${key}"; "availability" accepts only "command", "timeoutSeconds" and "maxAgeSeconds".`,
+        message: `the field "availability"."${key}" is not defined by the config schema`,
+      });
+    }
+  }
+  return command === undefined
+    ? { maxAgeSeconds, timeoutSeconds }
+    : { command, maxAgeSeconds, timeoutSeconds };
 }
 
 /** Build the default config: every key to its documented default. */
@@ -104,7 +192,7 @@ function validateConfigObject(raw: unknown): {
     });
     return { problems, config: defaultConfig() };
   }
-  // The closed-schema check: every top-level key beyond effort is a problem,
+  // The closed-schema check: every unrecognized top-level key is a problem,
   // and $schema is allowed for editor support. Own-property reads only:
   // an inherited name such as "constructor" is not a problem here.
   for (const key of Object.keys(raw)) {
@@ -112,7 +200,7 @@ function validateConfigObject(raw: unknown): {
     problems.push({
       code: "config-key-unknown",
       field: pathJoin("$", key),
-      fix: `Remove the field "${key}"; the config accepts only "effort", "describe" and "$schema".`,
+      fix: `Remove the field "${key}"; the config accepts only "effort", "availability", "describe" and "$schema".`,
       message: `the field "${key}" is not defined by the config schema`,
     });
   }
@@ -194,10 +282,13 @@ function validateConfigObject(raw: unknown): {
       message: `"effort"."default" "${defaultLevel}" is above "effort"."ceiling" "${ceiling}"`,
     });
   }
+  const availabilityRaw = hasOwn(raw, "availability") ? raw.availability : undefined;
+  const availability = validateAvailability(availabilityRaw, problems);
   const describeSection = validateDescribeSection(raw, problems);
   return {
     problems,
     config: {
+      ...(availability === undefined ? {} : { availability }),
       describe: describeSection,
       effort: { ceiling, default: defaultLevel },
     },
@@ -292,9 +383,23 @@ export interface LoadedConfig {
   readonly configPath: string | null;
 }
 
-/** The router's configuration: effort defaults and the describe step's
- * gates. Availability arrives in a later slice and stays absent. */
+/** The availability config: how the CLI gathers a document (none of these
+ * are required for `applyAvailability` itself - the library caller
+ * supplies entries directly). `command` is the argv the `--availability`
+ * flag runs; an absent value triggers the "command-missing" note and a
+ * graceful no-op. `timeoutSeconds` is the per-run kill timeout; a value
+ * that isn't a positive finite number is invalid. `maxAgeSeconds` is the
+ * staleness bound applied to both command output and a saved file. */
+export interface RouterConfigAvailability {
+  readonly command?: readonly string[];
+  readonly maxAgeSeconds: number;
+  readonly timeoutSeconds: number;
+}
+
+/** The router's configuration: effort defaults, the describe step's
+ * gates, and the optional availability source. */
 export interface RouterConfig {
+  readonly availability?: RouterConfigAvailability;
   readonly describe: {
     readonly capabilityThreshold: number;
     readonly jevModel: string;
