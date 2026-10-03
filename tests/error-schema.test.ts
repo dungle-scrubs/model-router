@@ -1,10 +1,12 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { RegistryErrorCode } from "@dungle-scrubs/model-registry";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, test } from "vitest";
 import { runCli } from "../src/cli-run.js";
 import { RouterError, rank } from "../src/index.js";
-import { captureStream, repoRoot } from "./helpers.js";
+import type { RouterErrorCode } from "../src/types.js";
+import { captureStream, expectValidError, expectValidRouterError, repoRoot } from "./helpers.js";
 
 const errorSchemaPath = join(repoRoot, "error.schema.json");
 const errorSchema = JSON.parse(readFileSync(errorSchemaPath, "utf8")) as object;
@@ -12,6 +14,7 @@ const validateError = new Ajv2020({ allErrors: true, strictNumbers: true }).comp
 
 function parseEnvelope(stderr: () => string): { error: Record<string, unknown> } {
   const parsed = JSON.parse(stderr()) as { error: Record<string, unknown> };
+  expectValidError(parsed);
   expect(Object.keys(parsed)).toEqual(["error"]);
   return parsed;
 }
@@ -34,32 +37,72 @@ async function runCliCapture(
 }
 
 describe("error.schema.json", () => {
+  test("RouterError envelopes require field and problems", () => {
+    const envelope = {
+      code: "query-invalid",
+      message: "Invalid.",
+      fix: "Fix it.",
+      field: "$",
+      problems: [],
+    };
+    for (const key of ["code", "field", "message", "fix", "problems"]) {
+      const incomplete: Record<string, unknown> = { ...envelope };
+      delete incomplete[key];
+      expect(validateError({ error: incomplete }), key).toBe(false);
+    }
+  });
+
+  test("RegistryError envelopes require path and problems", () => {
+    const envelope = {
+      code: "registry-missing",
+      message: "Missing.",
+      fix: "Create it.",
+      path: "registry-a.json",
+      problems: [],
+    };
+    for (const key of ["path", "problems"]) {
+      const incomplete: Record<string, unknown> = { ...envelope };
+      delete incomplete[key];
+      expect(validateError({ error: incomplete }), key).toBe(false);
+    }
+  });
+
+  test("an internal Error with an empty message produces a valid envelope", async () => {
+    const out = captureStream();
+    const err = captureStream();
+    const exit = await runCli(["-"], {
+      stdout: out.stream,
+      stderr: err.stream,
+      readStdin: () => {
+        throw new Error("");
+      },
+    });
+    expect(exit).toBe(1);
+    const envelope = parseEnvelope(err.text);
+    expect(envelope.error.message).toBe("");
+  });
   test("every RouterError code listed in the schema is allowed by the package", () => {
-    // The schema enumerates the envelope's `code`. The set must match the
-    // union the package emits plus the CLI's internal-error fallback. A
-    // code the schema omits would let an envelope slip through validation
-    // but be rejected by the consumer; a code the schema names but the
-    // package never emits would lie about the contract.
+    const emittedCodes = {
+      "backup-exists": true,
+      "config-invalid": true,
+      "describe-failed": true,
+      "describe-private": true,
+      "format-missing": true,
+      "format-unsupported": true,
+      "internal-error": true,
+      "label-duplicate": true,
+      "query-invalid": true,
+      "rating-mismatch": true,
+      "reference-unknown": true,
+      "registry-invalid": true,
+      "registry-missing": true,
+      "registry-sections-invalid": true,
+      "registry-unreadable": true,
+    } satisfies Record<RouterErrorCode | RegistryErrorCode | "internal-error", true>;
     const codes = (
       errorSchema as { properties: { error: { properties: { code: { enum: string[] } } } } }
-    ).properties.error.properties.code.enum.sort();
-    expect(codes).toEqual([
-      "backup-exists",
-      "config-invalid",
-      "describe-failed",
-      "describe-private",
-      "format-missing",
-      "format-unsupported",
-      "internal-error",
-      "label-duplicate",
-      "query-invalid",
-      "rating-mismatch",
-      "reference-unknown",
-      "registry-invalid",
-      "registry-missing",
-      "registry-sections-invalid",
-      "registry-unreadable",
-    ]);
+    ).properties.error.properties.code.enum;
+    expect([...codes].sort()).toEqual(Object.keys(emittedCodes).sort());
   });
 
   test("accepts a query-invalid envelope with no problems", () => {
@@ -289,6 +332,7 @@ describe("error.schema.json", () => {
       rank({ privacy: "secret" }, { registry: "tests/fixtures/full.json" });
       throw new Error("expected rank to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       const envelope = { error: (error as RouterError).toJSON() };
       expect(validateError(envelope), JSON.stringify(validateError.errors ?? null, null, 2)).toBe(
@@ -311,6 +355,7 @@ describe("error.schema.json", () => {
       );
       throw new Error("expected rank to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       const envelope = { error: (error as RouterError).toJSON() };
       expect(validateError(envelope), JSON.stringify(validateError.errors ?? null, null, 2)).toBe(

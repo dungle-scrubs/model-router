@@ -2,12 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dungle-scrubs.github.io/model-router/config.schema.json",
   "title": "model-router config, contract version 1",
-  "description": "The shape of `$XDG_CONFIG_HOME/model-router/config.json`. Every key is OPTIONAL; the package fills missing values with documented defaults and the file is valid when it is empty. The schema is closed: a top-level key outside `effort`, `availability`, `describe` and `$schema` is invalid (`config-key-unknown`). `$schema` is the only top-level key with a free-form value: it points editors at this file. The relationship rule (default must not be above the ceiling) is enforced by the validator, not by this schema; the file passes the schema and the engine catches the mismatch.",
+  "description": "The JSON configuration model-router accepts. Missing keys use the runtime defaults. Unknown keys are rejected. The schema includes the effort ordering rule with the implicit medium default and xhigh ceiling.",
   "type": "object",
   "properties": {
     "$schema": {
-      "type": "string",
-      "description": "A schema URL. Editor support only; the package does not fetch it. Removed before validation; an inherited value is not a problem."
+      "description": "Editor metadata, ignored by the runtime regardless of its JSON value."
     },
     "effort": {
       "type": "object",
@@ -19,10 +18,77 @@
         },
         "default": {
           "enum": ["low", "medium", "high", "xhigh", "max"],
-          "description": "A ladder level, in order low < medium < high < xhigh < max. Default `medium`. A value above the ceiling is rejected at validation time, not by this schema."
+          "description": "A ladder level, not above the ceiling. Default medium."
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "properties": {
+            "ceiling": {
+              "const": "low"
+            },
+            "default": {
+              "enum": ["low"]
+            }
+          },
+          "required": ["ceiling", "default"]
+        },
+        {
+          "properties": {
+            "ceiling": {
+              "const": "medium"
+            },
+            "default": {
+              "enum": ["low", "medium"]
+            }
+          },
+          "required": ["ceiling"]
+        },
+        {
+          "properties": {
+            "ceiling": {
+              "const": "high"
+            },
+            "default": {
+              "enum": ["low", "medium", "high"]
+            }
+          },
+          "required": ["ceiling"]
+        },
+        {
+          "properties": {
+            "ceiling": {
+              "const": "xhigh"
+            },
+            "default": {
+              "enum": ["low", "medium", "high", "xhigh"]
+            }
+          },
+          "required": ["ceiling"]
+        },
+        {
+          "properties": {
+            "ceiling": {
+              "const": "max"
+            },
+            "default": {
+              "enum": ["low", "medium", "high", "xhigh", "max"]
+            }
+          },
+          "required": ["ceiling"]
+        },
+        {
+          "not": {
+            "required": ["ceiling"]
+          },
+          "properties": {
+            "default": {
+              "enum": ["low", "medium", "high", "xhigh"]
+            }
+          }
+        }
+      ]
     },
     "availability": {
       "type": "object",
@@ -33,8 +99,7 @@
           "minItems": 1,
           "description": "The argv the CLI runs with no shell. An entry the CLI cannot read (a non-string) is invalid.",
           "items": {
-            "type": "string",
-            "minLength": 1
+            "type": "string"
           }
         },
         "timeoutSeconds": {
@@ -69,7 +134,8 @@
         "jevModel": {
           "type": "string",
           "minLength": 1,
-          "description": "The Jev model the describe step calls. A non-empty name; the package does not validate it against Jev's catalogue. Default `jev-1.13.0`."
+          "description": "The Jev model the describe step calls. A non-empty name; the package does not validate it against Jev's catalogue. Default `jev-1.13.0`.",
+          "pattern": "\\S"
         }
       },
       "additionalProperties": false

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dungle-scrubs.github.io/model-router/router-sections.schema.json",
   "title": "model-router router sections, contract version 1",
-  "description": "The three top-level sections of a registry file that model-router validates: `router`, `tasks` and `policy`. `router` is REQUIRED; `tasks` and `policy` are OPTIONAL. The schema covers what model-router accepts: object shape, value types, the closed field set on each section, and the per-array element shape. Cross-reference rules (a rating name that the ratings section does not declare, a route label no model emits, two policies that match the same query) are not expressible in JSON Schema and are reported by the engine's `validateRouterSections` after the schema passes. The file's other sections - `format`, `ratings`, `capabilities`, `meters`, `models` - are owned by model-registry's `registry.schema.json`.",
+  "description": "The router, tasks and policy sections as validated by model-router. Router is required. Other registry fields are allowed here and owned by model-registry registry.schema.json. Cross-references, model-specific effort limits, duplicate route labels and policy ties remain engine checks.",
   "type": "object",
   "properties": {
     "router": {
@@ -14,16 +14,14 @@
           "minItems": 1,
           "description": "An ordered list of rating names. Every name should be declared in the registry's `ratings` section; the validator reports the name when it is not. The order is read top to bottom.",
           "items": {
-            "type": "string",
-            "minLength": 1
+            "type": "string"
           }
         },
         "questions": {
           "type": "object",
           "description": "A capability name to a yes/no question sentence. Every capability should be declared in the registry's `capabilities` section; the validator reports the name when it is not.",
           "additionalProperties": {
-            "type": "string",
-            "minLength": 1
+            "type": "string"
           }
         }
       },
@@ -46,7 +44,7 @@
     }
   },
   "required": ["router"],
-  "additionalProperties": false,
+  "additionalProperties": true,
   "$defs": {
     "task": {
       "type": "object",
@@ -54,8 +52,10 @@
       "properties": {
         "description": {
           "type": "string",
-          "minLength": 1,
-          "description": "A one-line description of the task. The validator rejects a description that contains a line break."
+          "description": "A one-line description of the task. The validator rejects a description that contains a line break.",
+          "not": {
+            "pattern": "[\\r\\n]"
+          }
         },
         "minimums": {
           "type": "object",
@@ -91,16 +91,14 @@
           "minItems": 1,
           "description": "An ordered list of rating names. The order is read top to bottom.",
           "items": {
-            "type": "string",
-            "minLength": 1
+            "type": "string"
           }
         },
         "needs": {
           "type": "array",
           "description": "Capability names the task requires. Every name should be declared in the registry's `capabilities` section; the validator reports the name when it is not.",
           "items": {
-            "type": "string",
-            "minLength": 1
+            "type": "string"
           }
         },
         "effort": {
@@ -117,7 +115,6 @@
       "properties": {
         "task": {
           "type": "string",
-          "minLength": 1,
           "description": "The task name the policy applies to. The name must match a key in the `tasks` section; the validator reports the name when it does not."
         },
         "stakes": {
@@ -137,13 +134,11 @@
             "properties": {
               "route": {
                 "type": "string",
-                "minLength": 1,
                 "description": "The route label the policy places first. A label has the form `<model key>@<harness>[/<provider>]`."
               },
               "effort": {
-                "type": "string",
-                "minLength": 1,
-                "description": "An effort level the policy forces on this route. The level must be on the ladder; the validator reports a level that is not."
+                "enum": ["low", "medium", "high", "xhigh", "max"],
+                "description": "An effort level from the shared ladder. Model limits are checked by the engine."
               }
             },
             "required": ["route"],
@@ -152,8 +147,7 @@
         },
         "reason": {
           "type": "string",
-          "minLength": 1,
-          "description": "A one-line reason the policy exists. The validator reports a reason that is not a string."
+          "description": "A required string. The runtime accepts empty and multiline reasons."
         },
         "since": {
           "type": "string",

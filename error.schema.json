@@ -27,7 +27,7 @@
             "backup-exists",
             "internal-error"
           ],
-          "description": "The code the envelope reports. RouterError and the CLI share the first six; the next eight are RegistryError codes re-emitted unchanged; `internal-error` is the CLI fallback for unhandled failures."
+          "description": "The current RouterError and RegistryError codes, plus the internal-error CLI fallback."
         },
         "field": {
           "type": "string",
@@ -46,8 +46,7 @@
         },
         "message": {
           "type": "string",
-          "minLength": 1,
-          "description": "A one-line description of the failure. Plain text, no Markdown."
+          "description": "The failure message. Internal faults preserve Error.message unchanged, including an empty message."
         },
         "problems": {
           "type": "array",
@@ -82,7 +81,51 @@
         }
       },
       "required": ["code", "fix", "message"],
-      "additionalProperties": true
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "enum": [
+                  "query-invalid",
+                  "registry-sections-invalid",
+                  "config-invalid",
+                  "describe-private",
+                  "describe-failed"
+                ]
+              }
+            },
+            "required": ["code"]
+          },
+          "then": {
+            "required": ["field", "problems"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "enum": [
+                  "registry-missing",
+                  "registry-unreadable",
+                  "format-missing",
+                  "format-unsupported",
+                  "registry-invalid",
+                  "label-duplicate",
+                  "reference-unknown",
+                  "rating-mismatch",
+                  "backup-exists"
+                ]
+              }
+            },
+            "required": ["code"]
+          },
+          "then": {
+            "required": ["path", "problems"]
+          }
+        }
+      ]
     }
   },
   "required": ["error"],

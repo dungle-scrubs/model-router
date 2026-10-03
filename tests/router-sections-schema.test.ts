@@ -1,1071 +1,200 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { loadRegistry } from "@dungle-scrubs/model-registry";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { RouterError } from "../src/error.js";
+import { describe, expect, test } from "vitest";
+import schema from "../router-sections.schema.json" with { type: "json" };
 import { validateRouterSections } from "../src/sections.js";
-import { repoRoot } from "./helpers.js";
+import { expectValidRouterError, fixturePath, loadLoaded } from "./helpers.js";
 
-const routerSectionsSchemaPath = join(repoRoot, "router-sections.schema.json");
-const routerSectionsSchema = JSON.parse(readFileSync(routerSectionsSchemaPath, "utf8")) as object;
-const validateSections = new Ajv2020({
-  allErrors: true,
-  strictNumbers: true,
-}).compile(routerSectionsSchema);
-
-let dir: string;
-beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "model-router-sections-schema-"));
-});
-afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
-});
-
-function registryFile(value: unknown): string {
-  const path = join(dir, "registry.json");
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
-  return path;
+const validate = new Ajv2020({ allErrors: true, strictNumbers: true }).compile(schema);
+const loaded = loadLoaded(fixturePath("full.json"));
+const task = {
+  description: "Task a.",
+  minimums: { low: { coding: 6 }, normal: {}, high: {} },
+  rank: ["coding"],
+};
+const policy = {
+  task: "task-a",
+  stakes: ["low"],
+  routes: [{ route: "model-a@harness-x" }],
+  reason: "Reason a.",
+};
+const base = {
+  router: { rank: ["coding"] },
+  tasks: { "task-a": task },
+  policy: { "policy-a": policy },
+};
+const cases: { name: string; value: Record<string, unknown>; valid: boolean }[] = [
+  { name: "all sections", value: base, valid: true },
+  { name: "router only", value: { router: base.router }, valid: true },
+  {
+    name: "empty optional sections",
+    value: { router: base.router, tasks: {}, policy: {} },
+    valid: true,
+  },
+  { name: "missing router", value: {}, valid: false },
+  {
+    name: "unowned registry fields",
+    value: { ...base, format: 1, models: {}, ratings: {} },
+    valid: true,
+  },
+];
+function section(name: string, key: string, value: unknown, valid = false) {
+  cases.push({ name, value: { ...base, [key]: value }, valid });
 }
-
-function load(value: unknown) {
-  return loadRegistry({ path: registryFile(value) });
+function taskCase(name: string, patch: Record<string, unknown>, valid = false) {
+  section(name, "tasks", { "task-a": { ...task, ...patch } }, valid);
 }
-
-const VALID_RATINGS = { coding: "Writes and changes code to a spec." };
-const VALID_ROUTER = { rank: ["coding"] };
-
-describe("router-sections.schema.json", () => {
-  test("a router section with just rank is valid", () => {
-    expect(validateSections({ router: VALID_ROUTER })).toBe(true);
-  });
-
-  test("a router section with rank and questions is valid", () => {
-    expect(
-      validateSections({
-        router: { rank: ["coding"], questions: { browser: "Do you need a browser?" } },
-      }),
-    ).toBe(true);
-  });
-
-  test("a tasks section with one valid task is valid", () => {
-    expect(
-      validateSections({
-        router: VALID_ROUTER,
-        tasks: {
-          "task-a": {
-            description: "Code.",
-            minimums: { low: { coding: 6 }, normal: { coding: 7 }, high: { coding: 8 } },
-            rank: ["coding"],
-          },
-        },
-      }),
-    ).toBe(true);
-  });
-
-  test("a policy section with one valid policy is valid", () => {
-    expect(
-      validateSections({
-        router: VALID_ROUTER,
-        policy: {
-          "policy-a": {
-            task: "task-a",
-            stakes: ["low"],
-            routes: [{ route: "model-a@harness-x" }],
-            reason: "First.",
-          },
-        },
-      }),
-    ).toBe(true);
-  });
-
-  test("rejects a router section that is missing", () => {
-    expect(validateSections({})).toBe(false);
-  });
-
-  test("rejects a router section that is not an object", () => {
-    expect(validateSections({ router: "oops" })).toBe(false);
-  });
-
-  test("rejects a router section with no rank", () => {
-    expect(validateSections({ router: {} })).toBe(false);
-  });
-
-  test("rejects a router section with an empty rank", () => {
-    expect(validateSections({ router: { rank: [] } })).toBe(false);
-  });
-
-  test("rejects a router section with a non-string rank entry", () => {
-    expect(validateSections({ router: { rank: [7] } })).toBe(false);
-  });
-
-  test("rejects a router section with an unknown key", () => {
-    expect(validateSections({ router: { rank: ["coding"], mystery: true } })).toBe(false);
-  });
-
-  test("rejects a router questions section that is not an object", () => {
-    expect(validateSections({ router: { rank: ["coding"], questions: "x" } })).toBe(false);
-  });
-
-  test("rejects a router questions entry that is not a string", () => {
-    expect(validateSections({ router: { rank: ["coding"], questions: { browser: 7 } } })).toBe(
-      false,
-    );
-  });
-
-  test("rejects a tasks section that is not an object", () => {
-    expect(validateSections({ router: VALID_ROUTER, tasks: "oops" })).toBe(false);
-  });
-
-  test("rejects a task that is not an object", () => {
-    expect(validateSections({ router: VALID_ROUTER, tasks: { "task-a": "oops" } })).toBe(false);
-  });
-
-  test("rejects a task missing description", () => {
-    expect(
-      validateSections({
-        router: VALID_ROUTER,
-        tasks: {
-          "task-a": {
-            minimums: { low: { coding: 6 }, normal: { coding: 7 }, high: { coding: 8 } },
-            rank: ["coding"],
-          },
-        },
-      }),
-    ).toBe(false);
-  });
-
-  test("rejects a task missing minimums", () => {
-    expect(
-      validateSections({
-        router: VALID_ROUTER,
-        tasks: { "task-a": { description: "Code.", rank: ["coding"] } },
-      }),
-    ).toBe(false);
-  });
-
-  test("rejects a task missing one stakes entry in minimums", () => {
-    expect(
-      validateSections({
-        router: VALID_ROUTER,
-        tasks: {
-          "task-a": {
-            description: "Code.",
-            minimums: { low: { coding: 6 }, high: { coding: 8 } },
-            rank: ["coding"],
-          },
-        },
-      }),
-    ).toBe(false);
-  });
-
-  test("rejects a task minimums with an unknown stakes key", () => {
-    expect(
-      validateSections({
-        router: VALID_ROUTER,
-        tasks: {
-          "task-a": {
-            description: "Code.",
-            minimums: {
-              low: { coding: 6 },
-              normal: { coding: 7 },
-              high: { coding: 8 },
-              urgent: { coding: 9 },
-            },
-            rank: ["coding"],
-          },
-        },
-      }),
-    ).toBe(false);
-  });
-
-  test("rejects a task minimums stake that is not an object", () => {
-    expect(
-      validateSections({
-        router: VALID_ROUTER,
-        tasks: {
-          "task-a": {
-            description: "Code.",
-            minimums: { low: "oops", normal: { coding: 7 }, high: { coding: 8 } },
-            rank: ["coding"],
-          },
-        },
-      }),
-    ).toBe(false);
-  });
-
-  test("rejects a task minimum value that is not a number", () => {
-    expect(
-      validateSections({
-        router: VALID_ROUTER,
-        tasks: {
-          "task-a": {
-            description: "Code.",
-            minimums: { low: { coding: "6" }, normal: { coding: 7 }, high: { coding: 8 } },
-            rank: ["coding"],
-          },
-        },
-      }),
-    ).toBe(false);
-  });
-
-  test("rejects a task missing rank", () => {
-    expect(
-      validateSections({
-        router: VALID_ROUTER,
-        tasks: {
-          "task-a": {
-            description: "Code.",
-            minimums: { low: { coding: 6 }, normal: { coding: 7 }, high: { coding: 8 } },
-          },
-        },
-      }),
-    ).toBe(false);
-  });
-
-  test("rejects an empty task rank", () => {
-    expect(
-      validateSections({
-        router: VALID_ROUTER,
-        tasks: {
-          "task-a": {
-            description: "Code.",
-            minimums: { low: { coding: 6 }, normal: { coding: 7 }, high: { coding: 8 } },
-            rank: [],
-          },
-        },
-      }),
-    ).toBe(false);
-  });
-
-  test("rejects a non-array task needs", () => {
-    expect(
-      validateSections({
-        router: VALID_ROUTER,
-        tasks: {
-          "task-a": {
-            description: "Code.",
-            minimums: { low: { coding: 6 }, normal: { coding: 7 }, high: { coding: 8 } },
-            rank: ["coding"],
-            needs: "repo-access",
-          },
-        },
-      }),
-    ).toBe(false);
-  });
-
-  test("rejects a non-string task needs entry", () => {
-    expect(
-      validateSections({
-        router: VALID_ROUTER,
-        tasks: {
-          "task-a": {
-            description: "Code.",
-            minimums: { low: { coding: 6 }, normal: { coding: 7 }, high: { coding: 8 } },
-            rank: ["coding"],
-            needs: [7],
-          },
-        },
-      }),
-    ).toBe(false);
-  });
-
-  test("rejects a task effort off the ladder", () => {
-    expect(
-      validateSections({
-        router: VALID_ROUTER,
-        tasks: {
-          "task-a": {
-            description: "Code.",
-            minimums: { low: { coding: 6 }, normal: { coding: 7 }, high: { coding: 8 } },
-            rank: ["coding"],
-            effort: "warp-nine",
-          },
-        },
-      }),
-    ).toBe(false);
-  });
-
-  test("rejects a task with an unknown key", () => {
-    expect(
-      validateSections({
-        router: VALID_ROUTER,
-        tasks: {
-          "task-a": {
-            description: "Code.",
-            minimums: { low: { coding: 6 }, normal: { coding: 7 }, high: { coding: 8 } },
-            rank: ["coding"],
-            mystery: true,
-          },
-        },
-      }),
-    ).toBe(false);
-  });
-
-  test("rejects a policy that is not an object", () => {
-    expect(validateSections({ router: VALID_ROUTER, policy: { "policy-a": "oops" } })).toBe(false);
-  });
-
-  test("rejects a policy missing task", () => {
-    expect(
-      validateSections({
-        router: VALID_ROUTER,
-        policy: {
-          "policy-a": { stakes: ["low"], routes: [{ route: "x@y" }], reason: "First." },
-        },
-      }),
-    ).toBe(false);
-  });
-
-  test("rejects a policy missing stakes", () => {
-    expect(
-      validateSections({
-        router: VALID_ROUTER,
-        policy: {
-          "policy-a": { task: "task-a", routes: [{ route: "x@y" }], reason: "First." },
-        },
-      }),
-    ).toBe(false);
-  });
-
-  test("rejects an empty policy stakes array", () => {
-    expect(
-      validateSections({
-        router: VALID_ROUTER,
-        policy: {
-          "policy-a": { task: "task-a", stakes: [], routes: [{ route: "x@y" }], reason: "First." },
-        },
-      }),
-    ).toBe(false);
-  });
-
-  test("rejects a policy stakes entry off the allowed list", () => {
-    expect(
-      validateSections({
-        router: VALID_ROUTER,
-        policy: {
-          "policy-a": {
-            task: "task-a",
-            stakes: ["urgent"],
-            routes: [{ route: "x@y" }],
-            reason: "First.",
-          },
-        },
-      }),
-    ).toBe(false);
-  });
-
-  test("rejects a policy missing routes", () => {
-    expect(
-      validateSections({
-        router: VALID_ROUTER,
-        policy: { "policy-a": { task: "task-a", stakes: ["low"], reason: "First." } },
-      }),
-    ).toBe(false);
-  });
-
-  test("rejects an empty policy routes array", () => {
-    expect(
-      validateSections({
-        router: VALID_ROUTER,
-        policy: {
-          "policy-a": { task: "task-a", stakes: ["low"], routes: [], reason: "First." },
-        },
-      }),
-    ).toBe(false);
-  });
-
-  test("rejects a policy route that is not an object", () => {
-    expect(
-      validateSections({
-        router: VALID_ROUTER,
-        policy: {
-          "policy-a": {
-            task: "task-a",
-            stakes: ["low"],
-            routes: ["x@y"],
-            reason: "First.",
-          },
-        },
-      }),
-    ).toBe(false);
-  });
-
-  test("rejects a policy route missing the route label", () => {
-    expect(
-      validateSections({
-        router: VALID_ROUTER,
-        policy: {
-          "policy-a": { task: "task-a", stakes: ["low"], routes: [{}], reason: "First." },
-        },
-      }),
-    ).toBe(false);
-  });
-
-  test("rejects a policy route with an unknown key", () => {
-    expect(
-      validateSections({
-        router: VALID_ROUTER,
-        policy: {
-          "policy-a": {
-            task: "task-a",
-            stakes: ["low"],
-            routes: [{ route: "x@y", mystery: true }],
-            reason: "First.",
-          },
-        },
-      }),
-    ).toBe(false);
-  });
-
-  test("rejects a policy missing reason", () => {
-    expect(
-      validateSections({
-        router: VALID_ROUTER,
-        policy: {
-          "policy-a": {
-            task: "task-a",
-            stakes: ["low"],
-            routes: [{ route: "x@y" }],
-          },
-        },
-      }),
-    ).toBe(false);
-  });
-
-  test("rejects a policy reason that is not a string", () => {
-    expect(
-      validateSections({
-        router: VALID_ROUTER,
-        policy: {
-          "policy-a": {
-            task: "task-a",
-            stakes: ["low"],
-            routes: [{ route: "x@y" }],
-            reason: 7,
-          },
-        },
-      }),
-    ).toBe(false);
-  });
-
-  test("rejects a policy spec that is not 'settled'", () => {
-    expect(
-      validateSections({
-        router: VALID_ROUTER,
-        policy: {
-          "policy-a": {
-            task: "task-a",
-            stakes: ["low"],
-            routes: [{ route: "x@y" }],
-            reason: "First.",
-            spec: "open",
-          },
-        },
-      }),
-    ).toBe(false);
-  });
-
-  test("accepts a policy with spec 'settled'", () => {
-    expect(
-      validateSections({
-        router: VALID_ROUTER,
-        policy: {
-          "policy-a": {
-            task: "task-a",
-            stakes: ["low"],
-            routes: [{ route: "x@y" }],
-            reason: "First.",
-            spec: "settled",
-          },
-        },
-      }),
-    ).toBe(true);
-  });
-
-  test("rejects a policy since that is not a string", () => {
-    expect(
-      validateSections({
-        router: VALID_ROUTER,
-        policy: {
-          "policy-a": {
-            task: "task-a",
-            stakes: ["low"],
-            routes: [{ route: "x@y" }],
-            reason: "First.",
-            since: 7,
-          },
-        },
-      }),
-    ).toBe(false);
-  });
-
-  test("rejects a policy with an unknown key", () => {
-    expect(
-      validateSections({
-        router: VALID_ROUTER,
-        policy: {
-          "policy-a": {
-            task: "task-a",
-            stakes: ["low"],
-            routes: [{ route: "x@y" }],
-            reason: "First.",
-            mystery: true,
-          },
-        },
-      }),
-    ).toBe(false);
-  });
-});
-
-describe("router-sections.schema.json agrees with validateRouterSections", () => {
-  // The schema describes the shape the engine accepts. The schema cannot
-  // express cross-reference rules (an undeclared rating, an undeclared
-  // route label, two policies tied on the same query), so those rejections
-  // come from the engine alone and are skipped here. Every shape
-  // rejection is reported by both.
-  const corpus: {
-    name: string;
-    value: unknown;
-    schemaPasses: boolean;
-    enginePasses: boolean;
-  }[] = [
-    // Acceptances.
-    {
-      name: "router only",
-      value: { router: VALID_ROUTER },
-      schemaPasses: true,
-      enginePasses: true,
-    },
-    {
-      name: "router with questions",
-      value: { router: { rank: ["coding"], questions: { browser: "x" } } },
-      schemaPasses: true,
-      enginePasses: true,
-    },
-    {
-      name: "valid task",
-      value: {
-        router: VALID_ROUTER,
-        tasks: {
-          "task-a": {
-            description: "Code.",
-            minimums: { low: { coding: 6 }, normal: { coding: 7 }, high: { coding: 8 } },
-            rank: ["coding"],
-          },
-        },
-      },
-      schemaPasses: true,
-      enginePasses: true,
-    },
-    {
-      name: "valid policy",
-      value: {
-        router: VALID_ROUTER,
-        policy: {
-          "policy-a": {
-            task: "task-a",
-            stakes: ["low"],
-            routes: [{ route: "x@y" }],
-            reason: "First.",
-          },
-        },
-      },
-      schemaPasses: true,
-      enginePasses: true,
-    },
-    // Shape rejections the schema expresses.
-    { name: "missing router", value: {}, schemaPasses: false, enginePasses: false },
-    {
-      name: "non-object router",
-      value: { router: "oops" },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "router with no rank",
-      value: { router: {} },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "router with empty rank",
-      value: { router: { rank: [] } },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "router with non-string rank entry",
-      value: { router: { rank: [7] } },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "router with unknown key",
-      value: { router: { rank: ["coding"], mystery: true } },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "router questions not object",
-      value: { router: { rank: ["coding"], questions: "x" } },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "router questions entry not string",
-      value: { router: { rank: ["coding"], questions: { browser: 7 } } },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "tasks not object",
-      value: { router: VALID_ROUTER, tasks: "oops" },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "task not object",
-      value: { router: VALID_ROUTER, tasks: { "task-a": "oops" } },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "task missing description",
-      value: {
-        router: VALID_ROUTER,
-        tasks: {
-          "task-a": {
-            minimums: { low: { coding: 6 }, normal: { coding: 7 }, high: { coding: 8 } },
-            rank: ["coding"],
-          },
-        },
-      },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "task missing minimums",
-      value: {
-        router: VALID_ROUTER,
-        tasks: { "task-a": { description: "Code.", rank: ["coding"] } },
-      },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "task missing one stakes",
-      value: {
-        router: VALID_ROUTER,
-        tasks: {
-          "task-a": {
-            description: "Code.",
-            minimums: { low: { coding: 6 }, high: { coding: 8 } },
-            rank: ["coding"],
-          },
-        },
-      },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "task minimums with unknown stakes",
-      value: {
-        router: VALID_ROUTER,
-        tasks: {
-          "task-a": {
-            description: "Code.",
-            minimums: {
-              low: { coding: 6 },
-              normal: { coding: 7 },
-              high: { coding: 8 },
-              urgent: { coding: 9 },
-            },
-            rank: ["coding"],
-          },
-        },
-      },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "task minimums stake not object",
-      value: {
-        router: VALID_ROUTER,
-        tasks: {
-          "task-a": {
-            description: "Code.",
-            minimums: { low: "oops", normal: { coding: 7 }, high: { coding: 8 } },
-            rank: ["coding"],
-          },
-        },
-      },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "task minimum value not number",
-      value: {
-        router: VALID_ROUTER,
-        tasks: {
-          "task-a": {
-            description: "Code.",
-            minimums: { low: { coding: "6" }, normal: { coding: 7 }, high: { coding: 8 } },
-            rank: ["coding"],
-          },
-        },
-      },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "task missing rank",
-      value: {
-        router: VALID_ROUTER,
-        tasks: {
-          "task-a": {
-            description: "Code.",
-            minimums: { low: { coding: 6 }, normal: { coding: 7 }, high: { coding: 8 } },
-          },
-        },
-      },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "task empty rank",
-      value: {
-        router: VALID_ROUTER,
-        tasks: {
-          "task-a": {
-            description: "Code.",
-            minimums: { low: { coding: 6 }, normal: { coding: 7 }, high: { coding: 8 } },
-            rank: [],
-          },
-        },
-      },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "task needs not array",
-      value: {
-        router: VALID_ROUTER,
-        tasks: {
-          "task-a": {
-            description: "Code.",
-            minimums: { low: { coding: 6 }, normal: { coding: 7 }, high: { coding: 8 } },
-            rank: ["coding"],
-            needs: "repo-access",
-          },
-        },
-      },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "task needs entry not string",
-      value: {
-        router: VALID_ROUTER,
-        tasks: {
-          "task-a": {
-            description: "Code.",
-            minimums: { low: { coding: 6 }, normal: { coding: 7 }, high: { coding: 8 } },
-            rank: ["coding"],
-            needs: [7],
-          },
-        },
-      },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "task effort off ladder",
-      value: {
-        router: VALID_ROUTER,
-        tasks: {
-          "task-a": {
-            description: "Code.",
-            minimums: { low: { coding: 6 }, normal: { coding: 7 }, high: { coding: 8 } },
-            rank: ["coding"],
-            effort: "warp-nine",
-          },
-        },
-      },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "task unknown key",
-      value: {
-        router: VALID_ROUTER,
-        tasks: {
-          "task-a": {
-            description: "Code.",
-            minimums: { low: { coding: 6 }, normal: { coding: 7 }, high: { coding: 8 } },
-            rank: ["coding"],
-            mystery: true,
-          },
-        },
-      },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "policy not object",
-      value: { router: VALID_ROUTER, policy: { "policy-a": "oops" } },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "policy missing task",
-      value: {
-        router: VALID_ROUTER,
-        policy: { "policy-a": { stakes: ["low"], routes: [{ route: "x@y" }], reason: "First." } },
-      },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "policy missing stakes",
-      value: {
-        router: VALID_ROUTER,
-        policy: { "policy-a": { task: "task-a", routes: [{ route: "x@y" }], reason: "First." } },
-      },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "policy empty stakes",
-      value: {
-        router: VALID_ROUTER,
-        policy: {
-          "policy-a": { task: "task-a", stakes: [], routes: [{ route: "x@y" }], reason: "First." },
-        },
-      },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "policy stakes off list",
-      value: {
-        router: VALID_ROUTER,
-        policy: {
-          "policy-a": {
-            task: "task-a",
-            stakes: ["urgent"],
-            routes: [{ route: "x@y" }],
-            reason: "First.",
-          },
-        },
-      },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "policy missing routes",
-      value: {
-        router: VALID_ROUTER,
-        policy: { "policy-a": { task: "task-a", stakes: ["low"], reason: "First." } },
-      },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "policy empty routes",
-      value: {
-        router: VALID_ROUTER,
-        policy: { "policy-a": { task: "task-a", stakes: ["low"], routes: [], reason: "First." } },
-      },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "policy route not object",
-      value: {
-        router: VALID_ROUTER,
-        policy: {
-          "policy-a": { task: "task-a", stakes: ["low"], routes: ["x@y"], reason: "First." },
-        },
-      },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "policy route missing label",
-      value: {
-        router: VALID_ROUTER,
-        policy: { "policy-a": { task: "task-a", stakes: ["low"], routes: [{}], reason: "First." } },
-      },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "policy route unknown key",
-      value: {
-        router: VALID_ROUTER,
-        policy: {
-          "policy-a": {
-            task: "task-a",
-            stakes: ["low"],
-            routes: [{ route: "x@y", mystery: true }],
-            reason: "First.",
-          },
-        },
-      },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "policy missing reason",
-      value: {
-        router: VALID_ROUTER,
-        policy: { "policy-a": { task: "task-a", stakes: ["low"], routes: [{ route: "x@y" }] } },
-      },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "policy reason not string",
-      value: {
-        router: VALID_ROUTER,
-        policy: {
-          "policy-a": { task: "task-a", stakes: ["low"], routes: [{ route: "x@y" }], reason: 7 },
-        },
-      },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "policy spec not 'settled'",
-      value: {
-        router: VALID_ROUTER,
-        policy: {
-          "policy-a": {
-            task: "task-a",
-            stakes: ["low"],
-            routes: [{ route: "x@y" }],
-            reason: "First.",
-            spec: "open",
-          },
-        },
-      },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "policy since not string",
-      value: {
-        router: VALID_ROUTER,
-        policy: {
-          "policy-a": {
-            task: "task-a",
-            stakes: ["low"],
-            routes: [{ route: "x@y" }],
-            reason: "First.",
-            since: 7,
-          },
-        },
-      },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-    {
-      name: "policy unknown key",
-      value: {
-        router: VALID_ROUTER,
-        policy: {
-          "policy-a": {
-            task: "task-a",
-            stakes: ["low"],
-            routes: [{ route: "x@y" }],
-            reason: "First.",
-            mystery: true,
-          },
-        },
-      },
-      schemaPasses: false,
-      enginePasses: false,
-    },
-  ];
-
-  for (const entry of corpus) {
-    test(`schema and engine agree: ${entry.name}`, async () => {
-      // Build a full registry file: the schema only describes the router
-      // sections, but the engine reads the whole file. Pad the registry
-      // with cross-reference declarations the engine needs to make the
-      // shape-only rejection surface.
-      const value = entry.value as {
-        router?: { questions?: Record<string, string> };
-        tasks?: Record<string, unknown>;
-        policy?: Record<string, { task?: string; routes?: { route?: string }[] }>;
-      };
-      const capabilities: Record<string, string> = {};
-      if (value.router?.questions !== undefined) {
-        for (const capability of Object.keys(value.router.questions)) {
-          capabilities[capability] = "a capability";
-        }
-      }
-      const tasks: Record<string, unknown> = value.tasks ?? {};
-      if (value.policy !== undefined) {
-        for (const policy of Object.values(value.policy)) {
-          if (policy.task !== undefined && !(policy.task in tasks)) {
-            tasks[policy.task] = {
-              description: "Code.",
-              minimums: { low: { coding: 6 }, normal: { coding: 7 }, high: { coding: 8 } },
-              rank: ["coding"],
-            };
-          }
-        }
-      }
-      const models: Record<string, unknown> = {};
-      if (value.policy !== undefined) {
-        for (const policy of Object.values(value.policy)) {
-          for (const route of policy.routes ?? []) {
-            if (typeof route?.route !== "string") continue;
-            const match = route.route.match(/^([^@]+)@([^/]+)(?:\/(.+))?$/);
-            if (match === null) continue;
-            const [, modelKey, harness, provider] = match;
-            if (modelKey === undefined) continue;
-            if (models[modelKey] === undefined) {
-              models[modelKey] = {
-                family: "family-a",
-                routes: [
-                  {
-                    harness,
-                    modelId: `${modelKey}-id`,
-                    hosted: true,
-                    ...(provider !== undefined ? { provider } : {}),
-                  },
-                ],
-              };
-            }
-          }
-        }
-      }
-      const fullRegistry = {
-        format: 1,
-        ratings: VALID_RATINGS,
-        ...(Object.keys(capabilities).length > 0 ? { capabilities } : {}),
-        router: value.router,
-        ...(Object.keys(tasks).length > 0 ? { tasks } : {}),
-        ...(value.policy !== undefined ? { policy: value.policy } : {}),
-        models,
-      };
-      const loaded = load(fullRegistry);
-      let enginePasses = entry.enginePasses;
-      try {
-        validateRouterSections(loaded);
-      } catch (error) {
-        if (!(error instanceof RouterError)) throw error;
-        enginePasses = false;
-      }
-      expect(enginePasses, `engine verdict mismatch on ${entry.name}`).toBe(entry.enginePasses);
-      expect(
-        validateSections(entry.value),
-        `schema verdict mismatch on ${entry.name}: ${JSON.stringify(validateSections.errors)}`,
-      ).toBe(entry.schemaPasses);
+function policyCase(name: string, patch: Record<string, unknown>, valid = false) {
+  section(name, "policy", { "policy-a": { ...policy, ...patch } }, valid);
+}
+for (const key of ["router", "tasks", "policy"]) {
+  for (const value of [null, [], "x", 7])
+    section(`${key} not object ${JSON.stringify(value)}`, key, value);
+}
+section("router missing rank", "router", {});
+section("router unknown key", "router", { ...base.router, mystery: true });
+for (const rank of [[], "coding", [7], [null]]) {
+  section(`router rank ${JSON.stringify(rank)}`, "router", { rank });
+  taskCase(`task rank ${JSON.stringify(rank)}`, { rank });
+}
+section("duplicate rank accepted", "router", { rank: ["coding", "coding"] }, true);
+for (const questions of [null, [], "x", { browser: 7 }, { browser: null }])
+  section(`questions ${JSON.stringify(questions)}`, "router", { ...base.router, questions });
+section("empty question accepted", "router", { ...base.router, questions: { browser: "" } }, true);
+for (const value of [null, [], "x", 7]) {
+  section(`task entry ${JSON.stringify(value)}`, "tasks", { "task-a": value });
+  section(`policy entry ${JSON.stringify(value)}`, "policy", { "policy-a": value });
+}
+for (const key of ["description", "minimums", "rank"]) {
+  const value: Record<string, unknown> = { ...task };
+  delete value[key];
+  section(`missing task ${key}`, "tasks", { "task-a": value });
+}
+for (const description of [7, null, [], "a\nb", "a\rb", "a\r\nb", "a\n"])
+  taskCase(`description ${JSON.stringify(description)}`, { description });
+taskCase("empty task description accepted", { description: "" }, true);
+for (const minimums of [null, [], 7, "x", { low: {}, high: {} }, { ...task.minimums, urgent: {} }])
+  taskCase(`minimums ${JSON.stringify(minimums)}`, { minimums });
+for (const stake of ["low", "normal", "high"]) {
+  for (const value of [null, [], 7, { coding: "6" }, { coding: null }])
+    taskCase(`${stake} floors ${JSON.stringify(value)}`, {
+      minimums: { ...task.minimums, [stake]: value },
     });
-  }
+}
+taskCase(
+  "unbounded rating floors",
+  { minimums: { low: { coding: -1 }, normal: { coding: 1.5 }, high: { coding: 100 } } },
+  true,
+);
+for (const needs of [null, "browser", [7], [null]])
+  taskCase(`needs ${JSON.stringify(needs)}`, { needs });
+taskCase("valid needs", { needs: ["browser", "browser"] }, true);
+taskCase("empty needs", { needs: [] }, true);
+for (const effort of [null, 7, "off-ladder", ""]) {
+  taskCase(`task effort ${JSON.stringify(effort)}`, { effort });
+  policyCase(`policy route effort ${JSON.stringify(effort)}`, {
+    routes: [{ route: "model-a@harness-x", effort }],
+  });
+}
+for (const effort of ["low", "medium", "high", "xhigh", "max"]) {
+  taskCase(`valid task effort ${effort}`, { effort }, true);
+  policyCase(
+    `valid policy effort ${effort}`,
+    { routes: [{ route: "model-b@harness-x", effort }] },
+    true,
+  );
+}
+taskCase("unknown task field", { mystery: true });
+for (const key of ["task", "stakes", "routes", "reason"]) {
+  const value: Record<string, unknown> = { ...policy };
+  delete value[key];
+  section(`missing policy ${key}`, "policy", { "policy-a": value });
+}
+for (const task of [7, null, []]) policyCase(`policy task ${JSON.stringify(task)}`, { task });
+for (const stakes of [null, "low", [], ["urgent"], [7]])
+  policyCase(`stakes ${JSON.stringify(stakes)}`, { stakes });
+policyCase("duplicate stakes accepted", { stakes: ["low", "low"] }, true);
+for (const routes of [
+  null,
+  "x",
+  [],
+  [7],
+  [null],
+  [{}],
+  [{ route: 7 }],
+  [{ route: "model-a@harness-x", mystery: true }],
+])
+  policyCase(`routes ${JSON.stringify(routes)}`, { routes });
+for (const reason of [null, 7, []]) policyCase(`reason ${JSON.stringify(reason)}`, { reason });
+policyCase("empty reason accepted", { reason: "" }, true);
+policyCase("multiline reason accepted", { reason: "a\nb" }, true);
+for (const since of [null, 7, []]) policyCase(`since ${JSON.stringify(since)}`, { since });
+policyCase("since not parsed", { since: "not a date" }, true);
+for (const spec of [null, 7, "open"]) policyCase(`spec ${JSON.stringify(spec)}`, { spec });
+policyCase("settled spec", { spec: "settled" }, true);
+policyCase("unknown policy field", { mystery: true });
+
+describe("router-sections.schema.json agrees with validateRouterSections on local rules", () => {
+  test.each(cases)("$name", ({ value, valid }) => {
+    let accepted = true;
+    try {
+      validateRouterSections({ ...loaded, sections: value as typeof loaded.sections });
+    } catch (error) {
+      expectValidRouterError(error);
+      accepted = false;
+    }
+    expect(accepted).toBe(valid);
+    expect(validate(value), JSON.stringify(validate.errors)).toBe(valid);
+  });
+  test("the full registry passes without claiming ownership of other sections", () => {
+    expect(validate({ ...loaded.registry, ...base })).toBe(true);
+  });
+});
+
+describe("content-dependent checks remain with the engine", () => {
+  const values = [
+    { ...base, router: { rank: ["unknown-rating"] } },
+    { ...base, router: { ...base.router, questions: { "unknown-capability": "Question?" } } },
+    { ...base, tasks: { "task-a": { ...task, needs: ["unknown-capability"] } } },
+    {
+      ...base,
+      tasks: {
+        "task-a": { ...task, minimums: { ...task.minimums, low: { "unknown-rating": 5 } } },
+      },
+    },
+    { ...base, policy: { "policy-a": { ...policy, task: "unknown-task" } } },
+    {
+      ...base,
+      policy: { "policy-a": { ...policy, routes: [{ route: "unknown-model@harness-x" }] } },
+    },
+    {
+      ...base,
+      policy: {
+        "policy-a": { ...policy, routes: [{ route: "model-a@harness-x", effort: "max" }] },
+      },
+    },
+    {
+      ...base,
+      policy: {
+        "policy-a": {
+          ...policy,
+          routes: [{ route: "model-a@harness-x" }, { route: "model-a@harness-x", effort: "low" }],
+        },
+      },
+    },
+    { ...base, policy: { "policy-a": policy, "policy-b": policy } },
+  ];
+  test.each(values.map((value, index) => ({ value, index })))(
+    "engine-only check $index",
+    ({ value }) => {
+      expect(validate(value)).toBe(true);
+      let accepted = true;
+      try {
+        validateRouterSections({ ...loaded, sections: value as typeof loaded.sections });
+      } catch (error) {
+        expectValidRouterError(error);
+        accepted = false;
+      }
+      expect(accepted).toBe(false);
+    },
+  );
 });
