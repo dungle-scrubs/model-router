@@ -50,5 +50,17 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
       - run: pnpm install --frozen-lockfile
       - run: pnpm verify
-      - run: npm install -g npm@^11.5.1
+      - name: Ensure npm CLI is at least 11.5.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          required="11.5.1"
+          current="$(npm --version)"
+          if [ "$(printf '%s\n%s\n' "$required" "$current" | sort -V | head -n1)" = "$required" ]; then
+            echo "npm $current satisfies >= $required"
+          else
+            echo "npm $current is older than $required; upgrading to latest 11.x"
+            npm install -g "npm@^$required"
+            echo "npm now $(npm --version)"
+          fi
       - run: npm publish --provenance --access public
