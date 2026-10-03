@@ -3,34 +3,21 @@ import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { repoRoot } from "./helpers.js";
 
-const WORKFLOW_PATH = join(repoRoot, ".github", "workflows", "ci.yml");
+const WORKFLOWS = ["ci.yml", "release.yml"].map((name) =>
+  join(repoRoot, ".github", "workflows", name),
+);
 
-/** Split the workflow into its step blocks: keys at two levels of job nesting. */
-function stepBlocks(text: string): string[][] {
-  const blocks: string[][] = [];
-  let current: string[] | null = null;
-  for (const line of text.split("\n")) {
-    if (/^ {6}- /.test(line)) {
-      current = [line];
-      blocks.push(current);
-    } else if (current !== null) {
-      current.push(line);
-    }
-  }
-  return blocks;
-}
+describe("the model-registry dependency", () => {
+  test("comes from npm with a caret range", () => {
+    const manifest = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as {
+      dependencies: Record<string, string>;
+    };
+    expect(manifest.dependencies["@dungle-scrubs/model-registry"]).toMatch(/^\^\d+\.\d+\.\d+$/);
+  });
 
-describe("the CI workflow", () => {
-  const text = readFileSync(WORKFLOW_PATH, "utf8");
-
-  test("every job's deploy key step runs under bash on every runner", () => {
-    const keySteps = stepBlocks(text).filter((block) =>
-      block.join("\n").includes("MODEL_REGISTRY_DEPLOY_KEY"),
-    );
-    expect(keySteps.length).toBe(2);
-    for (const block of keySteps) {
-      const step = block.join("\n");
-      expect(step, step).toContain("shell: bash");
-    }
+  test.each(WORKFLOWS)("%s needs no git access to install it", (path) => {
+    const text = readFileSync(path, "utf8");
+    expect(text).not.toContain("MODEL_REGISTRY_DEPLOY_KEY");
+    expect(text).not.toContain("insteadOf");
   });
 });
