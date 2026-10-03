@@ -7,6 +7,7 @@ import {
   type Model,
   type Route,
 } from "@dungle-scrubs/model-registry";
+import { applyAvailability, isUsableAvailabilityEntry } from "./availability.js";
 import {
   defaultConfig as defaultRouterConfig,
   type LoadedConfig,
@@ -20,6 +21,7 @@ import { validateRouterSections } from "./sections.js";
 import type {
   Answer,
   AnswerRoute,
+  AvailabilityEntry,
   AvailabilityValue,
   Coded,
   PinReport,
@@ -111,13 +113,11 @@ export function resolveRegistry(option: RankOptions["registry"]): LoadedRegistry
   return loadRegistry();
 }
 
-/** Resolve the rank call's `config` option: a string is a path, a plain
- * object is the settings form, an absent option falls through to the
- * documented path order. The settings form goes through one validator;
- * the path form goes through the same loader the CLI uses. The library
- * accepts no pre-loaded config shortcut: callers that already ran the
- * loader must pass the path string it consumed, not the LoadedConfig
- * envelope, so the validator is the one source of truth. */
+/** Resolve the rank call's `config` option: a path string uses the same
+ * loader as the CLI; an absent option follows the documented path order.
+ * A plain settings object goes through the one validator. Callers that
+ * already ran the loader pass its validated settings object, not the
+ * LoadedConfig envelope, to validate again without a second file read. */
 export function resolveConfig(
   option: RankOptions["config"],
   env: NodeJS.ProcessEnv = process.env,
@@ -491,6 +491,23 @@ function dedupe(values: readonly string[]): readonly string[] {
   return [...new Set(values)];
 }
 
+/** Walk the registry's meters section and collect the names that the
+ * loader declared as `spendToZero: true`. The names are read with
+ * `Object.hasOwn` so an inherited name such as `constructor` is treated
+ * as absent. The result feeds `applyAvailability`'s `spendToZero`
+ * option: a projected reading on one of these meters keeps the route
+ * in place. */
+function collectSpendToZeroMeters(loaded: LoadedRegistry): readonly string[] {
+  const meters = loaded.registry.meters ?? {};
+  const out: string[] = [];
+  for (const [name, meter] of Object.entries(meters)) {
+    if (Object.hasOwn(meter, "spendToZero") && meter.spendToZero === true) {
+      out.push(name);
+    }
+  }
+  return out;
+}
+
 function resolveFloors(
   applied: ReturnType<typeof applyQueryDefaults>,
   resolvedTask: TaskResolution | undefined,
@@ -819,6 +836,103 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
     }
   }
   routes.push(...policyPlaced, ...clearingRoutes, ...belowRoutes);
+
+  // Apply the availability rule after the pin and the policy have placed
+  // their routes. The function reads only `label` and `meter`, so the
+  // order is preserved for any route whose meter has no covering entry.
+  // Two warnings the engine emits on top of applyAvailability's own
+  // warnings: an entry whose meter the registry does not declare, and a
+  // reading that was applied while a meter the routes use has none.
+  // meter-no-reading fires once per uncovered meter (not per route).
+  // meter-undeclared fires once per undeclared meter name, deduped over
+  // the entries. The pin report is rewritten when the pin label lands in
+  // the result's removed list: the route's meter was exhausted.
+  if (options.availability !== undefined) {
+    const entries = options.availability;
+    const filtered: AvailabilityEntry[] = [];
+    const declaredMeters = new Set(Object.keys(loaded.registry.meters ?? {}));
+    const metersUsedByRoutes = new Set<string>();
+    for (const route of routes) {
+      if (route.meter !== undefined) metersUsedByRoutes.add(route.meter);
+    }
+    const seenUndeclared = new Set<string>();
+    for (const entry of entries) {
+      if (!isUsableAvailabilityEntry(entry)) continue;
+      if (!declaredMeters.has(entry.meter)) {
+        if (!seenUndeclared.has(entry.meter)) {
+          seenUndeclared.add(entry.meter);
+          warnings.push({
+            code: "meter-undeclared",
+            field: "$.entries",
+            message: `the meter "${entry.meter}" is not declared in the registry's meters section`,
+            fix: `Declare "${entry.meter}" in the registry's meters section, or remove the entry from the availability document.`,
+          });
+        }
+        continue;
+      }
+      filtered.push(entry);
+    }
+    if (metersUsedByRoutes.size > 0) {
+      // meter-no-reading fires whenever the option is passed, even with an
+      // empty array: the caller's empty `entries` means no meter is
+      // covered. The undeclared-meter filter above is irrelevant: the
+      // loop over metersUsedByRoutes already only includes declared meters.
+      for (const meter of metersUsedByRoutes) {
+        const covered = filtered.some((entry) => entry.meter === meter);
+        if (!covered) {
+          warnings.push({
+            code: "meter-no-reading",
+            field: `$.entries`,
+            message: `the meter "${meter}" is used by routes but has no availability entry`,
+            fix: `Add an entry for "${meter}" to the availability document, or remove the meter from the routes that use it.`,
+          });
+        }
+      }
+    }
+    const spendToZero = collectSpendToZeroMeters(loaded);
+    const result = applyAvailability(routes, filtered, { spendToZero });
+    routes.length = 0;
+    routes.push(...result.routes);
+    for (const removedRoute of result.removed) {
+      removed.push(removedRoute);
+    }
+    for (const warn of result.warnings) {
+      warnings.push(warn);
+    }
+    // Pin update: the pin label was removed by an exhausted entry.
+    // The all-exhausted case is the exception: nothing was removed, so the
+    // pin stays used. The warning field names `$.pin` per the contract.
+    if (
+      pinReport !== null &&
+      pinReport.used === true &&
+      pinReport.reason === "" &&
+      result.removed.some((entry) => entry.label === pinReport.label)
+    ) {
+      const updatedPin: PinReport = {
+        label: pinReport.label,
+        reason: "meter-exhausted",
+        used: false,
+      };
+      warnings.push({
+        code: "pin-unused",
+        field: "$.pin",
+        fix: `Adjust the pin "${pinReport.label}" to a route whose meter is not exhausted, or top the meter's quota back up.`,
+        message: `the pin "${pinReport.label}" was not used; its meter is exhausted`,
+      });
+      return {
+        availabilityNote: null,
+        contract: 1,
+        describe: null,
+        pin: updatedPin,
+        query: applied,
+        registryDigest: loaded.digest,
+        removed,
+        routerVersion: ROUTER_VERSION,
+        routes,
+        warnings,
+      };
+    }
+  }
 
   return {
     availabilityNote: null,

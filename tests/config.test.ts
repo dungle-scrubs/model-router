@@ -61,6 +61,12 @@ describe("validateConfigObjectInput", () => {
       expect((error as RouterError).code).toBe("config-invalid");
       const problems = (error as RouterError).problems.map((problem) => problem.code);
       expect(problems).toContain("config-key-unknown");
+      expect(
+        (error as RouterError).problems.find((problem) => problem.code === "config-key-unknown")
+          ?.fix,
+      ).toBe(
+        'Remove the field "mystery"; the config accepts only "effort", "availability", "describe" and "$schema".',
+      );
     }
   });
 
@@ -140,10 +146,12 @@ describe("loadConfigFromPath", () => {
     });
   });
 
-  test("a missing file fails config-invalid", () => {
-    expect(() => loadConfigFromPath("/nonexistent/path/config.json")).toThrowError(
-      expect.objectContaining({ code: "config-invalid" }),
-    );
+  test("a missing file fails config-invalid", async () => {
+    await withTempDir(async (dir) => {
+      expect(() => loadConfigFromPath(join(dir, "missing.json"))).toThrowError(
+        expect.objectContaining({ code: "config-invalid" }),
+      );
+    });
   });
 
   test("a file with invalid JSON fails config-invalid", async () => {
@@ -160,10 +168,12 @@ describe("loadConfigFromPath", () => {
 });
 
 describe("xdgConfigPath", () => {
-  test("uses XDG_CONFIG_HOME when set", () => {
-    expect(xdgConfigPath({ XDG_CONFIG_HOME: "/tmp/example" })).toBe(
-      join("/tmp/example", "model-router", "config.json"),
-    );
+  test("uses XDG_CONFIG_HOME when set", async () => {
+    await withTempDir(async (dir) => {
+      expect(xdgConfigPath({ XDG_CONFIG_HOME: dir })).toBe(
+        join(dir, "model-router", "config.json"),
+      );
+    });
   });
 
   test("uses $HOME/.config when XDG_CONFIG_HOME is empty", () => {
@@ -227,10 +237,12 @@ describe("loadConfig path order", () => {
     });
   });
 
-  test("an explicit path that does not exist is config-invalid", () => {
-    expect(() => loadConfig({ explicitPath: "/nonexistent/path/config.json" })).toThrowError(
-      expect.objectContaining({ code: "config-invalid" }),
-    );
+  test("an explicit path that does not exist is config-invalid", async () => {
+    await withTempDir(async (dir) => {
+      expect(() => loadConfig({ explicitPath: join(dir, "missing.json") })).toThrowError(
+        expect.objectContaining({ code: "config-invalid" }),
+      );
+    });
   });
 
   test("a malformed file at the XDG path is config-invalid", async () => {
@@ -485,6 +497,186 @@ describe("rank accepts a config object or path", () => {
       expect(fileErr?.problems.map((problem) => problem.code)).toEqual(
         objectErr?.problems.map((problem) => problem.code),
       );
+    });
+  });
+});
+
+describe("config availability section", () => {
+  test("a non-availability config produces no availability key", () => {
+    expect(validateConfigObjectInput({})).toEqual(defaultConfig());
+    expect(validateConfigObjectInput({ effort: { ceiling: "xhigh", default: "medium" } })).toEqual(
+      defaultConfig(),
+    );
+  });
+
+  test("a valid availability command is accepted", () => {
+    const result = validateConfigObjectInput({
+      availability: { command: ["availability-to-neutral", "--json"] },
+    });
+    expect(result.availability?.command).toEqual(["availability-to-neutral", "--json"]);
+    expect(result.availability?.maxAgeSeconds).toBe(300);
+    expect(result.availability?.timeoutSeconds).toBe(10);
+  });
+
+  test("availability without a command is accepted (defaults apply)", () => {
+    const result = validateConfigObjectInput({ availability: {} });
+    expect(result.availability?.command).toBeUndefined();
+    expect(result.availability?.maxAgeSeconds).toBe(300);
+    expect(result.availability?.timeoutSeconds).toBe(10);
+  });
+
+  test("a non-object availability section fails", () => {
+    try {
+      validateConfigObjectInput({ availability: "no" });
+      throw new Error("expected to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RouterError);
+      const err = error as RouterError;
+      expect(err.code).toBe("config-invalid");
+      expect(err.problems.map((p) => p.code)).toContain("config-availability-not-object");
+    }
+  });
+
+  test("a non-array command fails", () => {
+    try {
+      validateConfigObjectInput({ availability: { command: "node" } });
+      throw new Error("expected to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RouterError);
+      const err = error as RouterError;
+      expect(err.problems.map((p) => p.code)).toContain("config-availability-command-not-array");
+    }
+  });
+
+  test("an empty command array fails", () => {
+    try {
+      validateConfigObjectInput({ availability: { command: [] } });
+      throw new Error("expected to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RouterError);
+      const err = error as RouterError;
+      expect(err.problems.map((p) => p.code)).toContain("config-availability-command-empty");
+    }
+  });
+
+  test("a non-string command entry fails", () => {
+    try {
+      validateConfigObjectInput({ availability: { command: ["node", 42] } });
+      throw new Error("expected to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RouterError);
+      const err = error as RouterError;
+      expect(err.problems.map((p) => p.code)).toContain(
+        "config-availability-command-entry-not-string",
+      );
+    }
+  });
+
+  test("a non-positive timeoutSeconds fails", () => {
+    try {
+      validateConfigObjectInput({ availability: { timeoutSeconds: 0 } });
+      throw new Error("expected to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RouterError);
+      const err = error as RouterError;
+      expect(err.problems.map((p) => p.code)).toContain("config-availability-timeout-invalid");
+    }
+  });
+
+  test("a non-finite timeoutSeconds fails", () => {
+    try {
+      validateConfigObjectInput({ availability: { timeoutSeconds: Number.NaN } });
+      throw new Error("expected to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RouterError);
+      const err = error as RouterError;
+      expect(err.problems.map((p) => p.code)).toContain("config-availability-timeout-invalid");
+    }
+  });
+
+  test("a non-number timeoutSeconds fails", () => {
+    try {
+      validateConfigObjectInput({ availability: { timeoutSeconds: "10" } });
+      throw new Error("expected to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RouterError);
+      const err = error as RouterError;
+      expect(err.problems.map((p) => p.code)).toContain("config-availability-timeout-invalid");
+    }
+  });
+
+  test("a non-positive maxAgeSeconds fails", () => {
+    try {
+      validateConfigObjectInput({ availability: { maxAgeSeconds: 0 } });
+      throw new Error("expected to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RouterError);
+      const err = error as RouterError;
+      expect(err.problems.map((p) => p.code)).toContain("config-availability-max-age-invalid");
+    }
+  });
+
+  test("a non-finite maxAgeSeconds fails", () => {
+    try {
+      validateConfigObjectInput({ availability: { maxAgeSeconds: Number.POSITIVE_INFINITY } });
+      throw new Error("expected to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RouterError);
+      const err = error as RouterError;
+      expect(err.problems.map((p) => p.code)).toContain("config-availability-max-age-invalid");
+    }
+  });
+
+  test("an unknown availability key fails", () => {
+    try {
+      validateConfigObjectInput({ availability: { mystery: true } });
+      throw new Error("expected to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RouterError);
+      const err = error as RouterError;
+      expect(err.problems.map((p) => p.code)).toContain("config-availability-key-unknown");
+      const problem = err.problems.find((p) => p.code === "config-availability-key-unknown");
+      expect(problem?.message).toBe(
+        'the field "availability"."mystery" is not defined by the config schema',
+      );
+      expect(problem?.field).toBe('$["availability"]["mystery"]');
+    }
+  });
+
+  test("availability problems report beside other config problems", () => {
+    try {
+      validateConfigObjectInput({
+        availability: { mystery: true },
+        effort: { ceiling: "warp-nine" },
+      });
+      throw new Error("expected to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RouterError);
+      const err = error as RouterError;
+      const codes = err.problems.map((p) => p.code);
+      expect(codes).toContain("config-availability-key-unknown");
+      expect(codes).toContain("config-effort-ceiling-invalid");
+    }
+  });
+
+  test("a custom timeoutSeconds and maxAgeSeconds are accepted", () => {
+    const result = validateConfigObjectInput({
+      availability: { command: ["x"], timeoutSeconds: 30, maxAgeSeconds: 600 },
+    });
+    expect(result.availability?.timeoutSeconds).toBe(30);
+    expect(result.availability?.maxAgeSeconds).toBe(600);
+  });
+
+  test("a config file with an availability section is loaded by loadConfig", async () => {
+    await withTempDir(async (dir) => {
+      const path = writeJson(dir, "config.json", {
+        availability: { command: ["from-file"], timeoutSeconds: 7, maxAgeSeconds: 120 },
+      });
+      const result = loadConfig({ explicitPath: path });
+      expect(result.configPath).toBe(path);
+      expect(result.config.availability?.command).toEqual(["from-file"]);
+      expect(result.config.availability?.timeoutSeconds).toBe(7);
+      expect(result.config.availability?.maxAgeSeconds).toBe(120);
     });
   });
 });

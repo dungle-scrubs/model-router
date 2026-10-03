@@ -1,7 +1,31 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { repoRoot } from "./helpers.js";
+import { repoRoot, withTempDir } from "./helpers.js";
+
+const SRC_DIR = join(repoRoot, "src");
+
+function sourceCodes(dir = SRC_DIR): readonly string[] {
+  const seen = new Set<string>();
+  for (const file of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, file.name);
+    if (file.isDirectory()) {
+      for (const code of sourceCodes(path)) seen.add(code);
+      continue;
+    }
+    if (!file.name.endsWith(".ts")) continue;
+    const source = readFileSync(path, "utf8");
+    for (const match of source.matchAll(/\b(?:code|reason)\s*:\s*["'`]([a-z][a-z0-9-]+)["'`]/g)) {
+      seen.add(match[1] as string);
+    }
+    for (const match of source.matchAll(
+      /\b(?:note|buildReason)\(\s*["'`]([a-z][a-z0-9-]+)["'`]/g,
+    )) {
+      seen.add(match[1] as string);
+    }
+  }
+  return [...seen].sort();
+}
 
 describe("README problem codes", () => {
   test("documents every problem code the sections module emits", () => {
@@ -25,6 +49,33 @@ describe("README problem codes", () => {
     expect(emitted.length).toBeGreaterThanOrEqual(5);
     for (const code of emitted) {
       expect(readme, `${code} is missing from README.md`).toContain(code);
+    }
+  });
+
+  test("collects literal codes, reasons and builder calls recursively", async () => {
+    await withTempDir(async (dir) => {
+      const nested = join(dir, "nested");
+      mkdirSync(nested);
+      writeFileSync(
+        join(nested, "example.ts"),
+        'buildReason("reason-a");\nbuildReason(\n "reason-b");\nnote("note-a");\nconst value = { reason: "reason-c", code: "code-a" };\n',
+      );
+      expect(sourceCodes(dir)).toEqual(["code-a", "note-a", "reason-a", "reason-b", "reason-c"]);
+    });
+  });
+
+  test("documents every code emitted across src recursively", () => {
+    const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
+    const emitted = sourceCodes();
+    expect(emitted.length).toBeGreaterThanOrEqual(20);
+    for (const code of emitted) {
+      expect(readme, `${code} is missing from README.md`).toContain(code);
+      if (code.startsWith("meter-")) {
+        expect(
+          readme.split("\n").some((line) => line.startsWith(`| \`${code}\` |`)),
+          `${code} is missing its README row`,
+        ).toBe(true);
+      }
     }
   });
 
@@ -87,5 +138,27 @@ describe("README problem codes", () => {
         cellCount(header),
       );
     }
+  });
+});
+
+describe("availability documentation", () => {
+  test("describes the CLI merge and every config key and invalid-entry cause", () => {
+    const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
+    expect(readme).toContain(
+      "`describe: null` (the describe block arrives only through the describe step, which the CLI merges)",
+    );
+    expect(readme).toContain("the CLI fills `availabilityNote`");
+    expect(readme).toContain("other than `effort`, `availability`, `describe` and `$schema`");
+    expect(readme).toContain(
+      "any entry the shipped schema rejects, or a `resetsAt` that does not parse",
+    );
+    expect(readme).toContain("keeps its place. A re-applying");
+  });
+
+  test("generatedAt documents stale and invalid separately", () => {
+    const schema = JSON.parse(readFileSync(join(repoRoot, "availability.schema.json"), "utf8"));
+    expect(schema.properties.generatedAt.description).toBe(
+      "When the document was produced. Older than `maxAgeSeconds` or later than the read is `availability-reading-stale`; unparseable is `availability-reading-invalid`. The CLI fills `availabilityNote`.",
+    );
   });
 });

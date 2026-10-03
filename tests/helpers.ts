@@ -119,6 +119,24 @@ export async function withEnv(
   }
 }
 
+/** Every coded object the availability feature emits must carry a
+ * non-empty message and a one-sentence fix: capitalised and ending in
+ * a period, the RFC's "the next action, one sentence" (RFC 246). The
+ * helper accepts an optional and fails the test if the value is
+ * missing, so the call site does not need its own non-null assertion. */
+export function expectActionable(
+  coded: { readonly message: string; readonly fix?: string } | null | undefined,
+): void {
+  expect(coded, "expectActionable received a missing coded value").toBeDefined();
+  const value = coded as { readonly message: string; readonly fix?: string };
+  expect(
+    value.message.trim().length,
+    `message was ${JSON.stringify(value.message)}`,
+  ).toBeGreaterThan(0);
+  expect(typeof value.fix, `fix was ${JSON.stringify(value.fix)}`).toBe("string");
+  expect(value.fix, `fix was ${JSON.stringify(value.fix)}`).toMatch(/^[A-Z][\s\S]*\.$/);
+}
+
 export function captureStream(): {
   stream: { write(chunk: string | Uint8Array): boolean };
   text: () => string;
