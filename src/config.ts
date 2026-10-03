@@ -462,7 +462,7 @@ function readJsonFromPath(filePath: string): unknown {
     throw new RouterError({
       code: "config-invalid",
       field: "$",
-      fix: "Replace the file with valid JSON such as {} or an empty file.",
+      fix: "Replace the file with valid JSON, such as {}.",
       message: `the config file at "${filePath}" is not valid JSON`,
       problems: [],
     });

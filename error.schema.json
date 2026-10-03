@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dungle-scrubs.github.io/model-router/error.schema.json",
+  "title": "model-router error envelope, contract version 1",
+  "description": "The shape the CLI prints as one JSON line on stderr: { \"error\": <envelope> }. The envelope covers every RouterError the package throws, every RegistryError the loader throws (re-emitted unchanged), the Commander-driven query-invalid envelope, and the internal-error envelope the CLI uses for unhandled failures. The RouterError and Commander envelopes carry a `field`; the registry and internal envelopes carry a `path` or no field. The schema accepts both: a `field` is preferred when the failure names a file field, a `path` when it names a file path, and either is allowed.",
+  "type": "object",
+  "properties": {
+    "error": {
+      "type": "object",
+      "description": "The single envelope the CLI prints on stderr. Carries a code, a one-line message and a one-sentence fix. When the failure is a file-level problem, a `field` (RouterError) or a `path` (RegistryError) names the field or file. The full list of findings lives in `problems` for validation failures.",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "examples": [
+            "query-invalid",
+            "registry-sections-invalid",
+            "config-invalid",
+            "describe-private",
+            "describe-failed",
+            "registry-missing",
+            "registry-unreadable",
+            "format-missing",
+            "format-unsupported",
+            "registry-invalid",
+            "label-duplicate",
+            "reference-unknown",
+            "rating-mismatch",
+            "backup-exists",
+            "internal-error"
+          ],
+          "description": "The error code. `examples` lists the current RouterError and RegistryError codes plus the internal-error CLI fallback. The schema accepts any non-empty code so that a consumer validating against it tolerates a code added in a later minor version, as RFC-01 asks consumers to do."
+        },
+        "field": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A path-style field the envelope points at, set by RouterError and Commander errors. `$` is the synthetic top-level field for file-level problems; a `$[\"name\"]` path is a section; a `$[\"name\"][\"key\"]` path is a nested field."
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The file path the envelope points at, set by RegistryError. Either the file that was missing, the file that could not be read, or the registry file the validation ran against."
+        },
+        "fix": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A one-sentence fix: capitalised, ending in a period. The next action, not the cause."
+        },
+        "message": {
+          "type": "string",
+          "description": "The failure message. Internal faults preserve Error.message unchanged, including an empty message."
+        },
+        "problems": {
+          "type": "array",
+          "description": "Every problem the validator collected, in order. Empty when the failure is a single envelope (a path-level RouterError, a missing file, a malformed JSON file, or an internal fault).",
+          "items": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "minLength": 1,
+                "description": "A problem code. RouterError problem codes start with `config-`, `router-`, `tasks-` or `policy-`; RegistryError problem codes are model-registry's."
+              },
+              "field": {
+                "type": "string",
+                "minLength": 1,
+                "description": "A path-style field the problem points at, in the same shape as the envelope's `field`."
+              },
+              "fix": {
+                "type": "string",
+                "minLength": 1,
+                "description": "A one-sentence fix for this single problem."
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1,
+                "description": "A one-line description of the problem."
+              }
+            },
+            "required": ["code", "field", "fix", "message"],
+            "additionalProperties": true
+          }
+        }
+      },
+      "required": ["code", "fix", "message"],
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "enum": [
+                  "query-invalid",
+                  "registry-sections-invalid",
+                  "config-invalid",
+                  "describe-private",
+                  "describe-failed"
+                ]
+              }
+            },
+            "required": ["code"]
+          },
+          "then": {
+            "required": ["field", "problems"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "enum": [
+                  "registry-missing",
+                  "registry-unreadable",
+                  "format-missing",
+                  "format-unsupported",
+                  "registry-invalid",
+                  "label-duplicate",
+                  "reference-unknown",
+                  "rating-mismatch",
+                  "backup-exists"
+                ]
+              }
+            },
+            "required": ["code"]
+          },
+          "then": {
+            "required": ["path", "problems"]
+          }
+        }
+      ]
+    }
+  },
+  "required": ["error"],
+  "additionalProperties": true
+}

@@ -10,7 +10,9 @@ import {
 } from "../src/config.js";
 import { RouterError, rank } from "../src/index.js";
 import {
+  errorMatching,
   expectValidAnswer,
+  expectValidRouterError,
   fixturePath,
   loadLoaded,
   withEnv,
@@ -45,6 +47,7 @@ describe("validateConfigObjectInput", () => {
       validateConfigObjectInput({ effort: { ceiling: "low", default: "high" } });
       throw new Error("expected validateConfigObjectInput to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       expect((error as RouterError).code).toBe("config-invalid");
       const problems = (error as RouterError).problems.map((problem) => problem.code);
@@ -57,6 +60,7 @@ describe("validateConfigObjectInput", () => {
       validateConfigObjectInput({ mystery: true });
       throw new Error("expected validateConfigObjectInput to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       expect((error as RouterError).code).toBe("config-invalid");
       const problems = (error as RouterError).problems.map((problem) => problem.code);
@@ -96,6 +100,7 @@ describe("validateConfigObjectInput", () => {
       validateConfigObjectInput({ effort: { ceiling: "warp-nine" } });
       throw new Error("expected validateConfigObjectInput to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       const problems = (error as RouterError).problems.map((problem) => problem.code);
       expect(problems).toContain("config-effort-ceiling-invalid");
@@ -107,6 +112,7 @@ describe("validateConfigObjectInput", () => {
       validateConfigObjectInput({ effort: { default: "warp-nine" } });
       throw new Error("expected validateConfigObjectInput to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       const problems = (error as RouterError).problems.map((problem) => problem.code);
       expect(problems).toContain("config-effort-default-invalid");
@@ -118,6 +124,7 @@ describe("validateConfigObjectInput", () => {
       validateConfigObjectInput({ effort: { ceiling: "xhigh", default: "medium", mystery: 1 } });
       throw new Error("expected validateConfigObjectInput to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       const problems = (error as RouterError).problems.map((problem) => problem.code);
       expect(problems).toContain("config-effort-key-unknown");
@@ -129,6 +136,7 @@ describe("validateConfigObjectInput", () => {
       validateConfigObjectInput({ effort: "oops" });
       throw new Error("expected validateConfigObjectInput to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       const problems = (error as RouterError).problems.map((problem) => problem.code);
       expect(problems).toContain("config-effort-not-object");
@@ -149,7 +157,7 @@ describe("loadConfigFromPath", () => {
   test("a missing file fails config-invalid", async () => {
     await withTempDir(async (dir) => {
       expect(() => loadConfigFromPath(join(dir, "missing.json"))).toThrowError(
-        expect.objectContaining({ code: "config-invalid" }),
+        errorMatching({ code: "config-invalid" }),
       );
     });
   });
@@ -161,7 +169,7 @@ describe("loadConfigFromPath", () => {
       // refuse to write it.
       await import("node:fs").then((fs) => fs.writeFileSync(path, "{not json"));
       expect(() => loadConfigFromPath(path)).toThrowError(
-        expect.objectContaining({ code: "config-invalid" }),
+        errorMatching({ code: "config-invalid" }),
       );
     });
   });
@@ -240,7 +248,7 @@ describe("loadConfig path order", () => {
   test("an explicit path that does not exist is config-invalid", async () => {
     await withTempDir(async (dir) => {
       expect(() => loadConfig({ explicitPath: join(dir, "missing.json") })).toThrowError(
-        expect.objectContaining({ code: "config-invalid" }),
+        errorMatching({ code: "config-invalid" }),
       );
     });
   });
@@ -253,7 +261,7 @@ describe("loadConfig path order", () => {
         fs.writeFileSync(join(xdgConfigDir, "config.json"), "{not json"),
       );
       expect(() => loadConfig({ env: { XDG_CONFIG_HOME: dir } })).toThrowError(
-        expect.objectContaining({ code: "config-invalid" }),
+        errorMatching({ code: "config-invalid" }),
       );
     });
   });
@@ -295,6 +303,7 @@ describe("validateConfigObjectInput collect-every-problem", () => {
       });
       throw new Error("expected validateConfigObjectInput to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       const problems = (error as RouterError).problems.map((problem) => problem.code);
       expect(problems).toContain("config-effort-default-above-ceiling");
@@ -313,6 +322,7 @@ describe("validateConfigObjectInput collect-every-problem", () => {
       });
       throw new Error("expected validateConfigObjectInput to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       const problems = (error as RouterError).problems.map((problem) => problem.code);
       expect(problems).toContain("config-effort-default-invalid");
@@ -327,7 +337,7 @@ describe("loadConfigFromPath reads config-invalid for filesystem failures", () =
     // EISDIR. The router must surface the failure as config-invalid so
     // the CLI's exit is 4, not 1.
     expect(() => loadConfigFromPath("tests/fixtures")).toThrowError(
-      expect.objectContaining({ code: "config-invalid" }),
+      errorMatching({ code: "config-invalid" }),
     );
   });
 });
@@ -376,21 +386,21 @@ describe("rank accepts a config object or path", () => {
         { minimums: { coding: 5 } },
         { registry: loaded, config: { effort: { ceiling: "low", default: "high" } } },
       ),
-    ).toThrowError(expect.objectContaining({ code: "config-invalid" }));
+    ).toThrowError(errorMatching({ code: "config-invalid" }));
   });
 
   test("an unknown key in an object is config-invalid", () => {
     const loaded = full();
     expect(() =>
       rank({ minimums: { coding: 5 } }, { registry: loaded, config: { mystery: true } }),
-    ).toThrowError(expect.objectContaining({ code: "config-invalid" }));
+    ).toThrowError(errorMatching({ code: "config-invalid" }));
   });
 
   test("an explicit config path that does not exist is config-invalid", () => {
     const loaded = full();
     expect(() =>
       rank({ minimums: { coding: 5 } }, { registry: loaded, config: "./nope.json" }),
-    ).toThrowError(expect.objectContaining({ code: "config-invalid" }));
+    ).toThrowError(errorMatching({ code: "config-invalid" }));
   });
 
   test("an object with a 'config' key is not a bypass for validation", () => {
@@ -402,7 +412,7 @@ describe("rank accepts a config object or path", () => {
     const wrapper = { config: { effort: { ceiling: "warp-nine" } } };
     expect(() =>
       rank({ minimums: { coding: 5 } }, { registry: loaded, config: wrapper as never }),
-    ).toThrowError(expect.objectContaining({ code: "config-invalid" }));
+    ).toThrowError(errorMatching({ code: "config-invalid" }));
   });
 
   test("an object with 'config' and 'configPath' keys is not a pre-loaded config bypass", () => {
@@ -421,6 +431,7 @@ describe("rank accepts a config object or path", () => {
       rank({ minimums: { coding: 5 } }, { registry: loaded, config: wrapper as never });
       throw new Error("expected rank to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       expect((error as RouterError).code).toBe("config-invalid");
       const problems = (error as RouterError).problems.map((problem) => problem.code);
@@ -478,6 +489,7 @@ describe("rank accepts a config object or path", () => {
       try {
         rank({ minimums: { coding: 5 } }, { registry: loaded, config: failPath });
       } catch (error) {
+        if (error instanceof RouterError) expectValidRouterError(error);
         expect(error).toBeInstanceOf(RouterError);
         fileErr = error as RouterError;
       }
@@ -488,6 +500,7 @@ describe("rank accepts a config object or path", () => {
           { registry: loaded, config: { effort: { ceiling: "low", default: "warp-nine" } } },
         );
       } catch (error) {
+        if (error instanceof RouterError) expectValidRouterError(error);
         expect(error).toBeInstanceOf(RouterError);
         objectErr = error as RouterError;
       }
@@ -530,6 +543,7 @@ describe("config availability section", () => {
       validateConfigObjectInput({ availability: "no" });
       throw new Error("expected to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       const err = error as RouterError;
       expect(err.code).toBe("config-invalid");
@@ -542,6 +556,7 @@ describe("config availability section", () => {
       validateConfigObjectInput({ availability: { command: "node" } });
       throw new Error("expected to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       const err = error as RouterError;
       expect(err.problems.map((p) => p.code)).toContain("config-availability-command-not-array");
@@ -553,6 +568,7 @@ describe("config availability section", () => {
       validateConfigObjectInput({ availability: { command: [] } });
       throw new Error("expected to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       const err = error as RouterError;
       expect(err.problems.map((p) => p.code)).toContain("config-availability-command-empty");
@@ -564,6 +580,7 @@ describe("config availability section", () => {
       validateConfigObjectInput({ availability: { command: ["node", 42] } });
       throw new Error("expected to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       const err = error as RouterError;
       expect(err.problems.map((p) => p.code)).toContain(
@@ -577,6 +594,7 @@ describe("config availability section", () => {
       validateConfigObjectInput({ availability: { timeoutSeconds: 0 } });
       throw new Error("expected to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       const err = error as RouterError;
       expect(err.problems.map((p) => p.code)).toContain("config-availability-timeout-invalid");
@@ -588,6 +606,7 @@ describe("config availability section", () => {
       validateConfigObjectInput({ availability: { timeoutSeconds: Number.NaN } });
       throw new Error("expected to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       const err = error as RouterError;
       expect(err.problems.map((p) => p.code)).toContain("config-availability-timeout-invalid");
@@ -599,6 +618,7 @@ describe("config availability section", () => {
       validateConfigObjectInput({ availability: { timeoutSeconds: "10" } });
       throw new Error("expected to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       const err = error as RouterError;
       expect(err.problems.map((p) => p.code)).toContain("config-availability-timeout-invalid");
@@ -610,6 +630,7 @@ describe("config availability section", () => {
       validateConfigObjectInput({ availability: { maxAgeSeconds: 0 } });
       throw new Error("expected to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       const err = error as RouterError;
       expect(err.problems.map((p) => p.code)).toContain("config-availability-max-age-invalid");
@@ -621,6 +642,7 @@ describe("config availability section", () => {
       validateConfigObjectInput({ availability: { maxAgeSeconds: Number.POSITIVE_INFINITY } });
       throw new Error("expected to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       const err = error as RouterError;
       expect(err.problems.map((p) => p.code)).toContain("config-availability-max-age-invalid");
@@ -632,6 +654,7 @@ describe("config availability section", () => {
       validateConfigObjectInput({ availability: { mystery: true } });
       throw new Error("expected to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       const err = error as RouterError;
       expect(err.problems.map((p) => p.code)).toContain("config-availability-key-unknown");
@@ -651,6 +674,7 @@ describe("config availability section", () => {
       });
       throw new Error("expected to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       const err = error as RouterError;
       const codes = err.problems.map((p) => p.code);
@@ -721,6 +745,7 @@ describe("the describe section of config.json", () => {
       validateConfigObjectInput({ describe: 7 });
       throw new Error("expected validateConfigObjectInput to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       expect((error as RouterError).code).toBe("config-invalid");
       expect((error as RouterError).problems.map((problem) => problem.code)).toEqual([
@@ -735,6 +760,7 @@ describe("the describe section of config.json", () => {
         validateConfigObjectInput({ describe: { taskGate } });
         throw new Error(`expected ${String(taskGate)} to fail`);
       } catch (error) {
+        if (error instanceof RouterError) expectValidRouterError(error);
         expect(error).toBeInstanceOf(RouterError);
         expect((error as RouterError).problems.map((problem) => problem.code)).toEqual([
           "config-describe-task-gate-invalid",
@@ -749,6 +775,7 @@ describe("the describe section of config.json", () => {
         validateConfigObjectInput({ describe: { capabilityThreshold } });
         throw new Error(`expected ${String(capabilityThreshold)} to fail`);
       } catch (error) {
+        if (error instanceof RouterError) expectValidRouterError(error);
         expect((error as RouterError).problems.map((problem) => problem.code)).toEqual([
           "config-describe-capability-threshold-invalid",
         ]);
@@ -762,6 +789,7 @@ describe("the describe section of config.json", () => {
         validateConfigObjectInput({ describe: { jevModel } });
         throw new Error(`expected ${String(jevModel)} to fail`);
       } catch (error) {
+        if (error instanceof RouterError) expectValidRouterError(error);
         expect((error as RouterError).problems.map((problem) => problem.code)).toEqual([
           "config-describe-jev-model-invalid",
         ]);
@@ -774,6 +802,7 @@ describe("the describe section of config.json", () => {
       validateConfigObjectInput({ describe: { gate: 0.9 } });
       throw new Error("expected validateConfigObjectInput to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect((error as RouterError).problems.map((problem) => problem.code)).toEqual([
         "config-describe-key-unknown",
       ]);

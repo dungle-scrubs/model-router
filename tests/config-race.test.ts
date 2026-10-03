@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
+import { errorMatching } from "./helpers.js";
 
 const RACED_PATH = "/raced/model-router/config.json";
 
@@ -24,7 +25,7 @@ const { loadConfigFromPath } = await import("../src/config.js");
 describe("loadConfigFromPath when the file disappears after the existence check", () => {
   test("the failed read is config-invalid, not internal-error", () => {
     expect(() => loadConfigFromPath(RACED_PATH)).toThrowError(
-      expect.objectContaining({ code: "config-invalid" }),
+      errorMatching({ code: "config-invalid" }),
     );
   });
 });

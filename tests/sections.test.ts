@@ -5,7 +5,7 @@ import { loadRegistry } from "@dungle-scrubs/model-registry";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { RouterError } from "../src/error.js";
 import { validateRouterSections } from "../src/sections.js";
-import { fixturePath, withTempDir, writeJson } from "./helpers.js";
+import { expectValidRouterError, fixturePath, withTempDir, writeJson } from "./helpers.js";
 
 let dir: string;
 beforeEach(() => {
@@ -21,6 +21,7 @@ function catchSectionsError(fn: () => unknown): RouterError {
   try {
     fn();
   } catch (error) {
+    if (error instanceof RouterError) expectValidRouterError(error);
     if (error instanceof RouterError) return error;
     throw error;
   }
@@ -33,6 +34,7 @@ describe("validateRouterSections tasks and policy", () => {
       validateRouterSections(loadRegistry({ path: writeJson(dir, "registry.json", registry) }));
       throw new Error("expected validateRouterSections to throw a RouterError");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       if (error instanceof RouterError) return error;
       throw error;
     }

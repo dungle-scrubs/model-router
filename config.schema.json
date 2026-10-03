@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dungle-scrubs.github.io/model-router/config.schema.json",
+  "title": "model-router config, contract version 1",
+  "description": "The JSON configuration model-router accepts. Missing keys use the runtime defaults. Unknown keys are rejected. The schema includes the effort ordering rule with the implicit medium default and xhigh ceiling.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "Editor metadata, ignored by the runtime regardless of its JSON value."
+    },
+    "effort": {
+      "type": "object",
+      "description": "Effort defaults the engine applies to a query. The router's answer caps routes above the ceiling and uses the default when a query carries no effort.",
+      "properties": {
+        "ceiling": {
+          "enum": ["low", "medium", "high", "xhigh", "max"],
+          "description": "A ladder level, in order low < medium < high < xhigh < max. Default `xhigh`."
+        },
+        "default": {
+          "enum": ["low", "medium", "high", "xhigh", "max"],
+          "description": "A ladder level, not above the ceiling. Default medium."
+        }
+      },
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "properties": {
+            "ceiling": {
+              "const": "low"
+            },
+            "default": {
+              "enum": ["low"]
+            }
+          },
+          "required": ["ceiling", "default"]
+        },
+        {
+          "properties": {
+            "ceiling": {
+              "const": "medium"
+            },
+            "default": {
+              "enum": ["low", "medium"]
+            }
+          },
+          "required": ["ceiling"]
+        },
+        {
+          "properties": {
+            "ceiling": {
+              "const": "high"
+            },
+            "default": {
+              "enum": ["low", "medium", "high"]
+            }
+          },
+          "required": ["ceiling"]
+        },
+        {
+          "properties": {
+            "ceiling": {
+              "const": "xhigh"
+            },
+            "default": {
+              "enum": ["low", "medium", "high", "xhigh"]
+            }
+          },
+          "required": ["ceiling"]
+        },
+        {
+          "properties": {
+            "ceiling": {
+              "const": "max"
+            },
+            "default": {
+              "enum": ["low", "medium", "high", "xhigh", "max"]
+            }
+          },
+          "required": ["ceiling"]
+        },
+        {
+          "not": {
+            "required": ["ceiling"]
+          },
+          "properties": {
+            "default": {
+              "enum": ["low", "medium", "high", "xhigh"]
+            }
+          }
+        }
+      ]
+    },
+    "availability": {
+      "type": "object",
+      "description": "How the CLI gathers an availability document when `--availability` runs. Absent means the CLI does not run the source; `--availability-file` still works because the file path comes from the flag, not from this section.",
+      "properties": {
+        "command": {
+          "type": "array",
+          "minItems": 1,
+          "description": "The argv the CLI runs with no shell. An entry the CLI cannot read (a non-string) is invalid.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "timeoutSeconds": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Per-run kill timeout in seconds. Default `10`."
+        },
+        "maxAgeSeconds": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Staleness bound applied to the document the command produced or to a `--availability-file` path. Default `300`."
+        }
+      },
+      "additionalProperties": false
+    },
+    "describe": {
+      "type": "object",
+      "description": "The describe step's gates and the Jev model it calls.",
+      "properties": {
+        "taskGate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "The minimum probability a Jev task candidate needs to become the query's task. Default `0.85`."
+        },
+        "capabilityThreshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "The minimum probability a Jev capability needs to be added to the query's needs. Default `0.5`."
+        },
+        "jevModel": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The Jev model the describe step calls. A non-empty name; the package does not validate it against Jev's catalogue. Default `jev-1.13.0`.",
+          "pattern": "\\S"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -3,7 +3,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, test } from "vitest";
 import { RouterError } from "../src/error.js";
 import { parseQuery } from "../src/query.js";
-import { answerSchemaPath, querySchemaPath } from "./helpers.js";
+import { answerSchemaPath, expectValidRouterError, querySchemaPath } from "./helpers.js";
 
 const ajv = new Ajv2020({ allErrors: true, strictNumbers: true });
 
@@ -151,6 +151,7 @@ describe("query.schema.json", () => {
       try {
         parseQuery(entry);
       } catch (error) {
+        if (error instanceof RouterError) expectValidRouterError(error);
         expect(error).toBeInstanceOf(RouterError);
         engineAccepted = false;
       }

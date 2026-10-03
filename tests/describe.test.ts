@@ -4,7 +4,7 @@ import { describe as describeStep } from "../src/describe.js";
 import { RouterError } from "../src/error.js";
 import { JevError } from "../src/jev.js";
 import { rank } from "../src/rank.js";
-import { fixturePath, withEnv, withTempDir, writeJson } from "./helpers.js";
+import { expectValidRouterError, fixturePath, withEnv, withTempDir, writeJson } from "./helpers.js";
 
 const FIXTURE = fixturePath("describe.json");
 const MINIMAL = fixturePath("minimal.json");
@@ -64,6 +64,7 @@ async function catchRouterError(promise: Promise<unknown>): Promise<RouterError>
   try {
     await promise;
   } catch (error) {
+    if (error instanceof RouterError) expectValidRouterError(error);
     expect(error, `expected a RouterError, got ${String(error)}`).toBeInstanceOf(RouterError);
     return error as RouterError;
   }

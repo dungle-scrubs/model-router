@@ -6,6 +6,8 @@ import packageJson from "../package.json" with { type: "json" };
 import { RouterError, rank } from "../src/index.js";
 import {
   expectValidAnswer,
+  expectValidError,
+  expectValidRouterError,
   fixturePath,
   sha256Hex,
   withEnv,
@@ -747,7 +749,9 @@ describe("rank registry input", () => {
         rank({ minimums: { coding: 5 } }, { registry: missing });
         throw new Error("expected rank to rethrow");
       } catch (error) {
+        if (error instanceof RouterError) expectValidRouterError(error);
         expect(error).toBeInstanceOf(RegistryError);
+        expectValidError({ error: (error as RegistryError).toJSON() });
         const registryError = error as RegistryError;
         expect(registryError.code).toBe("registry-missing");
         expect(registryError.path).toBe(missing);
@@ -760,6 +764,7 @@ describe("rank registry input", () => {
       rank({ total: "nonsense" }, { registry: fixturePath("no-router.json") });
       throw new Error("expected rank to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       expect((error as RouterError).code).toBe("registry-sections-invalid");
     }
@@ -770,6 +775,7 @@ describe("rank registry input", () => {
       rank({ total: "nonsense" }, { registry: FULL });
       throw new Error("expected rank to throw");
     } catch (error) {
+      if (error instanceof RouterError) expectValidRouterError(error);
       expect(error).toBeInstanceOf(RouterError);
       expect((error as RouterError).code).toBe("query-invalid");
     }

@@ -8,7 +8,8 @@ import { loadRegistry } from "@dungle-scrubs/model-registry";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect } from "vitest";
 import answerSchema from "../answer.schema.json" with { type: "json" };
-import type { Answer } from "../src/index.js";
+import errorSchema from "../error.schema.json" with { type: "json" };
+import { type Answer, RouterError } from "../src/index.js";
 
 export const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const cliPath = join(repoRoot, "dist", "cli.js");
@@ -48,9 +49,11 @@ export function runBuiltCli(
     env: merged,
     input,
   });
+  const stderr = result.stderr ?? "";
+  if (stderr.length > 0) expectValidError(JSON.parse(stderr));
   return {
     stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
+    stderr,
     exitCode: result.status ?? -1,
   };
 }
@@ -69,6 +72,25 @@ export function sha256Hex(bytes: Buffer | string): string {
 
 const ajv = new Ajv2020({ allErrors: true, strictNumbers: true });
 const validateAnswer = ajv.compile(answerSchema);
+const validateError = ajv.compile(errorSchema);
+
+export function expectValidError(envelope: unknown): void {
+  expect(validateError(envelope), JSON.stringify(validateError.errors ?? [], null, 2)).toBe(true);
+}
+
+export function expectValidRouterError(error: unknown): asserts error is RouterError {
+  expect(error).toBeInstanceOf(RouterError);
+  expectValidError({ error: (error as RouterError).toJSON() });
+}
+
+export function errorMatching(details: Record<string, unknown>) {
+  return {
+    asymmetricMatch(error: unknown): boolean {
+      expectValidRouterError(error);
+      return expect.objectContaining(details).asymmetricMatch(error);
+    },
+  };
+}
 
 /** Every answer the tests produce must validate against answer.schema.json. */
 export function expectValidAnswer(answer: unknown): asserts answer is Answer {
@@ -149,6 +171,9 @@ export function captureStream(): {
         return true;
       },
     },
-    text: () => buffer,
+    text: () => {
+      if (buffer.startsWith('{"error":')) expectValidError(JSON.parse(buffer));
+      return buffer;
+    },
   };
 }
