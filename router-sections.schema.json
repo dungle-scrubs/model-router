@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dungle-scrubs.github.io/model-router/router-sections.schema.json",
+  "title": "model-router router sections, contract version 1",
+  "description": "The three top-level sections of a registry file that model-router validates: `router`, `tasks` and `policy`. `router` is REQUIRED; `tasks` and `policy` are OPTIONAL. The schema covers what model-router accepts: object shape, value types, the closed field set on each section, and the per-array element shape. Cross-reference rules (a rating name that the ratings section does not declare, a route label no model emits, two policies that match the same query) are not expressible in JSON Schema and are reported by the engine's `validateRouterSections` after the schema passes. The file's other sections - `format`, `ratings`, `capabilities`, `meters`, `models` - are owned by model-registry's `registry.schema.json`.",
+  "type": "object",
+  "properties": {
+    "router": {
+      "type": "object",
+      "description": "Router-wide data. `rank` is REQUIRED and orders routes when the query has no known task. `questions` is OPTIONAL and maps a declared capability name to a yes/no question sentence the describe step asks. No other keys are accepted.",
+      "properties": {
+        "rank": {
+          "type": "array",
+          "minItems": 1,
+          "description": "An ordered list of rating names. Every name should be declared in the registry's `ratings` section; the validator reports the name when it is not. The order is read top to bottom.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "questions": {
+          "type": "object",
+          "description": "A capability name to a yes/no question sentence. Every capability should be declared in the registry's `capabilities` section; the validator reports the name when it is not.",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "required": ["rank"],
+      "additionalProperties": false
+    },
+    "tasks": {
+      "type": "object",
+      "description": "Named work needs. A task names a description, a stakes-keyed minimums map, an ordered rank list, an optional needs list, and an optional effort level. The keys are task names; the values follow the `task` shape.",
+      "additionalProperties": {
+        "$ref": "#/$defs/task"
+      }
+    },
+    "policy": {
+      "type": "object",
+      "description": "Named policies. A policy names a task, a list of stakes levels, an ordered list of route entries, a one-line reason, an optional since date, and an optional spec. The keys are policy names; the values follow the `policy` shape.",
+      "additionalProperties": {
+        "$ref": "#/$defs/policy"
+      }
+    }
+  },
+  "required": ["router"],
+  "additionalProperties": false,
+  "$defs": {
+    "task": {
+      "type": "object",
+      "description": "One named work need. `description`, `minimums` and `rank` are REQUIRED. `needs` and `effort` are OPTIONAL.",
+      "properties": {
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A one-line description of the task. The validator rejects a description that contains a line break."
+        },
+        "minimums": {
+          "type": "object",
+          "description": "A stakes-keyed map of rating floors. The closed key set is `low`, `normal` and `high`; any other key is reported.",
+          "properties": {
+            "low": {
+              "type": "object",
+              "description": "Floors the task applies at `stakes: low`. Each value is a rating name to a finite number floor.",
+              "additionalProperties": {
+                "type": "number"
+              }
+            },
+            "normal": {
+              "type": "object",
+              "description": "Floors the task applies at `stakes: normal`. Each value is a rating name to a finite number floor.",
+              "additionalProperties": {
+                "type": "number"
+              }
+            },
+            "high": {
+              "type": "object",
+              "description": "Floors the task applies at `stakes: high`. Each value is a rating name to a finite number floor.",
+              "additionalProperties": {
+                "type": "number"
+              }
+            }
+          },
+          "required": ["low", "normal", "high"],
+          "additionalProperties": false
+        },
+        "rank": {
+          "type": "array",
+          "minItems": 1,
+          "description": "An ordered list of rating names. The order is read top to bottom.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "needs": {
+          "type": "array",
+          "description": "Capability names the task requires. Every name should be declared in the registry's `capabilities` section; the validator reports the name when it is not.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "effort": {
+          "enum": ["low", "medium", "high", "xhigh", "max"],
+          "description": "A ladder level, in order low < medium < high < xhigh < max. Absent means the `config.json` default applies."
+        }
+      },
+      "required": ["description", "minimums", "rank"],
+      "additionalProperties": false
+    },
+    "policy": {
+      "type": "object",
+      "description": "One policy. `task`, `stakes`, `routes` and `reason` are REQUIRED. `since` and `spec` are OPTIONAL.",
+      "properties": {
+        "task": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The task name the policy applies to. The name must match a key in the `tasks` section; the validator reports the name when it does not."
+        },
+        "stakes": {
+          "type": "array",
+          "minItems": 1,
+          "description": "The stakes levels the policy applies to. A non-empty list of `low`, `normal` and/or `high`; an empty list is reported by the validator.",
+          "items": {
+            "enum": ["low", "normal", "high"]
+          }
+        },
+        "routes": {
+          "type": "array",
+          "minItems": 1,
+          "description": "An ordered list of route entries. Each entry names a label; an entry may also set an effort level. The label must match a route the registry defines; the validator reports the label when it does not.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "route": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The route label the policy places first. A label has the form `<model key>@<harness>[/<provider>]`."
+              },
+              "effort": {
+                "type": "string",
+                "minLength": 1,
+                "description": "An effort level the policy forces on this route. The level must be on the ladder; the validator reports a level that is not."
+              }
+            },
+            "required": ["route"],
+            "additionalProperties": false
+          }
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A one-line reason the policy exists. The validator reports a reason that is not a string."
+        },
+        "since": {
+          "type": "string",
+          "description": "A date string the policy was added. The validator does not parse the date; any string is accepted here."
+        },
+        "spec": {
+          "enum": ["settled"],
+          "description": "The spec condition the policy applies to. Only `settled` is valid; absent means the policy applies to every spec. The validator reports a spec that is not the literal `settled`."
+        }
+      },
+      "required": ["task", "stakes", "routes", "reason"],
+      "additionalProperties": false
+    }
+  }
+}

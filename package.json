@@ -18,13 +18,19 @@
     },
     "./query.schema.json": "./query.schema.json",
     "./answer.schema.json": "./answer.schema.json",
-    "./availability.schema.json": "./availability.schema.json"
+    "./availability.schema.json": "./availability.schema.json",
+    "./error.schema.json": "./error.schema.json",
+    "./config.schema.json": "./config.schema.json",
+    "./router-sections.schema.json": "./router-sections.schema.json"
   },
   "files": [
     "dist",
     "availability.schema.json",
     "query.schema.json",
     "answer.schema.json",
+    "error.schema.json",
+    "config.schema.json",
+    "router-sections.schema.json",
     "README.md"
   ],
   "publishConfig": {
