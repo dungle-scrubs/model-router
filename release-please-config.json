@@ -1,0 +1,8 @@
+{
+  "release-type": "node",
+  "include-component-in-tag": false,
+  "initial-version": "0.1.0",
+  "packages": {
+    ".": {}
+  }
+}
