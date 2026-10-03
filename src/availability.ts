@@ -132,7 +132,7 @@ function combineMeterEntries(entries: readonly AvailabilityEntry[]): {
       winningPercent = entryPercent;
       winningResetsAt = typeof entry.resetsAt === "string" ? entry.resetsAt : undefined;
     } else if (entryRank === worstRank) {
-      if (entryPercent !== undefined && Number.isFinite(entryPercent)) {
+      if (entryPercent !== undefined) {
         if (winningPercent === undefined || entryPercent < winningPercent) {
           winningPercent = entryPercent;
           winningResetsAt = typeof entry.resetsAt === "string" ? entry.resetsAt : undefined;
