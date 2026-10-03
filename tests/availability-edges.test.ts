@@ -120,6 +120,68 @@ describe("availability edge contracts", () => {
         ?.availability,
     ).toBe("unknown");
   });
+
+  test("a non-finite percentRemaining on an exhausted entry drops the percent and keeps resetsAt", () => {
+    const routes = [
+      { label: "model-a@harness-x", meter: "meter-a" },
+      { label: "model-c@harness-x" },
+    ];
+    for (const percent of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      const entry = {
+        meter: "meter-a",
+        status: "exhausted" as const,
+        percentRemaining: percent,
+        resetsAt: "2026-10-01T12:30:00Z",
+      } as unknown as AvailabilityEntry;
+      const result = applyAvailability(routes, [entry]);
+      expect(
+        result.routes.map((r) => r.label),
+        `percent=${String(percent)}`,
+      ).toEqual(["model-c@harness-x"]);
+      expect(result.removed[0]?.reason.code, `percent=${String(percent)}`).toBe("meter-exhausted");
+      expect(result.removed[0]?.reason.message, `percent=${String(percent)}`).toBe(
+        'the route\'s meter "meter-a" is exhausted (resets at 2026-10-01T12:30:00Z)',
+      );
+    }
+  });
+
+  test("a non-string resetsAt on a projected entry drops the time and keeps the percent", () => {
+    const routes = [{ label: "model-a@harness-x", meter: "meter-a" }];
+    for (const resetsAt of [null, 7]) {
+      const entry = {
+        meter: "meter-a",
+        status: "projected" as const,
+        percentRemaining: 12,
+        resetsAt,
+      } as unknown as AvailabilityEntry;
+      const result = applyAvailability(routes, [entry]);
+      expect(result.routes[0]?.reasons?.[0]?.message, `resetsAt=${String(resetsAt)}`).toBe(
+        'the route\'s meter "meter-a" is projected to exhaust (12% remaining)',
+      );
+    }
+  });
+
+  test("the tie branch prefers the lower percent even when its resetsAt is not a string", () => {
+    const routes = [{ label: "model-a@harness-x", meter: "meter-a" }];
+    const entries = [
+      {
+        meter: "meter-a",
+        status: "projected" as const,
+        percentRemaining: 40,
+        resetsAt: "2026-10-01T12:30:00Z",
+      },
+      {
+        meter: "meter-a",
+        status: "projected" as const,
+        percentRemaining: 5,
+        resetsAt: null,
+      },
+    ] as unknown as AvailabilityEntry[];
+    const result = applyAvailability(routes, entries);
+    expect(result.routes[0]?.reasons?.[0]?.message).toBe(
+      'the route\'s meter "meter-a" is projected to exhaust (5% remaining)',
+    );
+  });
 });
 
 describe("future timestamp boundary", () => {
