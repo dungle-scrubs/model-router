@@ -174,7 +174,7 @@ describe("query failures exit 2 with query-invalid", () => {
     expect(errorEnvelope(result.stderr).error).toEqual({
       code: "query-invalid",
       field: "tasl",
-      fix: 'Remove "tasl", or correct its name; the query accepts task, minimums, needs, effort, pin, stakes, prefer, privacy, excludeFamilies and spec.',
+      fix: 'Remove "tasl", or correct its name; the query accepts profile, task, minimums, needs, effort, pin, stakes, prefer, privacy, excludeFamilies and spec.',
       message: 'the field "tasl" is not defined by the query contract',
       problems: [],
     });

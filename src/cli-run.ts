@@ -5,9 +5,10 @@ import { type AvailabilityLoad, loadAvailabilityForCli } from "./availability-cl
 import { type LoadedConfig, loadConfig } from "./config.js";
 import { checkDescribeText, describe as describeStep, parseDescribeQuery } from "./describe.js";
 import { RouterError } from "./error.js";
-import { listTasks, rank } from "./rank.js";
+import { parseQuery } from "./query.js";
+import { listTasks, rank, resolveRegistry } from "./rank.js";
 import { validateRouterSections } from "./sections.js";
-import type { Answer, Coded, RouterErrorCode } from "./types.js";
+import type { Answer, Coded, Query, RouterErrorCode } from "./types.js";
 import { ROUTER_VERSION } from "./version.js";
 
 const EXIT_SUCCESS = 0;
@@ -21,7 +22,7 @@ const EXIT_HELP = `
 
 Exit codes:
   0  an answer with at least one route (rank call); or tasks printed
-  2  invalid query, flag or subcommand (query-invalid), or the describe step refusing secret work (describe-private)
+  2  invalid query, flag or subcommand (query-invalid), unknown profile (profile-unknown), or the describe step refusing secret work (describe-private)
   3  an answer with no route; the answer is still printed
   4  the registry or its router section, or the config file, failed to load
   5  the describe step needed a Jev answer and the call failed (describe-failed)
@@ -70,7 +71,8 @@ function commanderMessage(error: CommanderError): string {
 }
 
 function routerExitCode(code: RouterErrorCode): number {
-  if (code === "query-invalid" || code === "describe-private") return EXIT_QUERY_INVALID;
+  if (code === "query-invalid" || code === "describe-private" || code === "profile-unknown")
+    return EXIT_QUERY_INVALID;
   if (code === "describe-failed") return EXIT_DESCRIBE_FAILED;
   return EXIT_REGISTRY_FAILURE;
 }
@@ -243,6 +245,10 @@ function loadConfigOption(explicit: string | undefined): LoadedConfig {
       ? { env: process.env as Record<string, string | undefined> }
       : { explicitPath: explicit },
   );
+}
+
+function applyCliProfile(query: Query): Query {
+  return { ...query, profile: query.profile ?? (process.env.MODEL_ROUTER_PROFILE || "default") };
 }
 
 /** Both ranking paths merge describe, engine and reader warnings in that order. */
@@ -476,7 +482,7 @@ export async function runCli(argv: readonly string[], io: Partial<CliIo> = {}): 
         // into the answer. The describe step's warnings lead the answer's
         // warnings list: they happened first.
         const described = await describeStep(describeText, raw, rankOptions);
-        const answer = rank(described.query, rankOptions);
+        const answer = rank(applyCliProfile(described.query), rankOptions);
         const merged = assembleAnswer(answer, availabilityLoad, described);
         stdout.write(`${JSON.stringify(merged)}\n`);
         answerExit = merged.routes.length === 0 ? EXIT_NO_ROUTE : EXIT_SUCCESS;
@@ -494,7 +500,14 @@ export async function runCli(argv: readonly string[], io: Partial<CliIo> = {}): 
                 availability: availabilityOption,
                 config: config.config,
               };
-      const answer = assembleAnswer(rank(raw, rankOptions), availabilityLoad);
+      // Preserve registry and section validation ahead of query parsing.
+      const loadedRegistry = resolveRegistry(rankOptions.registry);
+      validateRouterSections(loadedRegistry);
+      const parsed = parseQuery(raw);
+      const answer = assembleAnswer(
+        rank(applyCliProfile(parsed), { ...rankOptions, registry: loadedRegistry }),
+        availabilityLoad,
+      );
       stdout.write(`${JSON.stringify(answer)}\n`);
       answerExit = answer.routes.length === 0 ? EXIT_NO_ROUTE : EXIT_SUCCESS;
     },

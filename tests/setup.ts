@@ -12,6 +12,7 @@ import { afterAll } from "vitest";
 const tempDir = mkdtempSync(join(tmpdir(), "model-router-vitest-"));
 process.env.XDG_CONFIG_HOME = tempDir;
 delete process.env.MODEL_ROUTER_CONFIG;
+delete process.env.MODEL_ROUTER_PROFILE;
 // No test reads the operator's Jev key: a test outside withEnv would
 // otherwise inherit it and could send it to the hosted endpoint.
 delete process.env.TYPESAFE_API_KEY;

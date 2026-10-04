@@ -5,6 +5,7 @@ import {
   type LoadedRegistry,
   loadRegistry,
   type Model,
+  type Profile,
   type Route,
 } from "@dungle-scrubs/model-registry";
 import { applyAvailability, isUsableAvailabilityEntry } from "./availability.js";
@@ -16,6 +17,7 @@ import {
   resolveConfigPath,
   validateConfigObjectInput,
 } from "./config.js";
+import { RouterError } from "./error.js";
 import { applyQueryDefaults, parseQuery } from "./query.js";
 import { validateRouterSections } from "./sections.js";
 import type {
@@ -300,8 +302,20 @@ function resolvePin(
   flatByLabel: ReadonlyMap<string, FlatRoute>,
   removed: readonly Removed[],
   warnings: Coded[],
+  declaredRoutes: LoadedRegistry["routes"],
+  members: ReadonlySet<string>,
+  profile: string,
 ): PinReport | null {
   if (pin === undefined) return null;
+  if (Object.hasOwn(declaredRoutes, pin) && !members.has(pin)) {
+    warnings.push({
+      code: "pin-unused",
+      field: "$.pin",
+      fix: `Choose a pin inside profile "${profile}", or select another profile.`,
+      message: `the pin "${pin}" was not used; it is outside profile "${profile}"`,
+    });
+    return { label: pin, reason: "pin-outside-profile", used: false };
+  }
   if (flatByLabel.has(pin)) {
     return { label: pin, reason: "", used: true };
   }
@@ -589,6 +603,20 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
   const loadedConfig = resolveConfig(options.config);
   const config = loadedConfig.config;
 
+  if (!Object.hasOwn(loaded.profiles, applied.profile)) {
+    throw new RouterError({
+      code: "profile-unknown",
+      field: "profile",
+      fix: `Select one of the registry profiles: ${Object.keys(loaded.profiles)
+        .map((name) => JSON.stringify(name))
+        .join(", ")}.`,
+      message: `the profile "${applied.profile}" is not declared in the registry`,
+      problems: [],
+    });
+  }
+  const profile = loaded.profiles[applied.profile] as Profile;
+  const members = new Set(profile.routes);
+
   const warnings: Coded[] = [];
   const removed: Removed[] = [];
 
@@ -665,6 +693,7 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
   for (const [modelKey, model] of Object.entries(loaded.registry.models)) {
     for (const [routeIndex, route] of model.routes.entries()) {
       const label = buildRouteLabel(modelKey, route);
+      if (!members.has(label)) continue;
       const rejection = rejectByHardLimit(
         route,
         model.family,
@@ -705,7 +734,15 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
   // set. A used pin goes first with placedBy=pin and floor=skipped; the
   // fallback ranking follows without it. A non-surviving pin keeps the
   // fallback ranking with pin.used=false and a reason.
-  const pinReport = resolvePin(applied.pin, flatByLabel, removed, warnings);
+  const pinReport = resolvePin(
+    applied.pin,
+    flatByLabel,
+    removed,
+    warnings,
+    loaded.routes,
+    members,
+    applied.profile,
+  );
 
   // The pin's effort, when the pin label is also a matching policy route,
   // comes from the policy route entry: per RFC, the policy route's
@@ -729,6 +766,15 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
   if (policyMatch !== undefined) {
     for (const policyRoute of policyMatch.routes) {
       const label = policyRoute.route;
+      if (!members.has(label)) {
+        warnings.push({
+          code: "policy-route-outside-profile",
+          field: `$.policy[${JSON.stringify(policyMatch.name)}].routes`,
+          message: `the policy "${policyMatch.name}" names the route "${label}", which is outside profile "${applied.profile}"`,
+          fix: `Adjust policy "${policyMatch.name}" or profile "${applied.profile}" so the route is a member.`,
+        });
+        continue;
+      }
       const entry = flatByLabel.get(label);
       if (entry === undefined) {
         // Validation guarantees the label exists, so a hard limit removed it:

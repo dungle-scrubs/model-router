@@ -13,6 +13,7 @@ describe("the model-registry dependency", () => {
       dependencies: Record<string, string>;
     };
     expect(manifest.dependencies["@dungle-scrubs/model-registry"]).toMatch(/^\^\d+\.\d+\.\d+$/);
+    expect(manifest.dependencies["@dungle-scrubs/model-registry"]).toBe("^0.2.0");
   });
 
   test.each(WORKFLOWS)("%s needs no git access to install it", (path) => {

@@ -20,7 +20,7 @@ export type AvailabilityEntryStatus = "ok" | "projected" | "exhausted";
 
 /**
  * A contract 1 query. Input is strict: a field the contract does not define
- * is query-invalid. `effort` and `pin` parse; this release applies neither.
+ * is query-invalid. `profile` selects registry membership before ranking.
  */
 export interface Query {
   readonly excludeFamilies?: readonly string[];
@@ -29,6 +29,7 @@ export interface Query {
   readonly needs?: readonly string[];
   readonly pin?: string;
   readonly prefer?: Prefer;
+  readonly profile?: string;
   readonly privacy?: Privacy;
   readonly spec?: Spec;
   readonly stakes?: Stakes;
@@ -43,6 +44,7 @@ export interface AppliedQuery {
   readonly needs: readonly string[];
   readonly pin?: string;
   readonly prefer: Prefer;
+  readonly profile: string;
   readonly privacy: Privacy;
   readonly spec: Spec;
   readonly stakes: Stakes;
@@ -140,6 +142,7 @@ export interface DescribeBlock {
 
 export type RouterErrorCode =
   | "query-invalid"
+  | "profile-unknown"
   | "registry-sections-invalid"
   | "config-invalid"
   | "describe-private"
