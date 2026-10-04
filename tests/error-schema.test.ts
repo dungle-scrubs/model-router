@@ -92,6 +92,7 @@ describe("error.schema.json", () => {
       "internal-error": true,
       "label-duplicate": true,
       "query-invalid": true,
+      "profile-unknown": true,
       "rating-mismatch": true,
       "reference-unknown": true,
       "registry-invalid": true,

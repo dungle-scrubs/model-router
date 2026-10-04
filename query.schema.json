@@ -5,6 +5,10 @@
   "description": "The query shape accepted by model-router contract 1. Input is strict: a field the contract does not define is invalid. A query must carry at least one of task or minimums, which also covers the rule that a pin needs one of them.",
   "type": "object",
   "properties": {
+    "profile": {
+      "type": "string",
+      "description": "The registry profile to rank within. Library default: default; CLI: query, then non-empty MODEL_ROUTER_PROFILE, then default."
+    },
     "task": {
       "type": "string",
       "description": "A work need declared in the registry's tasks section."
@@ -25,7 +29,7 @@
     },
     "effort": {
       "type": "string",
-      "description": "A requested effort level. This release accepts any string and applies none; the ladder is checked when effort resolution ships."
+      "description": "A requested effort level. An off-ladder string warns and the task or config default applies."
     },
     "pin": {
       "type": "string",

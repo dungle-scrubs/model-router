@@ -19,6 +19,7 @@
       "description": "The query as applied: defaults filled, lists deduplicated. Known fields carry their contract types and vocabularies; fields beyond them are allowed.",
       "type": "object",
       "properties": {
+        "profile": { "type": "string" },
         "task": { "type": "string" },
         "minimums": {
           "type": "object",

@@ -1,0 +1,73 @@
+{
+  "format": 1,
+  "ratings": { "coding": "Writes code." },
+  "capabilities": { "browser": "Drives a browser." },
+  "meters": { "meter-a": { "notes": "Test meter." } },
+  "router": { "rank": ["coding"] },
+  "tasks": {
+    "task-a": {
+      "description": "Write code.",
+      "minimums": { "low": { "coding": 5 }, "normal": { "coding": 7 }, "high": { "coding": 9 } },
+      "rank": ["coding"]
+    }
+  },
+  "policy": {
+    "policy-a": {
+      "task": "task-a",
+      "stakes": ["low", "normal", "high"],
+      "routes": [
+        { "route": "model-a@harness-x/provider-b" },
+        { "route": "model-a@harness-x/provider-a", "effort": "low" }
+      ],
+      "reason": "Use the written routes first."
+    }
+  },
+  "models": {
+    "model-a": {
+      "family": "family-a",
+      "ratings": { "coding": 7 },
+      "maxEffort": "high",
+      "routes": [
+        {
+          "harness": "harness-x",
+          "provider": "provider-a",
+          "modelId": "model-a",
+          "hosted": false,
+          "privacyEligible": true,
+          "cost": 8,
+          "responseSeconds": 5,
+          "meter": "meter-a",
+          "capabilities": ["browser"]
+        },
+        {
+          "harness": "harness-x",
+          "provider": "provider-b",
+          "modelId": "model-a",
+          "hosted": true,
+          "cost": 10,
+          "responseSeconds": 1
+        },
+        {
+          "harness": "harness-x",
+          "provider": "provider-c",
+          "modelId": "model-a",
+          "hosted": true,
+          "cost": 5,
+          "responseSeconds": 2,
+          "meter": "meter-a"
+        }
+      ]
+    }
+  },
+  "profiles": {
+    "budget": {
+      "description": "Only selected routes.",
+      "routes": ["model-a@harness-x/provider-c", "model-a@harness-x/provider-a"]
+    },
+    "__proto__": { "description": "An own name.", "routes": ["model-a@harness-x/provider-a"] },
+    "constructor": {
+      "description": "Another own name.",
+      "routes": ["model-a@harness-x/provider-c"]
+    }
+  }
+}

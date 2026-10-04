@@ -14,6 +14,7 @@
           "minLength": 1,
           "examples": [
             "query-invalid",
+            "profile-unknown",
             "registry-sections-invalid",
             "config-invalid",
             "describe-private",
@@ -91,6 +92,7 @@
               "code": {
                 "enum": [
                   "query-invalid",
+                  "profile-unknown",
                   "registry-sections-invalid",
                   "config-invalid",
                   "describe-private",

@@ -153,8 +153,8 @@ export function parsePartialQuery(input: unknown): Query {
 
 /**
  * Apply the contract defaults the answer reports: prefer cost, privacy
- * normal, spec open, stakes normal, no floors, no needs, no excluded
- * families. Lists are deduplicated; the given order is kept.
+ * normal, profile default, spec open, stakes normal, no floors, no needs,
+ * no excluded families. Lists are deduplicated; the given order is kept.
  */
 export function applyQueryDefaults(query: Query): AppliedQuery {
   // A null-prototype record, like every other name-keyed map: a floor
@@ -170,6 +170,7 @@ export function applyQueryDefaults(query: Query): AppliedQuery {
     needs: readonly string[];
     pin?: string;
     prefer: Prefer;
+    profile: string;
     privacy: Privacy;
     spec: Spec;
     stakes: Stakes;
@@ -179,6 +180,7 @@ export function applyQueryDefaults(query: Query): AppliedQuery {
     minimums,
     needs: dedupe(query.needs),
     prefer: query.prefer ?? "cost",
+    profile: query.profile ?? "default",
     privacy: query.privacy ?? "normal",
     spec: query.spec ?? "open",
     stakes: query.stakes ?? "normal",

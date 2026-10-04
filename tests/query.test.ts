@@ -110,7 +110,7 @@ describe("parseQuery rejects invalid input with query-invalid", () => {
     expect(envelopeOf(() => parseQuery({ minimums: {}, tasl: "implement" }))).toEqual({
       code: "query-invalid",
       field: "tasl",
-      fix: 'Remove "tasl", or correct its name; the query accepts task, minimums, needs, effort, pin, stakes, prefer, privacy, excludeFamilies and spec.',
+      fix: 'Remove "tasl", or correct its name; the query accepts profile, task, minimums, needs, effort, pin, stakes, prefer, privacy, excludeFamilies and spec.',
       message: 'the field "tasl" is not defined by the query contract',
       problems: [],
     });
@@ -187,6 +187,7 @@ describe("applyQueryDefaults", () => {
       minimums: {},
       needs: [],
       prefer: "cost",
+      profile: "default",
       privacy: "normal",
       spec: "open",
       stakes: "normal",
@@ -208,6 +209,7 @@ describe("applyQueryDefaults", () => {
       needs: [],
       pin: "model-a@harness-x",
       prefer: "cost",
+      profile: "default",
       privacy: "normal",
       spec: "open",
       stakes: "normal",
@@ -227,6 +229,7 @@ describe("applyQueryDefaults", () => {
       minimums: {},
       needs: ["browser", "repo-access"],
       prefer: "cost",
+      profile: "default",
       privacy: "normal",
       spec: "open",
       stakes: "normal",
