@@ -340,8 +340,21 @@ describe("accepted gaps at runtime", () => {
     });
   });
 
-  test("a floor set without the recorded rating does not apply the record or throw", () => {
+  test("a floor set without the recorded rating does not apply the record or throw", async () => {
     expect(accepted(ranked({ minimums: { taste: 5 }, profile: "budget" }))).toEqual([]);
+    await withTempDir((dir) => {
+      const raw = example();
+      delete raw.calibration;
+      raw.models["model-a"].ratings.taste = 9;
+      expect(
+        accepted(
+          ranked(
+            { minimums: { taste: 8 }, profile: "budget" },
+            writeJson(dir, "other-rating.json", raw),
+          ),
+        ),
+      ).toEqual([]);
+    });
   });
 
   test.each<readonly [unknown]>(
