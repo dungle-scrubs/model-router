@@ -558,6 +558,63 @@ function resolveFloors(
   return { floors, everyRouteBelow };
 }
 
+function acceptedGapWarnings(
+  loaded: LoadedRegistry,
+  profile: Profile,
+  applied: ReturnType<typeof applyQueryDefaults>,
+  needs: readonly string[],
+  floors: readonly Floor[],
+): Coded[] {
+  const gaps = profile.gaps ?? [];
+  const waived = new Set(gaps.flatMap((gap) => ("capability" in gap ? [gap.capability] : [])));
+  const ceilings = new Map(
+    gaps.flatMap((gap) => ("rating" in gap ? [[gap.rating, gap.accepts] as const] : [])),
+  );
+  const capped = floors.map((floor) => ({
+    ...floor,
+    minimum: Math.min(floor.minimum, ceilings.get(floor.rating) ?? floor.minimum),
+  }));
+  const labels = new Set(profile.routes);
+  const eligible = Object.entries(loaded.routes).filter(([label, route]) => {
+    const family = loaded.registry.models[route.model]?.family ?? "";
+    return (
+      labels.has(label) &&
+      rejectByHardLimit(route, family, applied.privacy, applied.excludeFamilies, []) === null
+    );
+  });
+  const warnings: Coded[] = [];
+  for (const [index, gap] of gaps.entries()) {
+    if ("capability" in gap) {
+      if (!needs.includes(gap.capability)) continue;
+    } else if (
+      !floors.some((floor) => floor.rating === gap.rating && floor.minimum > gap.accepts)
+    ) {
+      continue;
+    }
+    const otherFloors = capped.filter((floor) => !("rating" in gap && floor.rating === gap.rating));
+    const compatible = eligible.filter(
+      ([, route]) =>
+        needs.every((need) => waived.has(need) || (route.capabilities ?? []).includes(need)) &&
+        floorOf(loaded.registry.models[route.model]?.ratings ?? {}, otherFloors, false) ===
+          "clears",
+    );
+    const filled = compatible.some(([, route]) => {
+      if ("capability" in gap) return (route.capabilities ?? []).includes(gap.capability);
+      const original = floors.find((floor) => floor.rating === gap.rating) as Floor;
+      const rating = ratingValue(loaded.registry.models[route.model]?.ratings ?? {}, gap.rating);
+      return rating !== undefined && rating >= original.minimum;
+    });
+    if (compatible.length > 0 && !filled) {
+      warnings.push({
+        code: "profile-gap-accepted",
+        field: `$["profiles"][${JSON.stringify(applied.profile)}]["gaps"][${index}]`,
+        message: `profile "${applied.profile}" hits accepted ${"capability" in gap ? `capability gap "${gap.capability}"` : `rating gap "${gap.rating}" (accepts ${gap.accepts})`}: ${gap.reason}`,
+      });
+    }
+  }
+  return warnings;
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -732,6 +789,10 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
 
   if (applied.privacy === "secret" && surviving.length === 0) {
     warnings.push(WARNING_LOCAL_OR_NOTHING);
+  }
+
+  if (!everyRouteBelow) {
+    warnings.push(...acceptedGapWarnings(loaded, profile, applied, effectiveNeeds, floors));
   }
 
   // Pin placement: the pin is used only when the label is in the surviving
