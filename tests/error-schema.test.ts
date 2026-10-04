@@ -93,6 +93,7 @@ describe("error.schema.json", () => {
       "label-duplicate": true,
       "query-invalid": true,
       "profile-unknown": true,
+      "profile-gap-unrecorded": true,
       "rating-mismatch": true,
       "reference-unknown": true,
       "registry-invalid": true,

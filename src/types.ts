@@ -143,6 +143,7 @@ export interface DescribeBlock {
 export type RouterErrorCode =
   | "query-invalid"
   | "profile-unknown"
+  | "profile-gap-unrecorded"
   | "registry-sections-invalid"
   | "config-invalid"
   | "describe-private"

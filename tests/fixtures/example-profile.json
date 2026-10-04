@@ -1,0 +1,167 @@
+{
+  "format": 1,
+  "ratings": {
+    "coding": "Writes and changes code to a spec.",
+    "taste": "Subjective fit for the work; set by hand."
+  },
+  "capabilities": {
+    "browser": "Can drive a web browser."
+  },
+  "meters": {
+    "plan-a": {
+      "spendToZero": true,
+      "notes": "Drains to zero so the user never runs out."
+    }
+  },
+  "models": {
+    "model-a": {
+      "family": "family-a",
+      "ratings": {
+        "coding": 7,
+        "taste": 6
+      },
+      "maxEffort": "high",
+      "routes": [
+        {
+          "harness": "harness-x",
+          "modelId": "model-id-a",
+          "hosted": false,
+          "cost": 9,
+          "capabilities": ["browser"],
+          "meter": "plan-a"
+        },
+        {
+          "harness": "harness-y",
+          "modelId": "model-id-b",
+          "provider": "provider-1",
+          "hosted": true,
+          "cost": 8
+        }
+      ]
+    }
+  },
+  "calibration": {
+    "notes": "Placeholder table; replace with the operator's own benchmarks, figures and overrides when wiring a real registry.",
+    "benchmarks": {
+      "engines": {
+        "source": "https://example.org/coding",
+        "field": "engines",
+        "version": "0.0.0-placeholder",
+        "direction": "higher",
+        "bands": [
+          {
+            "at": 50,
+            "score": 9
+          },
+          {
+            "at": 40,
+            "score": 8
+          },
+          {
+            "at": 30,
+            "score": 7
+          }
+        ],
+        "notes": "Placeholder bands; the figure 35 lands in the 30 band and scores 7."
+      },
+      "cost-per-task": {
+        "source": "https://example.org/cost",
+        "field": "costPerTask",
+        "version": "0.0.0-placeholder",
+        "direction": "lower",
+        "bands": [
+          {
+            "at": 0.5,
+            "score": 9
+          },
+          {
+            "at": 1,
+            "score": 8
+          }
+        ]
+      }
+    },
+    "feeds": {
+      "coding": ["engines"],
+      "cost": ["cost-per-task"]
+    },
+    "handSet": ["taste"],
+    "figures": {
+      "model-a": {
+        "engines": {
+          "value": 35,
+          "read": "2026-09-30",
+          "effort": "high"
+        }
+      },
+      "model-a@harness-x": {
+        "cost-per-task": {
+          "value": 0.4,
+          "read": "2026-09-30",
+          "effort": "high"
+        }
+      }
+    },
+    "overrides": [
+      {
+        "rating": "cost",
+        "route": "model-a@harness-y/provider-1",
+        "value": 8,
+        "reason": "Subscription route; no per-task cost figure exists to read."
+      }
+    ]
+  },
+  "profiles": {
+    "budget": {
+      "description": "Only the subscription route, with its accepted limitations.",
+      "routes": ["model-a@harness-y/provider-1"],
+      "gaps": [
+        {
+          "capability": "browser",
+          "reason": "This set has no browser route."
+        },
+        {
+          "rating": "coding",
+          "accepts": 7,
+          "reason": "This set reaches coding 7 at most."
+        }
+      ]
+    }
+  },
+  "router": {
+    "rank": ["coding", "taste"]
+  },
+  "tasks": {
+    "task-a": {
+      "description": "Code with a browser.",
+      "rank": ["coding"],
+      "needs": ["browser"],
+      "minimums": {
+        "low": {
+          "coding": 8
+        },
+        "normal": {
+          "coding": 8
+        },
+        "high": {
+          "coding": 9
+        }
+      }
+    },
+    "task-b": {
+      "description": "Code without a browser.",
+      "rank": ["coding"],
+      "minimums": {
+        "low": {
+          "coding": 7
+        },
+        "normal": {
+          "coding": 8
+        },
+        "high": {
+          "coding": 9
+        }
+      }
+    }
+  }
+}

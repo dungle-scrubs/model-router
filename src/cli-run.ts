@@ -3,6 +3,7 @@ import { loadRegistry, RegistryError } from "@dungle-scrubs/model-registry";
 import { Command, CommanderError } from "commander";
 import { type AvailabilityLoad, loadAvailabilityForCli } from "./availability-cli.js";
 import { type LoadedConfig, loadConfig } from "./config.js";
+import { checkProfileCoverage } from "./coverage.js";
 import { checkDescribeText, describe as describeStep, parseDescribeQuery } from "./describe.js";
 import { RouterError } from "./error.js";
 import { parseQuery } from "./query.js";
@@ -21,10 +22,10 @@ const EXIT_DESCRIBE_FAILED = 5;
 const EXIT_HELP = `
 
 Exit codes:
-  0  an answer with at least one route (rank call); or tasks printed
+  0  an answer with at least one route (rank call); or tasks printed; or check passed
   2  invalid query, flag or subcommand (query-invalid), unknown profile (profile-unknown), or the describe step refusing secret work (describe-private)
   3  an answer with no route; the answer is still printed
-  4  the registry or its router section, or the config file, failed to load
+  4  the registry or its router section, or the config file, failed to load; or declared profile coverage failed (profile-gap-unrecorded)
   5  the describe step needed a Jev answer and the call failed (describe-failed)
   1  an internal fault (internal-error)`;
 
@@ -357,7 +358,7 @@ export async function runCli(argv: readonly string[], io: Partial<CliIo> = {}): 
   const checkCommand = addRegistryOption(
     addConfigOption(
       new Command("check").description(
-        "Load the registry and config, then print their paths and the registry digest.",
+        "Validate registry, config and profile coverage, then print paths, digest and warnings.",
       ),
     ),
   );
@@ -403,13 +404,24 @@ export async function runCli(argv: readonly string[], io: Partial<CliIo> = {}): 
       );
     }
     const loaded = loadRegistryOption(explicitRegistry);
-    validateRouterSections(loaded);
+    const sections = validateRouterSections(loaded);
     const config = loadConfigOption(explicitConfig);
+    const coverage = checkProfileCoverage(loaded, sections);
+    if (coverage.problems.length > 0) {
+      throw new RouterError({
+        code: "profile-gap-unrecorded",
+        field: '$["profiles"]',
+        fix: "Add filling routes or record accepted gaps for each problem, then run model-router check again.",
+        message: `declared profile coverage has ${coverage.problems.length} unrecorded gaps.`,
+        problems: coverage.problems,
+      });
+    }
     stdout.write(
       `${JSON.stringify({
         configPath: config.configPath,
         registryDigest: loaded.digest,
         registryPath: loaded.path,
+        warnings: coverage.warnings,
       })}\n`,
     );
     answerExit = EXIT_SUCCESS;

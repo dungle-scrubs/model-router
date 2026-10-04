@@ -15,6 +15,7 @@
           "examples": [
             "query-invalid",
             "profile-unknown",
+            "profile-gap-unrecorded",
             "registry-sections-invalid",
             "config-invalid",
             "describe-private",
@@ -60,7 +61,7 @@
               "code": {
                 "type": "string",
                 "minLength": 1,
-                "description": "A problem code. RouterError problem codes start with `config-`, `router-`, `tasks-` or `policy-`; RegistryError problem codes are model-registry's."
+                "description": "A problem code. RouterError problem codes start with `config-`, `router-`, `tasks-`, `policy-` or `profile-gap-`; RegistryError problem codes are model-registry's."
               },
               "field": {
                 "type": "string",
@@ -93,6 +94,7 @@
                 "enum": [
                   "query-invalid",
                   "profile-unknown",
+                  "profile-gap-unrecorded",
                   "registry-sections-invalid",
                   "config-invalid",
                   "describe-private",
