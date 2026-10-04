@@ -127,6 +127,19 @@ describe("profile membership", () => {
     }
   });
 
+  test("CLI keeps section failures ahead of malformed queries and profile lookup", async () => {
+    for (const query of ["{oops", '{"minimums":{},"profile":"nope","unknown":true}']) {
+      for (const result of await runBoth(
+        [query, "--registry", fixturePath("no-router.json")],
+        "budget",
+      )) {
+        expect(result.exitCode).toBe(4);
+        expect(result.stdout).toBe("");
+        expect(JSON.parse(result.stderr).error.code).toBe("registry-sections-invalid");
+      }
+    }
+  });
+
   test("a declared default uses only its explicit membership", async () => {
     await withTempDir((dir) => {
       const raw = rawRegistry();
