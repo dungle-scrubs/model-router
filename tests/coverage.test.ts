@@ -477,6 +477,79 @@ describe("pure profile coverage", () => {
     );
   });
 
+  test("an uncapped recorded rating edits its existing record without capped wording", async () => {
+    await variant(
+      (raw) => {
+        raw.models["model-a"].ratings.coding = 6;
+        raw.calibration.overrides.push({
+          rating: "coding",
+          model: "model-a",
+          value: 6,
+          reason: "Placeholder override.",
+        });
+      },
+      (loaded) => {
+        const problems = coverage(loaded).problems;
+        expect(problems).toHaveLength(6);
+        const uncapped = problems.find(
+          (problem) => problem.field === '$["tasks"]["task-b"]["minimums"]["low"]["coding"]',
+        );
+        expect(uncapped?.message).toBe(
+          'profile "budget", task "task-b", stakes "low": no route in profile "budget" reaches coding 7 (best 6).',
+        );
+        expect(uncapped?.message).not.toContain("capped by");
+        expect(uncapped?.fix).toBe(
+          'Set "accepts" to 6 in gap record 1 of profile "budget", or add a route that fills it.',
+        );
+        expect(uncapped?.fix).not.toContain("Add gap record");
+        for (const problem of problems.filter((problem) => problem !== uncapped)) {
+          const floor = problem.field.includes('["high"]') ? 9 : 8;
+          expect(problem.message).toContain(
+            `reaches coding 7 (floor ${floor} capped by gap record 1; best 6)`,
+          );
+          expect(problem.fix).toBe(
+            'Set "accepts" to 6 in gap record 1 of profile "budget", or add a route that fills it.',
+          );
+        }
+      },
+    );
+  });
+
+  test.each([8, 9])(
+    "joint fixes edit an existing non-capping record with accepts %i",
+    async (accepts) => {
+      await variant(
+        (raw) => {
+          delete raw.calibration;
+          raw.models["model-a"].ratings = { coding: 9, taste: 6 };
+          raw.models["model-b"] = {
+            family: "family-b",
+            ratings: { coding: 6, taste: 9 },
+            routes: [{ harness: "harness-x", modelId: "model-b", hosted: false }],
+          };
+          raw.profiles.budget.routes = [B, "model-b@harness-x"];
+          raw.profiles.budget.gaps[1].accepts = accepts;
+          oneTask(raw, [], { coding: 8, taste: 8 });
+        },
+        (loaded) => {
+          const problems = coverage(loaded).problems;
+          expect(problems).toHaveLength(2);
+          expect(problems[0]).toMatchObject({
+            field: '$["tasks"]["task-a"]["minimums"]["low"]["coding"]',
+            message:
+              'profile "budget", task "task-a", stakes "low": the requirements are reachable only through different routes; no single route clears them together.',
+            fix: 'Set "accepts" to 6 in gap record 1 of profile "budget", or add a route that fills it.',
+          });
+          expect(problems[0]?.fix).not.toContain("Add gap record");
+          expect(problems[0]?.message).not.toContain("capped by");
+          expect(problems[1]?.fix).toBe(
+            'Add gap record {"rating":"taste","accepts":6,"reason":"<why>"} to profile "budget", or add a route that fills it.',
+          );
+        },
+      );
+    },
+  );
+
   test("implicit default unrated fixes name the registry instead of a profile", async () => {
     await variant(
       (raw) => {

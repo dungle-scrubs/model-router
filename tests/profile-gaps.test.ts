@@ -204,6 +204,38 @@ describe("example profile coverage CLI", () => {
     });
   });
 
+  test("editing a non-capping recorded ceiling repairs built check without a duplicate record", async () => {
+    await withTempDir((dir) => {
+      const raw = example();
+      raw.models["model-a"].ratings.coding = 6;
+      raw.calibration.overrides.push({
+        rating: "coding",
+        model: "model-a",
+        value: 6,
+        reason: "Placeholder override.",
+      });
+      const before = check(writeJson(dir, "uncapped.json", raw));
+      expect(before.exitCode).toBe(4);
+      expect(before.stdout).toBe("");
+      const problems = JSON.parse(before.stderr).error.problems;
+      expect(problems).toHaveLength(6);
+      const problem = problems.find(
+        (finding: { field: string }) =>
+          finding.field === '$["tasks"]["task-b"]["minimums"]["low"]["coding"]',
+      );
+      expect(problem?.fix).toBe(
+        'Set "accepts" to 6 in gap record 1 of profile "budget", or add a route that fills it.',
+      );
+      for (const finding of problems)
+        expect(finding.fix).not.toContain('Add gap record {"rating":"coding"');
+      raw.profiles.budget.gaps[1].accepts = 6;
+      const after = check(writeJson(dir, "repaired.json", raw));
+      expect(after.exitCode, after.stderr).toBe(0);
+      expect(after.stderr).toBe("");
+      expect(raw.profiles.budget.gaps).toHaveLength(2);
+    });
+  });
+
   test("empty declared profile fails itemless tasks at every stakes", async () => {
     await withTempDir((dir) => {
       const raw = example();
