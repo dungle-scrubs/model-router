@@ -2,9 +2,9 @@
 
 Rank model routes for a structured query against the shared model registry.
 
-A route is one model reached through one harness. The caller states what the work needs; the router orders the registry's routes into one ranked list, contract version 1. This package is the router half of the design in the model-registry RFC; the loader and validator half is [`@dungle-scrubs/model-registry`](https://github.com/dungle-scrubs/model-registry). Development release: the package is unpublished.
+A route is one model reached through one harness. The caller states what the work needs; the router orders the registry's routes into one ranked list, contract version 1. This package is the router half of the design in the model-registry RFC; the loader and validator half is [`@dungle-scrubs/model-registry`](https://github.com/dungle-scrubs/model-registry). Development release: 0.1.0.
 
-This release implements issues #29, #30 and #31: pins, effort resolution, `config.json`, the `check` subcommand, meter availability, the describe step, and the Jev client.
+This package implements pins, effort resolution, `config.json`, the `check` subcommand, meter availability, the describe step, the Jev client, and profile selection.
 
 ## CLI
 
@@ -33,6 +33,37 @@ A first argument that starts with `{` or `-` is the ranking call. Any other word
 
 The answer is one JSON line on stdout, also when no route survives. `model-router tasks` prints one JSON line: the task list, or `[]` when the registry has none. Errors print as one JSON line on stderr: `{"error":{"code":"...","message":"...","fix":"...","field":"...","problems":[]}}`. A loader error keeps model-registry's own envelope, with `path` instead of `field`.
 
+### Profiles
+
+A query's optional `profile` selects a named set from the registry. The CLI uses
+`query.profile`, then non-empty `MODEL_ROUTER_PROFILE`, then `default`, on both
+plain and `--describe` ranking calls. An empty variable is unset; an empty query
+profile is an unknown name. The library uses `query.profile ?? "default"` and
+never reads the profile environment variable. There is no profile flag, config
+key or rank option.
+
+Ranking sees only the selected profile's routes before hard limits, pins and
+policies. Non-members appear in neither `routes` nor `removed`. Membership adds
+no sort key and does not reorder routes by the profile's written label list.
+Availability's exhausted-all rule counts only members that survived hard limits.
+An outside pin is unused with reason `pin-outside-profile` and warning
+`pin-unused`; an outside policy route is omitted with warning
+`policy-route-outside-profile`. Both warnings name the selected profile.
+
+The profile-aware `model-registry` loader supplies `loaded.profiles`. Its implicit
+`default` contains every route unless the file declares an explicit `default`.
+Without a profiles section the answer is unchanged from 0.1.0 except for
+`query.profile: "default"`. `answer.query.profile` always records the name used;
+contract stays 1 and labels have no profile suffix. An unknown name throws
+`profile-unknown` (exit 2), with a fix listing every profile in loader key order;
+it never falls back to `default`. This check follows registry, router-section,
+query and config validation. `check` and `tasks` do not select a profile.
+
+```console
+$ model-router '{"task":"task-a","profile":"budget"}' --registry registry.json
+$ MODEL_ROUTER_PROFILE=budget model-router '{"task":"task-a"}' --registry registry.json
+```
+
 ### The describe flag
 
 `--describe <file>` reads the work description from the file, calls the describe step, then ranks the filled query and merges the describe block into the answer (see [The describe step](#the-describe-step)). With `--describe` the query MUST state `privacy`; the default does not apply, so a caller that forgets it gets exit 2 and not a hosted call, and `privacy: secret` is refused outright (`describe-private`, exit 2). The description file must hold non-blank text. The same registry and config options apply: `--registry`, `--config`.
@@ -44,7 +75,7 @@ When Jev gave no answer and the task was needed (the query stated neither `task`
 | Exit | Meaning |
 |---|---|
 | 0 | an answer with at least one route, or the task list printed |
-| 2 | invalid query, flag or subcommand (`query-invalid`); or the describe step refusing to run (`describe-private`) |
+| 2 | invalid query, flag or subcommand (`query-invalid`); unknown profile (`profile-unknown`); or the describe step refusing to run (`describe-private`) |
 | 3 | an answer with no route; the answer is still printed |
 | 4 | the registry or its router section, or the config file, failed to load |
 | 5 | the describe step needed a Jev answer and the call failed (`describe-failed`) |
@@ -54,6 +85,7 @@ When Jev gave no answer and the task was needed (the query stated neither `task`
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
+| `profile` | string | `default` | ranks only the selected profile; the CLI checks non-empty `MODEL_ROUTER_PROFILE` when absent; unknown is `profile-unknown` |
 | `task` | string | none | a name declared in `registry.tasks`; a task the registry does not declare warns `task-unranked` and ranks by `router.rank` |
 | `minimums` | rating name to number | none | inline floors that replace per rating at the query's stakes; `minimums: {}` states no floor explicitly |
 | `needs` | list of strings | `[]` | adds to the task's needs when a task is named |
@@ -65,7 +97,7 @@ When Jev gave no answer and the task was needed (the query stated neither `task`
 | `excludeFamilies` | list of strings | `[]` | families removed as a hard limit |
 | `spec` | `open`, `settled` | `open` | `settled` matches a policy whose `spec` is `settled` (or unset); an unset policy `spec` matches any query, and a policy's `spec` accepts only `settled`. A query that states `spec` and matches no policy warns `policy-none`; a query without `spec` stays silent |
 
-A query must carry `task` or `minimums` (a `pin` alone is invalid), and input is strict: a field the contract does not define is `query-invalid`. A check against registry content is a warning, never a failure: a minimum naming an undeclared rating makes every route count as below that floor, a need naming an undeclared capability removes every route lacking it, and an unknown family excludes nothing.
+A query must carry `task` or `minimums` (a `pin` alone is invalid), and input is strict: a field the contract does not define is `query-invalid`. Except for an unknown profile (`profile-unknown`), a check against registry content is a warning, never a failure: a minimum naming an undeclared rating makes every route count as below that floor, a need naming an undeclared capability removes every route lacking it, and an unknown family excludes nothing.
 
 ### Resolving the task
 
@@ -92,7 +124,7 @@ The requested level follows this order: a policy route's `effort` when it names 
 When the query names a route label, the pin is placed ahead of the policy and ranked routes:
 
 - The pin is used when the label exists in the registry and the route passed every hard limit. The pin route appears first with `placedBy: "pin"` and `floor: "skipped"`, then the rest of the answer follows without it.
-- A non-surviving pin keeps the fallback ranking. `pin.used` is `false` and `pin.reason` names the cause: a hard-limit code (`privacy-secret-not-eligible`, `family-excluded-by-query`, `needs-not-satisfied`) or `unknown-label`. A `pin-unused` or `pin-unknown` warning names the label.
+- A non-surviving pin keeps the fallback ranking. `pin.used` is `false` and `pin.reason` names the cause: `pin-outside-profile`, a hard-limit code (`privacy-secret-not-eligible`, `family-excluded-by-query`, `needs-not-satisfied`) or `unknown-label`. A `pin-unused` or `pin-unknown` warning names the label.
 - The answer's `pin` field is `null` when the query has no pin.
 
 ### `config.json`
@@ -148,7 +180,7 @@ The describe block in the answer: `model` (what answered, `null` when Jev failed
 
 1. Load the registry and validate the router sections: `router`, `tasks`, `policy`. `router.rank` is required, `tasks` and `policy` are optional. Any problem is `registry-sections-invalid`.
 2. Load `config.json` (or fall through to the documented defaults). An explicit path that does not exist or an invalid file is `config-invalid`.
-3. Validate the query.
+3. Validate the query, resolve the profile and restrict membership before hard limits. An unknown profile fails `profile-unknown`; non-members are not candidates and produce no removal records.
 4. Resolve the task. Apply inline `minimums` over the task's floor at the query's stakes. Apply inline `needs` over the task's needs. The task's effort and the query's effort feed step 7.
 5. Apply the hard limits in order: `privacy: secret` (routes without `privacyEligible: true`), `excludeFamilies`, `needs`. A removed route lands in `removed` with one reason.
 6. Place the pin. A used pin goes first with `placedBy: "pin"` and `floor: "skipped"`. A non-surviving pin keeps the fallback ranking with `pin.used: false` and a reason in `pin.reason`.
@@ -164,7 +196,7 @@ The same registry and the same query always give the same answer.
 
 ## Codes this package chose
 
-The RFC names the error codes; these warning and reason codes are this package's choice:
+The RFC names the error codes and the profile-specific warning and pin reason codes. The remaining warning and reason codes below are this package's choice:
 
 | Code | Where | Meaning |
 |---|---|---|
@@ -177,7 +209,9 @@ The RFC names the error codes; these warning and reason codes are this package's
 | `effort-above-max` | warnings | the requested level was lowered by the model's `maxEffort` |
 | `effort-ceiling` | warnings | the requested level was lowered by `effort.ceiling` in `config.json` |
 | `pin-unknown` | warnings | the query's pin is not in the registry |
-| `pin-unused` | warnings | the query's pin was removed by a hard limit; the warning names the limit code |
+| `pin-unused` | warnings | the query's pin is outside the selected profile, or was removed by a hard limit or availability; the warning names the cause |
+| `pin-outside-profile` | pin reason | the declared pin is outside the selected profile |
+| `policy-route-outside-profile` | warnings | the matching policy names a route outside the selected profile; it is omitted |
 | `policy-none` | warnings | the query stated a `spec` (`open` or `settled`) and no policy matched |
 | `local-or-nothing` | warnings | `privacy: secret` removed every route; the work runs locally or not at all |
 | `policy-route-removed` | warnings | a hard limit removed a route the matching policy names; the warning names the policy and the route |
@@ -371,7 +405,7 @@ const result = applyAvailability(answer.routes, reading.entries, {
 });
 ```
 
-`rank` and `listTasks` are synchronous and pure over their inputs. `describe` awaits one Jev call. They throw `RouterError` (`query-invalid`, exit 2; `describe-private`, exit 2; `registry-sections-invalid`, exit 4; `config-invalid`, exit 4; `describe-failed`, exit 5) and rethrow model-registry's `RegistryError` unchanged. `applyAvailability` and `dropExpired` are pure over `(routes, entries)` and `(entries, now)`: the same inputs give the same outputs. The loader and the label builder are not re-exported; import them from `@dungle-scrubs/model-registry`. The package ships `query.schema.json`, `answer.schema.json`, `availability.schema.json`, `error.schema.json`, `config.schema.json` and `router-sections.schema.json`: the query schema rejects undefined fields, the answer schema allows them, the availability schema validates the document a user converter writes, the error schema describes the `{"error": ...}` envelope the CLI prints on stderr, the config schema validates `config.json`, and the router-sections schema describes the `router`, `tasks` and `policy` sections of a registry file.
+`rank` and `listTasks` are synchronous and pure over their inputs. `describe` awaits one Jev call. They throw `RouterError` (`query-invalid`, exit 2; `profile-unknown`, exit 2; `describe-private`, exit 2; `registry-sections-invalid`, exit 4; `config-invalid`, exit 4; `describe-failed`, exit 5) and rethrow model-registry's `RegistryError` unchanged. `applyAvailability` and `dropExpired` are pure over `(routes, entries)` and `(entries, now)`: the same inputs give the same outputs. The loader and the label builder are not re-exported; import them from `@dungle-scrubs/model-registry`. The package ships `query.schema.json`, `answer.schema.json`, `availability.schema.json`, `error.schema.json`, `config.schema.json` and `router-sections.schema.json`: the query schema rejects undefined fields, the answer schema allows them, the availability schema validates the document a user converter writes, the error schema describes the `{"error": ...}` envelope the CLI prints on stderr, the config schema validates `config.json`, and the router-sections schema describes the `router`, `tasks` and `policy` sections of a registry file.
 
 ## Development
 
@@ -381,4 +415,4 @@ $ pnpm verify          # lint, typecheck, build, tests
 $ pnpm test:mutation   # mutation score, break at 75
 ```
 
-Tests use placeholder registries only (`tests/fixtures/`): model keys like `model-a`, harnesses like `harness-x`, families like `family-a`, tasks like `task-a`. CI installs the private `model-registry` git dependency over SSH with a read-only deploy key held in the `MODEL_REGISTRY_DEPLOY_KEY` secret.
+Tests use placeholder registries only (`tests/fixtures/`): model keys like `model-a`, harnesses like `harness-x`, families like `family-a`, tasks like `task-a`. CI installs `model-registry` from npm with the caret dependency `^0.2.0`.
