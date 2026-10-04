@@ -17,7 +17,7 @@ const sourceFixtures = ["availability-print.js", "availability-expired-print.js"
   return { name, entries: dropExpired(document.entries, new Date(document.generatedAt)) };
 });
 for (const fixture of readdirSync(fixtures)
-  .filter((name) => name.endsWith(".json"))
+  .filter((name) => name.endsWith(".json") && name !== "pre-profile-goldens.json")
   .sort()) {
   const registry = join(fixtures, fixture);
   let raw;
