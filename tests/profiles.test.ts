@@ -17,6 +17,7 @@ import {
   errorMatching,
   expectActionable,
   expectValidAnswer,
+  expectValidError,
   fixturePath,
   runBuiltCli,
   withEnv,
@@ -52,7 +53,9 @@ async function runBoth(args: string[], profile: string | undefined) {
     const out = captureStream();
     const err = captureStream();
     const exitCode = await runCli(args, { stdout: out.stream, stderr: err.stream });
-    results.push({ exitCode, stdout: out.text(), stderr: err.text() });
+    const stderr = err.text();
+    if (stderr.length > 0) expectValidError(JSON.parse(stderr));
+    results.push({ exitCode, stdout: out.text(), stderr });
   });
   return results;
 }
