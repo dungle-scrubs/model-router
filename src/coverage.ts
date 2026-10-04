@@ -59,9 +59,7 @@ function requirements(task: TaskEntry, name: string, stakes: Stakes, profile: Pr
     items.push({
       rating,
       originalFloor: minimum,
-      ...(gap !== undefined && "rating" in gap && minimum > gap.accepts
-        ? { recordIndex: index }
-        : {}),
+      ...(gap !== undefined && "rating" in gap ? { recordIndex: index } : {}),
       minimum: gap !== undefined && "rating" in gap ? Math.min(minimum, gap.accepts) : minimum,
       field: pathJoin(`${field}["minimums"][${JSON.stringify(stakes)}]`, rating),
     });
@@ -144,7 +142,7 @@ function uncovered(
     const message =
       "capability" in item
         ? `no route in profile "${profile}" has capability ${item.capability}`
-        : `no route in profile "${profile}" reaches ${item.rating} ${item.minimum} (${item.recordIndex !== undefined ? `floor ${item.originalFloor} capped by gap record ${item.recordIndex}; ` : ""}best ${maximum ?? "unrated"})`;
+        : `no route in profile "${profile}" reaches ${item.rating} ${item.minimum} (${item.originalFloor > item.minimum ? `floor ${item.originalFloor} capped by gap record ${item.recordIndex}; ` : ""}best ${maximum ?? "unrated"})`;
     problems.push(
       finding(
         item,
