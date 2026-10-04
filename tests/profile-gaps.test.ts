@@ -188,6 +188,68 @@ describe("example profile coverage CLI", () => {
     });
   });
 
+  test("editing the suggested existing ceiling repairs check", async () => {
+    await withTempDir((dir) => {
+      const raw = example();
+      delete raw.calibration;
+      raw.models["model-a"].ratings.coding = 6;
+      const path = writeJson(dir, "capped.json", raw);
+      const before = check(path);
+      expect(before.exitCode).toBe(4);
+      expect(JSON.parse(before.stderr).error.problems[0].fix).toContain(
+        'Set "accepts" to 6 in gap record 1',
+      );
+      raw.profiles.budget.gaps[1].accepts = 6;
+      expect(check(writeJson(dir, "repaired.json", raw)).exitCode).toBe(0);
+    });
+  });
+
+  test("empty declared profile fails itemless tasks at every stakes", async () => {
+    await withTempDir((dir) => {
+      const raw = example();
+      raw.profiles.budget.routes = [];
+      raw.tasks = {
+        "task-a": {
+          description: "Placeholder task.",
+          rank: ["coding"],
+          minimums: { low: {}, normal: {}, high: {} },
+        },
+      };
+      const result = check(writeJson(dir, "empty-itemless.json", raw));
+      expect(result.exitCode).toBe(4);
+      const problems = JSON.parse(result.stderr).error.problems;
+      expect(problems).toHaveLength(3);
+      for (const [index, problem] of problems.entries()) {
+        expect(problem.field).toBe('$["profiles"]["budget"]["routes"]');
+        expect(problem.message).toBe(
+          `profile "budget", task "task-a", stakes "${["low", "normal", "high"][index]}": profile "budget" has no routes.`,
+        );
+        expect(problem.fix).toBe(
+          'Add a route ("model-a@harness-x", "model-a@harness-y/provider-1") to profile "budget".',
+        );
+      }
+    });
+  });
+
+  test("one unrecorded gap uses singular top-level wording", async () => {
+    await withTempDir((dir) => {
+      const raw = example();
+      raw.profiles.budget.gaps = [];
+      raw.tasks = {
+        "task-a": {
+          description: "Placeholder task.",
+          rank: ["coding"],
+          minimums: { low: {}, normal: {}, high: { coding: 9 } },
+        },
+      };
+      const result = check(writeJson(dir, "singular.json", raw));
+      expect(result.exitCode).toBe(4);
+      const error = JSON.parse(result.stderr).error;
+      expect(error.problems).toHaveLength(1);
+      expect(error.message).toBe("declared profile coverage has 1 unrecorded gap.");
+    });
+  });
+
   test("config and sections failures precede coverage", async () => {
     await withTempDir((dir) => {
       const raw = example();
@@ -216,6 +278,10 @@ describe("accepted gaps at runtime", () => {
     expect(accepted(answer).map((warning) => warning.field)).toEqual([
       '$["profiles"]["budget"]["gaps"][0]',
       '$["profiles"]["budget"]["gaps"][1]',
+    ]);
+    expect(accepted(answer).map((warning) => warning.message)).toEqual([
+      'profile "budget" hits accepted capability gap "browser": This set has no browser route.',
+      'profile "budget" hits accepted rating gap "coding" (accepts 7): This set reaches coding 7 at most.',
     ]);
     for (const [index, warning] of accepted(answer).entries()) {
       expect(warning.message).toContain('profile "budget"');
@@ -257,6 +323,25 @@ describe("accepted gaps at runtime", () => {
     expect(answer.query.minimums).toEqual({ coding: 10 });
     expect(answer.routes[0]?.floor).toBe("below");
     expect(answer.routes[0]?.reasons[0]?.message).toContain("floor 10");
+  });
+
+  test("a floor equal to accepts does not apply the rating record even below the floor", async () => {
+    await withTempDir((dir) => {
+      const raw = example();
+      delete raw.calibration;
+      raw.models["model-a"].ratings.coding = 6;
+      const path = writeJson(dir, "below-accepts.json", raw);
+      const answer = ranked({ minimums: { coding: 7 }, profile: "budget" }, path);
+      expect(accepted(answer)).toEqual([]);
+      expect(answer.routes[0]?.floor).toBe("below");
+      const control = accepted(ranked({ minimums: { coding: 8 }, profile: "budget" }, path));
+      expect(control).toHaveLength(1);
+      expect(control[0]?.field).toBe('$["profiles"]["budget"]["gaps"][1]');
+    });
+  });
+
+  test("a floor set without the recorded rating does not apply the record or throw", () => {
+    expect(accepted(ranked({ minimums: { taste: 5 }, profile: "budget" }))).toEqual([]);
   });
 
   test.each<readonly [unknown]>(
