@@ -4,7 +4,7 @@ Rank model routes for a structured query against the shared model registry.
 
 A route is one model reached through one harness. The caller states what the work needs; the router orders the registry's routes into one ranked list, contract version 1. This package is the router half of the design in the model-registry RFC; the loader and validator half is [`@dungle-scrubs/model-registry`](https://github.com/dungle-scrubs/model-registry). Development release: 0.1.0.
 
-This package implements pins, effort resolution, `config.json`, the `check` subcommand, meter availability, the describe step, the Jev client, and profile selection.
+This package implements pins, effort resolution, `config.json`, the `check` subcommand, meter availability, the describe step, the Jev client, profile selection, profile coverage checking, and accepted-gap warnings.
 
 ## CLI
 
@@ -19,7 +19,7 @@ $ model-router tasks --registry registry.json
 [{"name":"task-a","description":"..."}]
 
 $ model-router check --registry registry.json
-{"configPath":null,"registryDigest":"sha256:...","registryPath":"..."}
+{"configPath":null,"registryDigest":"sha256:...","registryPath":"...","warnings":[]}
 
 $ model-router --describe work.txt --registry registry.json '{"privacy":"normal"}'
 {"availabilityNote":null,"contract":1,"describe":{...},"query":{"task":"task-a",...},"routes":[...]}
@@ -65,6 +65,33 @@ $ model-router '{"task":"task-a","profile":"budget"}' --registry registry.json
 $ MODEL_ROUTER_PROFILE=budget model-router '{"task":"task-a"}' --registry registry.json
 ```
 
+### Profile coverage and accepted gaps
+
+`check` loads the registry, validates router sections and loads config first, then
+checks every profile against every task at low, normal and high stakes. It takes
+no profile argument and never reads `MODEL_ROUTER_PROFILE`, runs an availability
+command or calls Jev. Successful output always includes `warnings`, empty when
+there are none. Unrecorded gaps in declared profiles (including a declared
+`default`) fail with `profile-gap-unrecorded`, exit 4 and one coded problem per
+finding. The implicit `default` reports the same findings as warnings at exit 0.
+Each fix offers a gap record or filling routes. Requirements must clear together
+on one member, not through independent maxima on different routes.
+
+For coverage only, recorded capability gaps waive needs and rating gaps cap
+floors at `accepts`. Stale records produce `profile-gap-stale` warnings naming the
+profile, task, stakes, record and first compatible filling route. A rating record
+is stale only where a task floor exceeds `accepts` and a compatible member exceeds
+that ceiling. Coverage ignores privacy, family exclusions, pins, policies,
+availability and inline needs.
+
+At runtime, `profile-gap-accepted` names the selected profile and record's reason
+when the applied query hits the limitation. It considers task plus inline needs,
+resolved floors, privacy and family limits. No compatible member means no gap
+warning. An undeclared minimum suppresses gap warnings. Warnings follow record
+order, after hard limits and before the pin. Records never change floors, needs
+or removals: a missing capability still removes the route, and a below-floor
+route stays below. Gap warnings never fail a query; exits remain 0 or 3.
+
 ### The describe flag
 
 `--describe <file>` reads the work description from the file, calls the describe step, then ranks the filled query and merges the describe block into the answer (see [The describe step](#the-describe-step)). With `--describe` the query MUST state `privacy`; the default does not apply, so a caller that forgets it gets exit 2 and not a hosted call, and `privacy: secret` is refused outright (`describe-private`, exit 2). The description file must hold non-blank text. The same registry and config options apply: `--registry`, `--config`.
@@ -75,10 +102,10 @@ When Jev gave no answer and the task was needed (the query stated neither `task`
 
 | Exit | Meaning |
 |---|---|
-| 0 | an answer with at least one route, or the task list printed |
+| 0 | an answer with at least one route, the task list printed, or check passed |
 | 2 | invalid query, flag or subcommand (`query-invalid`); unknown profile (`profile-unknown`); or the describe step refusing to run (`describe-private`) |
 | 3 | an answer with no route; the answer is still printed |
-| 4 | the registry or its router section, or the config file, failed to load |
+| 4 | the registry or its router section, or the config file, failed to load; or declared-profile coverage failed (`profile-gap-unrecorded`) |
 | 5 | the describe step needed a Jev answer and the call failed (`describe-failed`) |
 | 1 | an internal fault (`internal-error`) |
 
@@ -214,6 +241,9 @@ The RFC names the error codes and the profile-specific warning and pin reason co
 | `pin-unused` | warnings | the query's pin is outside the selected profile, or was removed by a hard limit or availability; the warning names the cause |
 | `pin-outside-profile` | pin reason | the declared pin is outside the selected profile |
 | `policy-route-outside-profile` | warnings | the matching policy names a route outside the selected profile; it is omitted |
+| `profile-gap-unrecorded` | check problems or warnings | declared-profile coverage fails; implicit-default coverage warns |
+| `profile-gap-stale` | check warnings | a compatible member fills a recorded limitation for a task and stakes |
+| `profile-gap-accepted` | answer warnings | the applied query hits an accepted profile limitation |
 | `policy-none` | warnings | the query stated a `spec` (`open` or `settled`) and no policy matched |
 | `local-or-nothing` | warnings | `privacy: secret` removed every route; the work runs locally or not at all |
 | `policy-route-removed` | warnings | a hard limit removed a route the matching policy names; the warning names the policy and the route |
