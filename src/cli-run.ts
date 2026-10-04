@@ -445,9 +445,10 @@ export async function runCli(argv: readonly string[], io: Partial<CliIo> = {}): 
       // gate is the second: it reads the description file (only with a
       // valid privacy) and refuses an empty description. Only after both
       // gates does the CLI load the registry and config.
+      let describePartial: Query | undefined;
       let describeText: string | undefined;
       if (describeFile !== undefined) {
-        parseDescribeQuery(raw);
+        describePartial = parseDescribeQuery(raw);
         describeText = readDescribeFile(describeFile);
         checkDescribeText(describeText);
       }
@@ -464,7 +465,7 @@ export async function runCli(argv: readonly string[], io: Partial<CliIo> = {}): 
         (availabilityState.file !== undefined || availabilityState.fromCommand)
           ? availabilityLoad.entries
           : undefined;
-      if (describeText !== undefined) {
+      if (describeText !== undefined && describePartial !== undefined) {
         // Load the registry once and hand the loaded result to both the
         // describe step and rank: the task set offered to Jev and the
         // digest in the answer come from the same bytes.
@@ -477,12 +478,16 @@ export async function runCli(argv: readonly string[], io: Partial<CliIo> = {}): 
                 config: config.config,
                 availability: availabilityOption,
               };
-        // The describe step fills the query's task and needs through a Jev
-        // call, then ranks the filled query and merges the describe block
+        // Apply the CLI profile before describe validates it and asks Jev.
+        // Rank the filled query and merge the describe block
         // into the answer. The describe step's warnings lead the answer's
         // warnings list: they happened first.
-        const described = await describeStep(describeText, raw, rankOptions);
-        const answer = rank(applyCliProfile(described.query), rankOptions);
+        const described = await describeStep(
+          describeText,
+          applyCliProfile(describePartial),
+          rankOptions,
+        );
+        const answer = rank(described.query, rankOptions);
         const merged = assembleAnswer(answer, availabilityLoad, described);
         stdout.write(`${JSON.stringify(merged)}\n`);
         answerExit = merged.routes.length === 0 ? EXIT_NO_ROUTE : EXIT_SUCCESS;

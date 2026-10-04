@@ -8,7 +8,7 @@ import {
   type JevResponse,
 } from "./jev.js";
 import { parsePartialQuery, QUERY_FIELDS } from "./query.js";
-import { resolveConfig, resolveRegistry } from "./rank.js";
+import { resolveConfig, resolveRegistry, selectProfile } from "./rank.js";
 import { validateRouterSections } from "./sections.js";
 import type {
   Coded,
@@ -153,7 +153,8 @@ function filledQuery(partial: Query, task: string | undefined, needs: readonly s
  * The describe step: read a prose work description, fill the partial
  * query's task and add to its needs.
  *
- * The checks run in the contract's order. No request leaves the machine
+ * The checks run in order: privacy, text, registry, sections, config,
+ * profile, then Jev. No request leaves the machine
  * before the privacy gate passes: `privacy` must be stated, and secret work
  * is refused outright. The task question rides only when the partial query
  * has neither `task` nor `minimums`; one capability question rides per
@@ -180,6 +181,7 @@ export async function describe(
 
   const loadedConfig = resolveConfig(options.config);
   const config = loadedConfig.config;
+  selectProfile(loaded, partial.profile ?? "default");
   const taskNeeded = partial.task === undefined && partial.minimums === undefined;
 
   // Build the question set: the task choice over the declared tasks, plus

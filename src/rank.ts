@@ -584,6 +584,21 @@ export function listTasks(options: RankOptions = {}): readonly TaskSummary[] {
   return out;
 }
 
+export function selectProfile(loaded: LoadedRegistry, name: string): Profile {
+  if (!Object.hasOwn(loaded.profiles, name)) {
+    throw new RouterError({
+      code: "profile-unknown",
+      field: "profile",
+      fix: `Select one of the registry profiles: ${Object.keys(loaded.profiles)
+        .map((name) => JSON.stringify(name))
+        .join(", ")}.`,
+      message: `the profile "${name}" is not declared in the registry`,
+      problems: [],
+    });
+  }
+  return loaded.profiles[name] as Profile;
+}
+
 /**
  * Rank routes for a query. The steps run in the contract's order: load the
  * registry, validate the router section, validate the query, resolve the
@@ -603,18 +618,7 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
   const loadedConfig = resolveConfig(options.config);
   const config = loadedConfig.config;
 
-  if (!Object.hasOwn(loaded.profiles, applied.profile)) {
-    throw new RouterError({
-      code: "profile-unknown",
-      field: "profile",
-      fix: `Select one of the registry profiles: ${Object.keys(loaded.profiles)
-        .map((name) => JSON.stringify(name))
-        .join(", ")}.`,
-      message: `the profile "${applied.profile}" is not declared in the registry`,
-      problems: [],
-    });
-  }
-  const profile = loaded.profiles[applied.profile] as Profile;
+  const profile = selectProfile(loaded, applied.profile);
   const members = new Set(profile.routes);
 
   const warnings: Coded[] = [];

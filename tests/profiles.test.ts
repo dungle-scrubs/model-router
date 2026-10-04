@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { loadRegistry } from "@dungle-scrubs/model-registry";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import answerSchema from "../answer.schema.json" with { type: "json" };
 import querySchema from "../query.schema.json" with { type: "json" };
 import { runCli } from "../src/cli-run.js";
@@ -213,6 +213,152 @@ describe("profile membership", () => {
       expect(answer.pin).toEqual({ label: A, used: false, reason: "meter-exhausted" });
     });
   });
+});
+
+describe("describe profile validation", () => {
+  function unknownProfile(profile: string) {
+    return errorMatching({
+      code: "profile-unknown",
+      field: "profile",
+      problems: [],
+      message: `the profile "${profile}" is not declared in the registry`,
+      fix: 'Select one of the registry profiles: "default", "budget", "__proto__", "constructor".',
+    });
+  }
+
+  test("unknown profile fails before a needed Jev request", async () => {
+    await withEnv({ TYPESAFE_API_KEY: "key-a" }, async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
+      try {
+        await expect(
+          describeStep("some work", { privacy: "normal", profile: "nope" }, options),
+        ).rejects.toThrow(unknownProfile("nope"));
+      } finally {
+        try {
+          expect(fetchSpy).not.toHaveBeenCalled();
+        } finally {
+          fetchSpy.mockRestore();
+        }
+      }
+    });
+  });
+
+  test.each(["nope", "", "toString"])(
+    "unknown profile %s fails even with nothing to ask",
+    async (profile) => {
+      await expect(
+        describeStep("some work", { privacy: "normal", task: "task-a", profile }, options),
+      ).rejects.toThrow(unknownProfile(profile));
+    },
+  );
+
+  test("an inherited profile is rejected before the nothing-to-ask return", async () => {
+    const loaded = loadRegistry({ path: REGISTRY });
+    const profiles = Object.create(
+      { inherited: loaded.profiles.budget },
+      Object.getOwnPropertyDescriptors(loaded.profiles),
+    );
+    await expect(
+      describeStep(
+        "some work",
+        { privacy: "normal", task: "task-a", profile: "inherited" },
+        { ...options, registry: { ...loaded, profiles } },
+      ),
+    ).rejects.toThrow(unknownProfile("inherited"));
+  });
+
+  test("the library ignores the CLI profile variable and leaves profile absent", async () => {
+    await withEnv({ MODEL_ROUTER_PROFILE: "nope" }, async () => {
+      const result = await describeStep(
+        "some work",
+        { privacy: "normal", task: "task-a" },
+        options,
+      );
+      expect(result.query.profile).toBeUndefined();
+      expect(Object.hasOwn(result.query, "profile")).toBe(false);
+    });
+  });
+
+  test.each([
+    [fixturePath("no-router.json"), {}, "registry-sections-invalid"],
+    [REGISTRY, { unknown: true }, "config-invalid"],
+  ] as const)("sections and config precede profile lookup: %s", async (registry, config, code) => {
+    await expect(
+      describeStep(
+        "some work",
+        { privacy: "normal", task: "task-a", profile: "nope" },
+        { registry, config },
+      ),
+    ).rejects.toThrow(errorMatching({ code }));
+  });
+
+  test.each(["query", "variable"])(
+    "CLI rejects unknown describe profile from %s without a key",
+    async (source) => {
+      await withEnv({ TYPESAFE_API_KEY: undefined }, async () => {
+        const query = { privacy: "normal", ...(source === "query" ? { profile: "nope" } : {}) };
+        const results = await runBoth(
+          [
+            JSON.stringify(query),
+            "--registry",
+            REGISTRY,
+            "--describe",
+            fixturePath("profile-work.txt"),
+          ],
+          source === "variable" ? "nope" : undefined,
+        );
+        for (const result of results) {
+          expect.soft(result.exitCode).toBe(2);
+          expect.soft(result.stdout).toBe("");
+          expect.soft(JSON.parse(result.stderr).error).toMatchObject({
+            code: "profile-unknown",
+            field: "profile",
+          });
+        }
+      });
+    },
+  );
+
+  test.each(["query", "variable"])(
+    "in-process CLI rejects unknown describe profile from %s before fetch",
+    async (source) => {
+      await withEnv(
+        {
+          TYPESAFE_API_KEY: "key-a",
+          MODEL_ROUTER_PROFILE: source === "variable" ? "nope" : undefined,
+        },
+        async () => {
+          const fetchSpy = vi.spyOn(globalThis, "fetch");
+          try {
+            const out = captureStream();
+            const err = captureStream();
+            const query = { privacy: "normal", ...(source === "query" ? { profile: "nope" } : {}) };
+            const exitCode = await runCli(
+              [
+                JSON.stringify(query),
+                "--registry",
+                REGISTRY,
+                "--describe",
+                fixturePath("profile-work.txt"),
+              ],
+              { stdout: out.stream, stderr: err.stream },
+            );
+            expect(exitCode).toBe(2);
+            expect(out.text()).toBe("");
+            const envelope = JSON.parse(err.text());
+            expectValidError(envelope);
+            expect(envelope.error.code).toBe("profile-unknown");
+          } finally {
+            try {
+              expect(fetchSpy).not.toHaveBeenCalled();
+            } finally {
+              fetchSpy.mockRestore();
+            }
+          }
+        },
+      );
+    },
+  );
 });
 
 describe("pins and policies stay inside the profile", () => {
