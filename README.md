@@ -57,7 +57,8 @@ Without a profiles section the answer is unchanged from 0.1.0 except for
 contract stays 1 and labels have no profile suffix. An unknown name throws
 `profile-unknown` (exit 2), with a fix listing every profile in loader key order;
 it never falls back to `default`. This check follows registry, router-section,
-query and config validation. `check` and `tasks` do not select a profile.
+query and config validation. On the describe path it also comes before the Jev
+call. `check` and `tasks` do not select a profile.
 
 ```console
 $ model-router '{"task":"task-a","profile":"budget"}' --registry registry.json
@@ -156,9 +157,10 @@ The policy's routes come before the ranked routes, in written order, with `place
 
 1. **Privacy gate.** `privacy` absent is `query-invalid` on the `privacy` field; `privacy: secret` is `describe-private`. No request leaves the machine before this gate passes: hosted Jev never receives text from a secret call.
 2. **Text gate.** A blank description is `query-invalid`.
-3. **Ask Jev.** The task question rides only when the partial query has neither `task` nor `minimums`: one choice over the declared tasks, each task's `description` as its criterion, so a task added to the registry is offered with no package change. One noul question per `router.questions` entry rides always, with the registry's own question text. The state is the work description and nothing else. The model is `describe.jevModel` from `config.json`. When nothing is to ask (the query states `task` or `minimums` and the registry declares no `router.questions`), the step makes no request and reads no key: `model` and `usage` are null and no warning is added.
-4. **Gate the answers.** A task confidence at or above `describe.taskGate` is used; below it the guess is kept with a `task-uncertain` warning whose fix says to pass `task`. A capability answer at or above `describe.capabilityThreshold` adds the capability to `needs`. Capabilities are escalate-only: an answer never removes a capability the caller named.
-5. **Fill.** The returned query carries the caller's fields with the filled `task` and the extended `needs`. Every other field is the caller's. The CLI ranks this query and merges the describe block and the step's warnings into the answer.
+3. **Profile check.** After the registry, router sections and config load and validate, the selected profile must be declared. The library selects `query.profile ?? "default"`; the CLI also reads non-empty `MODEL_ROUTER_PROFILE` when the query has no profile. An unknown name is `profile-unknown`, exit 2, and no request leaves the machine. This check also runs when there is nothing to ask.
+4. **Ask Jev.** The task question rides only when the partial query has neither `task` nor `minimums`: one choice over the declared tasks, each task's `description` as its criterion, so a task added to the registry is offered with no package change. One noul question per `router.questions` entry rides always, with the registry's own question text. The state is the work description and nothing else. The model is `describe.jevModel` from `config.json`. When nothing is to ask (the query states `task` or `minimums` and the registry declares no `router.questions`), the step makes no request and reads no key: `model` and `usage` are null and no warning is added.
+5. **Gate the answers.** A task confidence at or above `describe.taskGate` is used; below it the guess is kept with a `task-uncertain` warning whose fix says to pass `task`. A capability answer at or above `describe.capabilityThreshold` adds the capability to `needs`. Capabilities are escalate-only: an answer never removes a capability the caller named.
+6. **Fill.** The returned query carries the caller's fields with the filled `task` and the extended `needs`. Every other field is the caller's. The CLI ranks this query and merges the describe block and the step's warnings into the answer.
 
 When Jev gives no answer (no key, failed request, unusable answer), the task's necessity decides: the task was needed (the query stated neither `task` nor `minimums`) means `describe-failed`, exit 5, carrying Jev's own code; the task was not needed means the caller's query continues with a `capabilities-unasked` warning carrying the code. The step asks no `stakes` question, no question about secret material, and keeps no local-model fallback. The Jev client's missing-key message names only `TYPESAFE_API_KEY`: no credential tool, no path.
 
