@@ -151,6 +151,8 @@ describe("pure profile coverage", () => {
   test("a recorded gap waives only its own capability and caps only its own rating", async () => {
     await variant(
       (raw) => {
+        delete raw.calibration;
+        raw.models["model-a"].ratings.taste = 7;
         raw.capabilities["capability-b"] = "Another capability.";
         oneTask(raw, ["browser", "capability-b"], { coding: 8, taste: 8 });
       },
@@ -159,6 +161,7 @@ describe("pure profile coverage", () => {
         expect(result.problems).toHaveLength(4);
         expect(result.problems[0]?.field).toBe('$["tasks"]["task-a"]["needs"][1]');
         expect(result.problems[1]?.field).toBe('$["tasks"]["task-a"]["minimums"]["low"]["taste"]');
+        expect(result.problems[1]?.message).toContain("taste 8");
       },
     );
   });
@@ -178,10 +181,15 @@ describe("pure profile coverage", () => {
       },
       (loaded) => {
         const result = coverage(loaded);
-        expect(result.problems).toHaveLength(3);
-        expect(result.problems[0]?.fix).toContain('"accepts":9');
+        expect(result.problems).toHaveLength(2);
+        expect(result.problems[0]?.field).toBe('$["tasks"]["task-a"]["minimums"]["low"]["coding"]');
+        expect(result.problems[0]?.message).toBe(
+          'profile "budget", task "task-a", stakes "low": no route in profile "budget" reaches coding 10 (best 9); the requirements are reachable only through different routes; no single route clears them together.',
+        );
+        expect(result.problems[0]?.fix).toContain('"accepts":7');
+        expect(result.problems[0]?.fix).not.toContain('"accepts":9');
+        expect(result.problems[1]?.field).toBe('$["tasks"]["task-a"]["needs"][0]');
         expect(result.problems[1]?.fix).toContain('"capability":"browser"');
-        expect(result.problems[2]?.fix).toContain('"accepts":7');
       },
     );
   });
@@ -260,6 +268,7 @@ describe("pure profile coverage", () => {
         const result = coverage(loaded);
         expect(result.problems).toHaveLength(4);
         expect(result.problems[1]?.fix).toContain(A);
+        expect(result.problems[1]?.fix).not.toContain("rate a member model");
         expect(result.problems[1]?.fix).not.toContain('"accepts"');
       },
     );
@@ -364,7 +373,7 @@ describe("pure profile coverage", () => {
     );
   });
 
-  test("three-way incompatibility with no one-record repair reports each remaining item", async () => {
+  test("a waived missing capability and ratings reachable only through different routes get candidate ceilings", async () => {
     await variant(
       (raw) => {
         delete raw.calibration;
@@ -401,10 +410,166 @@ describe("pure profile coverage", () => {
     );
   });
 
-  test("no single record can fix disjoint capabilities and ratings", async () => {
+  test.each([8, 10])(
+    "no single record can fix disjoint capabilities and ratings with coding floor %i",
+    async (coding) => {
+      await variant(
+        (raw) => {
+          delete raw.calibration;
+          raw.capabilities["capability-b"] = "Placeholder capability.";
+          raw.models["model-a"].routes[0].capabilities = ["browser", "capability-b"];
+          raw.models["model-b"] = {
+            family: "family-b",
+            ratings: { coding: 9, taste: 9 },
+            routes: [
+              { harness: "harness-x", modelId: "model-b", hosted: false },
+              {
+                harness: "harness-y",
+                provider: "provider-1",
+                modelId: "model-b",
+                hosted: true,
+                capabilities: ["browser", "capability-b"],
+              },
+            ],
+          };
+          raw.profiles.budget.routes = [A, "model-b@harness-x"];
+          raw.profiles.budget.gaps = [];
+          oneTask(raw, ["browser", "capability-b"], { coding, taste: 8 });
+        },
+        (loaded) => {
+          const result = coverage(loaded);
+          expect(result.problems).toHaveLength(4);
+          expect(result.problems.map((problem) => problem.field).sort()).toEqual(
+            [
+              '$["tasks"]["task-a"]["needs"][0]',
+              '$["tasks"]["task-a"]["needs"][1]',
+              '$["tasks"]["task-a"]["minimums"]["low"]["coding"]',
+              '$["tasks"]["task-a"]["minimums"]["low"]["taste"]',
+            ].sort(),
+          );
+          if (coding === 10)
+            expect(result.problems[0]?.message).toBe(
+              'profile "budget", task "task-a", stakes "low": no route in profile "budget" reaches coding 10 (best 9); no single route clears them together and no single record covers it.',
+            );
+          for (const problem of result.problems) {
+            expect(problem.message).toContain("no single record covers it");
+            expect(problem.fix).toBe(
+              `Add a route that clears them together${coding === 8 ? ' ("model-b@harness-y/provider-1")' : ""} to profile "budget", or record more than one ceiling.`,
+            );
+          }
+        },
+      );
+    },
+  );
+  test("a capped rating suggests editing its existing record", async () => {
     await variant(
       (raw) => {
         delete raw.calibration;
+        raw.models["model-a"].ratings.coding = 6;
+      },
+      (loaded) => {
+        const problem = coverage(loaded).problems[0];
+        expect(problem?.message).toContain("floor 8 capped by gap record 1");
+        expect(problem?.message).toContain("best 6");
+        expect(problem?.fix).toContain('Set "accepts" to 6 in gap record 1 of profile "budget"');
+        expect(problem?.fix).not.toContain("Add gap record");
+      },
+    );
+  });
+
+  test("implicit default unrated fixes name the registry instead of a profile", async () => {
+    await variant(
+      (raw) => {
+        delete raw.profiles;
+        delete raw.calibration;
+        raw.models["model-a"].ratings = { taste: 6 };
+      },
+      (loaded) => {
+        const result = coverage(loaded);
+        expect(result.warnings).toHaveLength(6);
+        for (const warning of result.warnings) {
+          expect(warning.fix).toBe(
+            'Rate a model in the registry for "coding", or add a route that fills it.',
+          );
+          expect(warning.fix).not.toContain('to profile "default"');
+        }
+      },
+    );
+  });
+
+  test("duplicate needs count once at their first index", async () => {
+    await variant(
+      (raw) => {
+        raw.profiles.budget.gaps.splice(0, 1);
+        oneTask(raw, ["browser", "browser"], {});
+      },
+      (loaded) => {
+        const result = coverage(loaded);
+        expect(result.problems).toHaveLength(3);
+        expect(
+          result.problems.every((problem) => problem.field === '$["tasks"]["task-a"]["needs"][0]'),
+        ).toBe(true);
+      },
+    );
+  });
+
+  test("independent fixes list only outside routes that satisfy the item", async () => {
+    await variant(
+      (raw) => {
+        delete raw.calibration;
+        raw.models["model-b"] = {
+          family: "family-b",
+          ratings: { coding: 9 },
+          routes: [{ harness: "harness-x", modelId: "model-b", hosted: false }],
+        };
+        raw.profiles.budget.gaps = [];
+        oneTask(raw, ["browser"], {});
+      },
+      (loaded) => {
+        expect(coverage(loaded).problems[0]?.fix).toBe(
+          `Add gap record {"capability":"browser","reason":"<why>"} to profile "budget", or add a filling route ("${A}") to profile "budget".`,
+        );
+      },
+    );
+  });
+
+  test("joint fixes list only outside routes that clear every item", async () => {
+    await variant(
+      (raw) => {
+        delete raw.calibration;
+        raw.models["model-b"] = {
+          family: "family-b",
+          ratings: { coding: 9 },
+          routes: [
+            { harness: "harness-x", modelId: "model-b", hosted: false },
+            {
+              harness: "harness-y",
+              provider: "provider-1",
+              modelId: "model-b",
+              hosted: true,
+              capabilities: ["browser"],
+            },
+          ],
+        };
+        raw.profiles.budget.routes = [A, "model-b@harness-x"];
+        raw.profiles.budget.gaps = [];
+        oneTask(raw, ["browser"], { coding: 8 });
+      },
+      (loaded) => {
+        const result = coverage(loaded);
+        expect(result.problems).toHaveLength(2);
+        for (const problem of result.problems) {
+          expect(problem.fix).toContain('add a filling route ("model-b@harness-y/provider-1")');
+          expect(problem.fix).not.toContain(`"${B}"`);
+        }
+      },
+    );
+  });
+  test("implicit default joint fixes require a registry route or a declared profile", async () => {
+    await variant(
+      (raw) => {
+        delete raw.calibration;
+        delete raw.profiles;
         raw.capabilities["capability-b"] = "Placeholder capability.";
         raw.models["model-a"].routes[0].capabilities = ["browser", "capability-b"];
         raw.models["model-b"] = {
@@ -412,18 +577,46 @@ describe("pure profile coverage", () => {
           ratings: { coding: 9, taste: 9 },
           routes: [{ harness: "harness-x", modelId: "model-b", hosted: false }],
         };
-        raw.profiles.budget.routes = [A, "model-b@harness-x"];
-        raw.profiles.budget.gaps = [];
         oneTask(raw, ["browser", "capability-b"], { coding: 8, taste: 8 });
       },
       (loaded) => {
         const result = coverage(loaded);
-        expect(result.problems).toHaveLength(4);
-        for (const problem of result.problems) {
-          expect(problem.message).toContain("no single record covers it");
-          expect(problem.fix).toContain("record more than one ceiling");
-        }
+        expect(result.warnings).toHaveLength(4);
+        for (const warning of result.warnings)
+          expect(warning.fix).toBe(
+            'Add a route that clears them together to the registry, or declare "default" in profiles and record more than one ceiling.',
+          );
       },
     );
   });
+
+  test.each([false, true])(
+    "itemless tasks with no registry routes report route fixes (implicit %s)",
+    async (implicit) => {
+      await variant(
+        (raw) => {
+          delete raw.calibration;
+          raw.models["model-a"].routes = [];
+          if (implicit) delete raw.profiles;
+          else raw.profiles.budget.routes = [];
+          oneTask(raw, [], {});
+        },
+        (loaded) => {
+          const result = coverage(loaded);
+          const findings = implicit ? result.warnings : result.problems;
+          expect(findings).toHaveLength(3);
+          for (const finding of findings) {
+            expect(finding.field).toBe(
+              `$["profiles"]["${implicit ? "default" : "budget"}"]["routes"]`,
+            );
+            expect(finding.fix).toBe(
+              implicit
+                ? "Add a route to the registry."
+                : 'Add a route to the registry and to profile "budget".',
+            );
+          }
+        },
+      );
+    },
+  );
 });

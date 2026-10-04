@@ -412,7 +412,7 @@ export async function runCli(argv: readonly string[], io: Partial<CliIo> = {}): 
         code: "profile-gap-unrecorded",
         field: '$["profiles"]',
         fix: "Add filling routes or record accepted gaps for each problem, then run model-router check again.",
-        message: `declared profile coverage has ${coverage.problems.length} unrecorded gaps.`,
+        message: `declared profile coverage has ${coverage.problems.length} unrecorded gap${coverage.problems.length === 1 ? "" : "s"}.`,
         problems: coverage.problems,
       });
     }
