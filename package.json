@@ -1,6 +1,6 @@
 {
   "name": "@dungle-scrubs/model-router",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Rank model routes for a structured query against a versioned model registry.",
   "license": "MIT",
   "type": "module",
