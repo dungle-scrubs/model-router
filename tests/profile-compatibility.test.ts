@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import packageJson from "../package.json" with { type: "json" };
 import type { Answer, AvailabilityEntry } from "../src/index.js";
 import { defaultConfig, rank } from "../src/index.js";
 import goldens from "./fixtures/pre-profile-goldens.json" with { type: "json" };
@@ -49,7 +50,14 @@ for (const [index, entry] of cases.entries()) {
       const oldAnswer = entry.answer as Answer;
       const answer = rank(entry.query, options);
       expectValidAnswer(answer);
-      expect(answer).toEqual({ ...oldAnswer, query: { ...oldAnswer.query, profile: "default" } });
+      // The golden answers were recorded by the 0.1.0 release; only the
+      // router's own version moves with each release.
+      expect(answer.routerVersion).toBe(packageJson.version);
+      expect(answer).toEqual({
+        ...oldAnswer,
+        routerVersion: packageJson.version,
+        query: { ...oldAnswer.query, profile: "default" },
+      });
     } else {
       let caught: unknown;
       try {
