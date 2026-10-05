@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/dungle-scrubs/model-router/compare/v0.2.0...v0.2.1) (2026-10-05)
+
+
+### Bug Fixes
+
+* compare the pre-profile goldens against the current router version ([#13](https://github.com/dungle-scrubs/model-router/issues/13)) ([f571b4d](https://github.com/dungle-scrubs/model-router/commit/f571b4d187b255d6fc7fd1764aacd3f208808f43))
+
 ## [0.2.0](https://github.com/dungle-scrubs/model-router/compare/v0.1.0...v0.2.0) (2026-10-04)
 
 
