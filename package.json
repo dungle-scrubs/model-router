@@ -1,7 +1,7 @@
 {
   "name": "@dungle-scrubs/model-router",
   "version": "0.2.1",
-  "description": "Rank model routes for a structured query against a versioned model registry.",
+  "description": "One place for model routing across your agents and applications.",
   "license": "MIT",
   "type": "module",
   "repository": {
