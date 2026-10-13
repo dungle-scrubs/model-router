@@ -69,24 +69,24 @@ function sourceCodes(dir = SRC_DIR): readonly string[] {
   return [...seen].sort();
 }
 
-describe("README problem codes", () => {
+describe("reference problem codes", () => {
   test("documents every problem code the sections module emits", () => {
     const source = readFileSync(join(repoRoot, "src", "sections.ts"), "utf8");
-    const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
+    const readme = readFileSync(join(repoRoot, "docs", "reference.md"), "utf8");
     const emitted = codesInSource(source).filter((code) => /^(router|tasks|policy)-/.test(code));
     expect(emitted.length).toBeGreaterThanOrEqual(10);
     for (const code of emitted) {
-      expect(readme, `${code} is missing from README.md`).toContain(code);
+      expect(readme, `${code} is missing from docs/reference.md`).toContain(code);
     }
   });
 
   test("documents every config code the config module emits", () => {
     const source = readFileSync(join(repoRoot, "src", "config.ts"), "utf8");
-    const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
+    const readme = readFileSync(join(repoRoot, "docs", "reference.md"), "utf8");
     const emitted = codesInSource(source).filter((code) => code.startsWith("config-"));
     expect(emitted.length).toBeGreaterThanOrEqual(5);
     for (const code of emitted) {
-      expect(readme, `${code} is missing from README.md`).toContain(code);
+      expect(readme, `${code} is missing from docs/reference.md`).toContain(code);
     }
   });
 
@@ -121,15 +121,15 @@ describe("README problem codes", () => {
   });
 
   test("documents every code emitted across src recursively", () => {
-    const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
+    const readme = readFileSync(join(repoRoot, "docs", "reference.md"), "utf8");
     const emitted = sourceCodes();
     expect(emitted.length).toBeGreaterThanOrEqual(20);
     for (const code of emitted) {
-      expect(readme, `${code} is missing from README.md`).toContain(code);
+      expect(readme, `${code} is missing from docs/reference.md`).toContain(code);
       if (code.startsWith("meter-")) {
         expect(
           readme.split("\n").some((line) => line.startsWith(`| \`${code}\` |`)),
-          `${code} is missing its README row`,
+          `${code} is missing its docs/reference.md row`,
         ).toBe(true);
       }
     }
@@ -137,42 +137,42 @@ describe("README problem codes", () => {
 
   test("documents every RouterError code the types union allows", () => {
     const source = readFileSync(join(repoRoot, "src", "types.ts"), "utf8");
-    const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
+    const readme = readFileSync(join(repoRoot, "docs", "reference.md"), "utf8");
     const emitted = typeCodesInSource(source, "RouterErrorCode");
     expect(emitted.length).toBeGreaterThanOrEqual(3);
     for (const code of emitted) {
-      expect(readme, `${code} is missing from README.md`).toContain(code);
+      expect(readme, `${code} is missing from docs/reference.md`).toContain(code);
     }
   });
 
   test("documents every warning and error code the describe module emits", () => {
     const source = readFileSync(join(repoRoot, "src", "describe.ts"), "utf8");
-    const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
+    const readme = readFileSync(join(repoRoot, "docs", "reference.md"), "utf8");
     const emitted = codesInSource(source);
     expect(emitted.length).toBeGreaterThanOrEqual(2);
     for (const code of emitted) {
-      expect(readme, `${code} is missing from README.md`).toContain(code);
+      expect(readme, `${code} is missing from docs/reference.md`).toContain(code);
     }
   });
 
   test("documents every JevError code the Jev client defines", () => {
     const source = readFileSync(join(repoRoot, "src", "jev.ts"), "utf8");
-    const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
+    const readme = readFileSync(join(repoRoot, "docs", "reference.md"), "utf8");
     const emitted = typeCodesInSource(source, "JevErrorCode");
     expect(emitted.length).toBeGreaterThanOrEqual(5);
     for (const code of emitted) {
-      expect(readme, `${code} is missing from README.md`).toContain(code);
+      expect(readme, `${code} is missing from docs/reference.md`).toContain(code);
     }
   });
 
   test("states shipped features and policy-route placement accurately", () => {
-    const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
+    const readme = readFileSync(join(repoRoot, "docs", "reference.md"), "utf8");
     expect(readme).not.toMatch(/Inline `minimums`[^.]*arrive in later issues/);
     expect(readme).toContain("The policy's routes come before the ranked routes");
   });
 
   test("every table's delimiter row has as many cells as its header", () => {
-    const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
+    const readme = readFileSync(join(repoRoot, "docs", "reference.md"), "utf8");
     const lines = readme.split("\n");
     const cellCount = (row: string): number => (row.match(/\|/g) ?? []).length;
     for (let index = 0; index < lines.length; index++) {
@@ -196,7 +196,7 @@ describe("README problem codes", () => {
 
 describe("availability documentation", () => {
   test("describes the CLI merge and every config key and invalid-entry cause", () => {
-    const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
+    const readme = readFileSync(join(repoRoot, "docs", "reference.md"), "utf8");
     expect(readme).toContain(
       "`describe: null` (the describe block arrives only through the describe step, which the CLI merges)",
     );
