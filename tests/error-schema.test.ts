@@ -98,6 +98,7 @@ describe("error.schema.json", () => {
       "reference-unknown": true,
       "registry-invalid": true,
       "registry-missing": true,
+      "t3-input-invalid": true,
       "registry-sections-invalid": true,
       "registry-unreadable": true,
     } satisfies Record<RouterErrorCode | RegistryErrorCode | "internal-error", true>;

@@ -119,9 +119,10 @@ When Jev gave no answer and the task was needed (the query stated neither `task`
 | `prefer` | `cost`, `speed` | `cost` | how clearing routes are ordered |
 | `privacy` | `normal`, `secret` | `normal` | `secret` keeps only `privacyEligible` routes |
 | `excludeFamilies` | list of strings | `[]` | families removed as a hard limit |
+| `harnesses` | non-empty list of strings | none (every harness) | the harnesses the caller can run; a route on any other harness is removed as a hard limit. The applied query omits the field when the query does |
 | `spec` | `open`, `settled` | `open` | `settled` matches a policy whose `spec` is `settled` (or unset); an unset policy `spec` matches any query, and a policy's `spec` accepts only `settled`. A query that states `spec` and matches no policy warns `policy-none`; a query without `spec` stays silent |
 
-A query must carry `task` or `minimums` (a `pin` alone is invalid), and input is strict: a field the contract does not define is `query-invalid`. Except for an unknown profile (`profile-unknown`), a check against registry content is a warning, never a failure: a minimum naming an undeclared rating makes every route count as below that floor, a need naming an undeclared capability removes every route lacking it, and an unknown family excludes nothing.
+A query must carry `task` or `minimums` (a `pin` alone is invalid), and input is strict: a field the contract does not define is `query-invalid`. Except for an unknown profile (`profile-unknown`), a check against registry content is a warning, never a failure: a minimum naming an undeclared rating makes every route count as below that floor, a need naming an undeclared capability removes every route lacking it, an unknown family excludes nothing, and a harness no route uses allows nothing.
 
 ### Resolving the task
 
@@ -207,7 +208,7 @@ The describe block in the answer: `model` (what answered, `null` when Jev failed
 2. Load `config.json` (or fall through to the documented defaults). An explicit path that does not exist or an invalid file is `config-invalid`.
 3. Validate the query, resolve the profile and restrict membership before hard limits. An unknown profile fails `profile-unknown`; non-members are not candidates and produce no removal records.
 4. Resolve the task. Apply inline `minimums` over the task's floor at the query's stakes. Apply inline `needs` over the task's needs. The task's effort and the query's effort feed step 7.
-5. Apply the hard limits in order: `privacy: secret` (routes without `privacyEligible: true`), `excludeFamilies`, `needs`. A removed route lands in `removed` with one reason. After the hard limits, a query that hits an accepted gap of the selected profile gets one `profile-gap-accepted` warning per record; floors, needs and removals do not change.
+5. Apply the hard limits in order: `privacy: secret` (routes without `privacyEligible: true`), `excludeFamilies`, `harnesses`, `needs`. A removed route lands in `removed` with one reason. After the hard limits, a query that hits an accepted gap of the selected profile gets one `profile-gap-accepted` warning per record; floors, needs and removals do not change.
 6. Place the pin. A used pin goes first with `placedBy: "pin"` and `floor: "skipped"`. A non-surviving pin keeps the fallback ranking with `pin.used: false` and a reason in `pin.reason`.
 7. Place the policy routes. A route that a hard limit removed stays in `removed` with its hard-limit reason, and a `policy-route-removed` warning names the policy. No route appears twice.
 8. Sort the rest. Clearing routes order by cost (higher rating, so cheaper, first), then the rank in force (the task's `rank` or `router.rank` when no task resolves), then the model's route order, then file order; with `prefer: speed`, response time comes first. Routes below a floor order by the rank in force, then cost, then route order, then file order. `minimums: {}` states no floor explicitly: every route clears and orders by that clearing order. A query naming a task the registry does not declare, with no floor, orders every route most capable first, never cheapest first; with `minimums` floors, it uses the orders above. A missing value sorts below every route that has it.
@@ -229,6 +230,7 @@ The RFC names the error codes and the profile-specific warning and pin reason co
 | `rating-unknown` | warnings | a minimum names a rating the registry does not declare |
 | `capability-unknown` | warnings | a need names a capability the registry does not declare |
 | `family-unknown` | warnings | an excluded family is not in the registry |
+| `harness-unknown` | warnings | a listed harness reaches no route in the registry |
 | `effort-off-ladder` | warnings | the query's `effort` is not on the ladder; the actual fallback source (task effort or `effort.default`) applies |
 | `effort-fixed-lowering` | warnings | the requested level was lowered by the model's `fixedEffort` |
 | `effort-above-max` | warnings | the requested level was lowered by the model's `maxEffort` |
@@ -251,6 +253,7 @@ The RFC names the error codes and the profile-specific warning and pin reason co
 | `capabilities-unasked` | warnings | Jev gave no answer when the task was not needed; the fix says to add any needed capability to `needs` |
 | `privacy-secret-not-eligible` | removed reasons | the route is not `privacyEligible` under `privacy: secret` |
 | `family-excluded-by-query` | removed reasons | the route's family is in `excludeFamilies` |
+| `harness-not-allowed-by-query` | removed reasons | the query lists `harnesses` and the route's harness is not among them |
 | `needs-not-satisfied` | removed reasons | the route lacks a needed capability |
 | `floor-not-met` | route reasons | the model's rating is below a floor, or absent |
 | `meter-exhausted` | removed reasons | the route's meter was `exhausted`; the route is removed |
@@ -435,3 +438,49 @@ const result = applyAvailability(answer.routes, reading.entries, {
 ```
 
 `rank` and `listTasks` are synchronous and pure over their inputs. `describe` awaits one Jev call. They throw `RouterError` (`query-invalid`, exit 2; `profile-unknown`, exit 2; `describe-private`, exit 2; `registry-sections-invalid`, exit 4; `config-invalid`, exit 4; `describe-failed`, exit 5) and rethrow model-registry's `RegistryError` unchanged. `applyAvailability` and `dropExpired` are pure over `(routes, entries)` and `(entries, now)`: the same inputs give the same outputs. The loader and the label builder are not re-exported; import them from `@dungle-scrubs/model-registry`. The package ships `query.schema.json`, `answer.schema.json`, `availability.schema.json`, `error.schema.json`, `config.schema.json` and `router-sections.schema.json`: the query schema rejects undefined fields, the answer schema allows them, the availability schema validates the document a user converter writes, the error schema describes the `{"error": ...}` envelope the CLI prints on stderr, the config schema validates `config.json`, and the router-sections schema describes the `router`, `tasks` and `policy` sections of a registry file.
+
+## T3 Code targets
+
+`@dungle-scrubs/model-router/t3` and the `model-router-t3` command translate an answer into the `target` argument of T3 Code's `delegate_task` tool. The ranking never imports this module. The translation reads an answer's routes and one or more results of T3's `orchestrator_capabilities` tool, and gives each route, in the answer's order, one of three outcomes:
+
+| `status` | Fields | Meaning |
+|---|---|---|
+| `ready` | `target`, `notes` | pass `target` to `delegate_task` as it is |
+| `lookup` | `providerInstanceId`, `search` | T3 did not list the model; call `orchestrator_capabilities` with `search`, then translate again with the result added and the model named as searched |
+| `unavailable` | `reason` | T3 cannot run the route |
+
+The translation rules:
+
+- The harness names the provider instance: `claude` is `claudeAgent`, and every other harness keeps its name.
+- The model is the route's `modelId`. A `pi` route with a `provider` is `provider/modelId`.
+- The effort goes under the first of `effort`, `reasoningEffort`, `reasoning_effort` and `thinking`, in that order, whose option offers effort levels. A boolean option of the same name, such as Cursor's `thinking` switch, is skipped. When T3 does not offer the requested level for that model, the nearest offered level below it is used, so a route never runs above the effort the registry set; only a model that offers nothing lower gets the nearest level above. Either way the route carries a note. Levels off the registry's ladder, such as T3's `minimal` or `ultra`, are never chosen.
+- `target.options` is always an object. A route without effort gets `{}`, which clears the options a child would otherwise inherit.
+- A later capabilities document adds models and replaces a model listed twice; a provider flag it leaves out, such as `canRunChildTask`, keeps the earlier value. A search result lists only the matching models and does not say what was searched, so a missing model counts as not offered only once the caller names it in `searched` (`--searched` on the command).
+
+```console
+$ model-router '{"task":"implement","harnesses":["claude","codex","pi"]}' | model-router-t3 --capabilities caps.json
+$ model-router '{"task":"implement"}' | model-router-t3 --capabilities caps.json --capabilities kimi.json --searched opencode-go/kimi-k3
+```
+
+```ts
+import { toT3Targets } from "@dungle-scrubs/model-router/t3";
+
+const { routes } = toT3Targets(answer, [capabilities], { searched: [] });
+```
+
+| Exit | Meaning |
+|---|---|
+| 0 | at least one route is `ready` or `lookup` |
+| 2 | invalid input or flag (`t3-input-invalid`); an invalid JSON file is named in the message |
+| 3 | no route T3 can run; the translation is still printed |
+| 1 | an internal fault (`internal-error`) |
+
+| Code | Where | Cause |
+|---|---|---|
+| `t3-input-invalid` | error | the answer is not a contract 1 answer, a capabilities document has no `providers` list, or a flag or file is wrong |
+| `t3-effort-lowered` | ready notes | T3 does not offer the requested effort for the model; the nearest level below is used |
+| `t3-effort-raised` | ready notes | T3 offers the model no level at or below the requested one; the nearest level above is used |
+| `t3-effort-unsupported` | ready notes | the model has no effort option offering ladder levels, or the requested effort is not on the registry's ladder; the target carries no effort |
+| `t3-provider-absent` | unavailable reason | T3 has no provider instance for the route's harness |
+| `t3-provider-unavailable` | unavailable reason | the provider instance cannot run child tasks, usually because it is disabled; T3's constraints are in the message |
+| `t3-model-not-offered` | unavailable reason | the model was searched for and T3 does not offer it |

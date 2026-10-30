@@ -23,16 +23,27 @@ const common = {
 };
 
 await Promise.all([
+  // The library entries build together so they share one copy of each
+  // module: an error thrown from ./t3 is the same RouterError class the
+  // package entry exports.
   build({
     ...common,
-    entryPoints: [join(rootDir, "src/index.ts")],
-    outfile: join(rootDir, "dist/index.js"),
+    entryPoints: [join(rootDir, "src/index.ts"), join(rootDir, "src/t3.ts")],
+    outdir: join(rootDir, "dist"),
+    splitting: true,
+    chunkNames: "chunks/[name]-[hash]",
   }),
   build({
     ...common,
     entryPoints: [join(rootDir, "src/cli.ts")],
     outfile: join(rootDir, "dist/cli.js"),
   }),
+  build({
+    ...common,
+    entryPoints: [join(rootDir, "src/t3-cli.ts")],
+    outfile: join(rootDir, "dist/t3-cli.js"),
+  }),
 ]);
 
 chmodSync(join(rootDir, "dist/cli.js"), 0o755);
+chmodSync(join(rootDir, "dist/t3-cli.js"), 0o755);

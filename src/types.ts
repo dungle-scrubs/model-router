@@ -25,6 +25,7 @@ export type AvailabilityEntryStatus = "ok" | "projected" | "exhausted";
 export interface Query {
   readonly excludeFamilies?: readonly string[];
   readonly effort?: string;
+  readonly harnesses?: readonly string[];
   readonly minimums?: Readonly<Record<string, number>>;
   readonly needs?: readonly string[];
   readonly pin?: string;
@@ -36,10 +37,13 @@ export interface Query {
   readonly task?: string;
 }
 
-/** The query as the answer reports it: defaults applied, fields deduplicated. */
+/** The query as the answer reports it: defaults applied, fields deduplicated.
+ * `harnesses` stays absent when the query omits it: absent allows every
+ * harness, which no list can state. */
 export interface AppliedQuery {
   readonly excludeFamilies: readonly string[];
   readonly effort?: string;
+  readonly harnesses?: readonly string[];
   readonly minimums: Readonly<Record<string, number>>;
   readonly needs: readonly string[];
   readonly pin?: string;
@@ -147,7 +151,8 @@ export type RouterErrorCode =
   | "registry-sections-invalid"
   | "config-invalid"
   | "describe-private"
-  | "describe-failed";
+  | "describe-failed"
+  | "t3-input-invalid";
 
 export interface RouterProblem {
   readonly code: string;
