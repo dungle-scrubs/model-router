@@ -20,6 +20,7 @@
             "config-invalid",
             "describe-private",
             "describe-failed",
+            "t3-input-invalid",
             "registry-missing",
             "registry-unreadable",
             "format-missing",
@@ -98,7 +99,8 @@
                   "registry-sections-invalid",
                   "config-invalid",
                   "describe-private",
-                  "describe-failed"
+                  "describe-failed",
+                  "t3-input-invalid"
                 ]
               }
             },

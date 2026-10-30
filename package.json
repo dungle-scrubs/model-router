@@ -13,12 +13,17 @@
     "node": ">=22.14.0"
   },
   "bin": {
-    "model-router": "./dist/cli.js"
+    "model-router": "./dist/cli.js",
+    "model-router-t3": "./dist/t3-cli.js"
   },
   "exports": {
     ".": {
       "types": "./dist/types/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./t3": {
+      "types": "./dist/types/t3.d.ts",
+      "import": "./dist/t3.js"
     },
     "./query.schema.json": "./query.schema.json",
     "./answer.schema.json": "./answer.schema.json",

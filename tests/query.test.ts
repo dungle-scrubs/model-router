@@ -110,7 +110,7 @@ describe("parseQuery rejects invalid input with query-invalid", () => {
     expect(envelopeOf(() => parseQuery({ minimums: {}, tasl: "implement" }))).toEqual({
       code: "query-invalid",
       field: "tasl",
-      fix: 'Remove "tasl", or correct its name; the query accepts profile, task, minimums, needs, effort, pin, stakes, prefer, privacy, excludeFamilies and spec.',
+      fix: 'Remove "tasl", or correct its name; the query accepts profile, task, minimums, needs, effort, pin, stakes, prefer, privacy, excludeFamilies, harnesses and spec.',
       message: 'the field "tasl" is not defined by the query contract',
       problems: [],
     });
@@ -215,6 +215,17 @@ describe("applyQueryDefaults", () => {
       stakes: "normal",
       task: "implement",
     });
+  });
+
+  test("deduplicates harnesses, keeping first order, and omits it when absent", () => {
+    expect(
+      applyQueryDefaults({ harnesses: ["pi", "claude", "pi"], minimums: {} }).harnesses,
+    ).toEqual(["pi", "claude"]);
+    expect(applyQueryDefaults({ minimums: {} })).not.toHaveProperty("harnesses");
+  });
+
+  test("an empty harnesses list is invalid", () => {
+    expect(envelopeOf(() => parseQuery({ minimums: {}, harnesses: [] })).field).toBe("harnesses");
   });
 
   test("deduplicates needs and excludeFamilies, keeping first order", () => {

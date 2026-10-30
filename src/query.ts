@@ -166,6 +166,7 @@ export function applyQueryDefaults(query: Query): AppliedQuery {
   const applied: {
     excludeFamilies: readonly string[];
     effort?: string;
+    harnesses?: readonly string[];
     minimums: Readonly<Record<string, number>>;
     needs: readonly string[];
     pin?: string;
@@ -186,6 +187,7 @@ export function applyQueryDefaults(query: Query): AppliedQuery {
     stakes: query.stakes ?? "normal",
   };
   if (query.effort !== undefined) applied.effort = query.effort;
+  if (query.harnesses !== undefined) applied.harnesses = dedupe(query.harnesses);
   if (query.pin !== undefined) applied.pin = query.pin;
   if (query.task !== undefined) applied.task = query.task;
   return applied;

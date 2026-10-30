@@ -140,12 +140,12 @@ task ──▶ model-router ──▶ routes, best first ──▶ hcn run <harn
        model-registry
 ```
 
-Together, the three packages route each job to a model and harness automatically, following your preferences. [model-registry](https://github.com/dungle-scrubs/model-registry) defines the registry file: the models you can use, the harnesses that reach them, and ratings for each. model-router reads the registry, takes a task, and returns routes ranked best first. Each route is a harness, a model, and an effort. [hcn](https://github.com/dungle-scrubs/harness-cli-normalizer) runs the route. If the run fails with `retryable: true`, run the next route. [popeye](https://github.com/dungle-scrubs/popeye) is a harness built for hcn to drive, and a registry can list routes through it like any other harness. Each package also works on its own. hcn runs any harness and model you give it, and model-router ranks routes without running anything.
+Together, the three packages route each job to a model and harness automatically, following your preferences. [model-registry](https://github.com/dungle-scrubs/model-registry) defines the registry file: the models you can use, the harnesses that reach them, and ratings for each. model-router reads the registry, takes a task, and returns routes ranked best first. Each route is a harness, a model, and an effort. [hcn](https://github.com/dungle-scrubs/harness-cli-normalizer) runs the route. If the run fails with `retryable: true`, run the next route. [popeye](https://github.com/dungle-scrubs/popeye) is a harness built for hcn to drive, and a registry can list routes through it like any other harness. Each package also works on its own. hcn runs any harness and model you give it, and model-router ranks routes without running anything. Inside T3 Code, an agent hands routes to T3's `delegate_task` instead of hcn: `model-router-t3`, or `toT3Targets` from `@dungle-scrubs/model-router/t3`, turns each route into a target T3 accepts, as [T3 Code targets](docs/reference.md#t3-code-targets) describes.
 
 ### How routes are ranked
 
 1. Only the selected profile's routes are candidates.
-2. Hard limits remove routes: `privacy: "secret"` keeps only privacy-eligible routes, `excludeFamilies` removes those families, and `needs` removes routes that lack a capability. Each removed route lands in `removed` with its reason.
+2. Hard limits remove routes: `privacy: "secret"` keeps only privacy-eligible routes, `excludeFamilies` removes those families, `harnesses` keeps only the harnesses you can run, and `needs` removes routes that lack a capability. Each removed route lands in `removed` with its reason.
 3. A `pin` in the query goes first if it survived. Then come the routes of a matching policy: your own fixed order for a task and stakes, such as "plan on Opus, then GPT".
 4. The remaining routes that meet every floor follow, cheapest first. With `prefer: "speed"`, the fastest come first instead. Routes below a floor come last.
 5. Each route gets an effort: the policy's, else the query's, else the task's, else `effort.default`. The model's fixed or maximum effort and `effort.ceiling` can lower it, with a warning.
@@ -163,6 +163,7 @@ model-router -                                read the query from stdin
 model-router --describe <file> '<query>'      fill task and needs from a work description, then rank
 model-router tasks [--registry <path>]        list the registry's tasks
 model-router check [--registry <path>] [--config <path>]   validate registry, config and profile coverage
+model-router-t3 --capabilities <file> ... [--searched <model> ...]  turn an answer on stdin into T3 Code delegate_task targets
 ```
 
 The answer is one JSON line on stdout, also when no route survives. It carries `contract` (1), `routerVersion`, `registryDigest`, the `query` as applied, `pin`, `routes`, `removed`, `warnings`, `availabilityNote` and `describe`. Each route carries `label`, `model`, `harness`, `modelId`, `provider`, `effort`, `hosted`, `family`, `meter`, `placedBy`, `policy`, `floor`, `availability` and `reasons`. An error is one JSON line on stderr: `{"error":{"code","message","fix","field","problems"}}`.
@@ -176,6 +177,7 @@ The answer is one JSON line on stdout, also when no route survives. It carries `
 | `stakes` | `low`, `normal`, `high` | `normal` | picks which of the task's floors apply |
 | `privacy` | `normal`, `secret` | `normal` | `secret` keeps only `privacyEligible` routes |
 | `excludeFamilies` | list of families | `[]` | removes routes in those model families |
+| `harnesses` | list of harnesses | every harness | keeps only routes on these harnesses |
 | `needs` | list of capabilities | `[]` | removes routes that lack one; adds to the task's needs |
 | `prefer` | `cost`, `speed` | `cost` | orders the routes that meet the floors |
 | `effort` | an effort level | the task's, then `effort.default` | the requested level; model limits and `effort.ceiling` can lower it |

@@ -23,6 +23,7 @@ import { validateRouterSections } from "./sections.js";
 import type {
   Answer,
   AnswerRoute,
+  AppliedQuery,
   AvailabilityEntry,
   AvailabilityValue,
   Coded,
@@ -48,6 +49,12 @@ const REMOVAL_FAMILY: Coded = {
   code: "family-excluded-by-query",
   fix: "Remove the family from excludeFamilies, or change the route's family.",
   message: "the route's family is in the query's excludeFamilies",
+};
+
+const REMOVAL_HARNESS: Coded = {
+  code: "harness-not-allowed-by-query",
+  fix: "Add the harness to harnesses, or omit harnesses to allow every harness.",
+  message: "the route's harness is not in the query's harnesses",
 };
 
 const REMOVAL_NEEDS: Coded = {
@@ -135,15 +142,17 @@ export function resolveConfig(
 function rejectByHardLimit(
   route: Route,
   family: string,
-  privacy: Query["privacy"],
-  excludeFamilies: readonly string[],
+  applied: AppliedQuery,
   needs: readonly string[],
 ): Coded | null {
-  if (privacy === "secret" && route.privacyEligible !== true) {
+  if (applied.privacy === "secret" && route.privacyEligible !== true) {
     return REMOVAL_PRIVACY;
   }
-  if (excludeFamilies.includes(family)) {
+  if (applied.excludeFamilies.includes(family)) {
     return removalReason(REMOVAL_FAMILY, `$.excludeFamilies[${JSON.stringify(family)}]`);
+  }
+  if (applied.harnesses !== undefined && !applied.harnesses.includes(route.harness)) {
+    return removalReason(REMOVAL_HARNESS, `$.harnesses[${JSON.stringify(route.harness)}]`);
   }
   const needsCapabilities = new Set(route.capabilities ?? []);
   const missing = needs.filter((capability) => !needsCapabilities.has(capability));
@@ -577,10 +586,7 @@ function acceptedGapWarnings(
   const labels = new Set(profile.routes);
   const eligible = Object.entries(loaded.routes).filter(([label, route]) => {
     const family = loaded.registry.models[route.model]?.family ?? "";
-    return (
-      labels.has(label) &&
-      rejectByHardLimit(route, family, applied.privacy, applied.excludeFamilies, []) === null
-    );
+    return labels.has(label) && rejectByHardLimit(route, family, applied, []) === null;
   });
   const warnings: Coded[] = [];
   for (const [index, gap] of gaps.entries()) {
@@ -725,6 +731,20 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
     }
   }
 
+  const knownHarnesses = new Set(
+    Object.values(loaded.registry.models).flatMap((model) => model.routes.map((r) => r.harness)),
+  );
+  for (const harness of applied.harnesses ?? []) {
+    if (!knownHarnesses.has(harness)) {
+      warnings.push({
+        code: "harness-unknown",
+        field: `$.harnesses[${JSON.stringify(harness)}]`,
+        message: `the harness "${harness}" reaches no route in the registry; it allows nothing`,
+        fix: "Name a harness the registry's routes use, or remove it from harnesses.",
+      });
+    }
+  }
+
   const policyMatch = matchPolicy(sections, applied);
   // The warning fires only when the caller stated a spec: an unstated spec
   // defaults to open without asking for a policy, so it stays silent.
@@ -755,13 +775,7 @@ export function rank(query: unknown, options: RankOptions = {}): Answer {
     for (const [routeIndex, route] of model.routes.entries()) {
       const label = buildRouteLabel(modelKey, route);
       if (!members.has(label)) continue;
-      const rejection = rejectByHardLimit(
-        route,
-        model.family,
-        applied.privacy,
-        applied.excludeFamilies,
-        effectiveNeeds,
-      );
+      const rejection = rejectByHardLimit(route, model.family, applied, effectiveNeeds);
       if (rejection !== null) {
         removed.push({ label, reason: rejection });
         continue;

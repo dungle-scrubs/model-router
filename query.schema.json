@@ -57,6 +57,14 @@
         "type": "string"
       }
     },
+    "harnesses": {
+      "type": "array",
+      "description": "The harnesses the caller can run. A route on any other harness is removed as a hard limit. Absent means every harness.",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
     "spec": {
       "type": "string",
       "description": "Settled triggers the matching policy when one exists.",

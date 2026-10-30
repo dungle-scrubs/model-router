@@ -504,6 +504,71 @@ describe("rank hard limits", () => {
     );
   });
 
+  test("harnesses removes every route on a harness the query does not list", () => {
+    const loaded = full();
+    const answer = rank(
+      { minimums: { coding: 5 }, harnesses: ["harness-x", "harness-w"] },
+      { registry: loaded },
+    );
+    expectValidAnswer(answer);
+    expect(answer.query.harnesses).toEqual(["harness-x", "harness-w"]);
+    const unrestricted = labels(rank({ minimums: { coding: 5 } }, { registry: loaded }));
+    expect(labels(answer)).toEqual(unrestricted.filter((label) => /@harness-[xw]$/.test(label)));
+    expect(answer.removed).toEqual([
+      {
+        label: "model-a@harness-y/provider-1",
+        reason: {
+          code: "harness-not-allowed-by-query",
+          field: '$.harnesses["harness-y"]',
+          fix: "Add the harness to harnesses, or omit harnesses to allow every harness.",
+          message: "the route's harness is not in the query's harnesses",
+        },
+      },
+      {
+        label: "model-d@harness-z",
+        reason: {
+          code: "harness-not-allowed-by-query",
+          field: '$.harnesses["harness-z"]',
+          fix: "Add the harness to harnesses, or omit harnesses to allow every harness.",
+          message: "the route's harness is not in the query's harnesses",
+        },
+      },
+    ]);
+  });
+
+  test("an absent harnesses allows every harness and stays absent in the answer", () => {
+    const answer = rank({ minimums: { coding: 5 } }, { registry: full() });
+    expect(answer.query).not.toHaveProperty("harnesses");
+    expect(answer.routes).toHaveLength(6);
+  });
+
+  test("an unknown harness allows nothing, with a warning", () => {
+    const answer = rank(
+      { minimums: { coding: 5 }, harnesses: ["harness-x", "harness-q"] },
+      { registry: full() },
+    );
+    expectValidAnswer(answer);
+    expect([...labels(answer)].sort()).toEqual([
+      "model-a@harness-x",
+      "model-b@harness-x",
+      "model-c@harness-x",
+    ]);
+    expect(answer.warnings.map((warning) => warning.code)).toEqual(["harness-unknown"]);
+    expect(answer.warnings[0]?.message).toBe(
+      'the harness "harness-q" reaches no route in the registry; it allows nothing',
+    );
+  });
+
+  test("a pin on a harness the query does not list is unused", () => {
+    const answer = rank(
+      { minimums: { coding: 5 }, harnesses: ["harness-x"], pin: "model-e@harness-w" },
+      { registry: full() },
+    );
+    expect(answer.pin?.used).toBe(false);
+    expect(answer.pin?.reason).toBe("harness-not-allowed-by-query");
+    expect(labels(answer)).not.toContain("model-e@harness-w");
+  });
+
   test("needs removes every route that lacks a needed capability", () => {
     const loaded = full();
     const answer = rank({ minimums: { coding: 5 }, needs: ["repo-access"] }, { registry: loaded });

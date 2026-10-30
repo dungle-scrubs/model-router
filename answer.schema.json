@@ -32,6 +32,7 @@
         "prefer": { "enum": ["cost", "speed"] },
         "privacy": { "enum": ["normal", "secret"] },
         "excludeFamilies": { "type": "array", "items": { "type": "string" } },
+        "harnesses": { "type": "array", "items": { "type": "string" } },
         "spec": { "enum": ["open", "settled"] }
       },
       "required": ["minimums", "needs", "prefer", "privacy", "spec", "stakes", "excludeFamilies"],
