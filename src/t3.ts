@@ -239,7 +239,8 @@ export function parseT3Capabilities(documents: readonly unknown[]): T3Capabiliti
 
 /** The T3 model id for a route: pi names a provider's model `provider/modelId`. */
 function t3ModelId(route: T3RouteInput): string {
-  if (route.harness === "pi" && route.provider !== undefined) {
+  // An empty provider names none, as in the route label.
+  if (route.harness === "pi" && route.provider !== undefined && route.provider !== "") {
     return `${route.provider}/${route.modelId}`;
   }
   return route.modelId;

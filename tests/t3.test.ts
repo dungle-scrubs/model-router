@@ -363,6 +363,30 @@ describe("toT3Targets", () => {
     });
   });
 
+  test("a provider no document says can run child tasks cannot", () => {
+    const silent = {
+      providers: [{ providerInstanceId: "codex", models: [{ id: "gpt-6.1-sol", options: [] }] }],
+    };
+    const [route] = toT3Targets(
+      answer([{ label: "sol@codex", harness: "codex", modelId: "gpt-6.1-sol" }]),
+      [silent],
+    ).routes;
+    expect(route).toMatchObject({
+      status: "unavailable",
+      reason: { code: "t3-provider-unavailable" },
+    });
+  });
+
+  test("an empty provider on a pi route names no provider in the model id", () => {
+    const [route] = toT3Targets(
+      answer([
+        { label: "glm@pi", harness: "pi", provider: "", modelId: "zai/glm-5.3", effort: "high" },
+      ]),
+      [CAPABILITIES],
+    ).routes;
+    expect(route).toMatchObject({ status: "ready", target: { model: "zai/glm-5.3" } });
+  });
+
   test("keeps the answer's route order", () => {
     const routes = toT3Targets(
       answer([
