@@ -1,5 +1,6 @@
 import type { EffortLevel, LoadedRegistry, RegistryDigest } from "@dungle-scrubs/model-registry";
 import type { RouterConfig } from "./config.js";
+import type { JevImage } from "./jev-image.js";
 
 export type { EffortLevel } from "@dungle-scrubs/model-registry";
 export type { LoadedConfig, RouterConfig } from "./config.js";
@@ -278,9 +279,13 @@ export interface RouterSections {
 }
 
 /** Options the describe entry point accepts: the same registry and config
- * forms rank accepts. */
+ * forms rank accepts, and images that show the work. */
 export interface DescribeOptions {
   readonly config?: string | RouterConfigInput;
+  /** Images sent with the description, such as a screenshot of the bug.
+   * With any, the state becomes `{ description, images }`; with none it is
+   * the description text, as before. */
+  readonly images?: readonly JevImage[];
   readonly registry?: string | LoadedRegistry;
 }
 

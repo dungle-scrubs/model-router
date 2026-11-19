@@ -381,6 +381,20 @@ describe("JevImage checks", () => {
       JPEG.subarray(0, JPEG.length - 2),
       "cut off before its end marker",
     ],
+    [
+      "a PNG whose only image data chunk is empty",
+      Buffer.concat([
+        PNG.subarray(0, 33),
+        Buffer.from([0, 0, 0, 0, 0x49, 0x44, 0x41, 0x54, 0x35, 0xaf, 0x06, 0x1e]),
+        PNG.subarray(-12),
+      ]),
+      "no image data",
+    ],
+    [
+      "a JPEG whose scan header runs straight into its end marker",
+      Buffer.concat([JPEG.subarray(0, JPEG.length - 7), Buffer.from([0xff, 0xd9])]),
+      "no scan data",
+    ],
   ])("%s is IMAGE_FORMAT", (_name, bytes, reason) => {
     const error = thrown(() => JevImage.fromBytes(bytes));
     expect(error.code).toBe("IMAGE_FORMAT");

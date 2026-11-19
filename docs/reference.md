@@ -19,6 +19,9 @@ $ model-router check --registry registry.json
 
 $ model-router --describe work.txt --registry registry.json '{"privacy":"normal"}'
 {"availabilityNote":null,"contract":1,"describe":{...},"query":{"task":"task-a",...},"routes":[...]}
+
+$ model-router --describe work.txt --describe-image screenshot.png --registry registry.json '{"privacy":"normal"}'
+{"availabilityNote":null,"contract":1,"describe":{...},"query":{"task":"task-a",...},"routes":[...]}
 ```
 
 The query is the positional JSON argument, or `-` to read it from stdin. `--registry <path>` names the registry file; without it the loader's path order applies (`MODEL_REGISTRY_FILE`, then `$XDG_CONFIG_HOME/model-registry/registry.json`, then `~/.config/model-registry/registry.json`).
@@ -91,6 +94,8 @@ route stays below. Gap warnings never fail a query; exits remain 0 or 3.
 ### The describe flag
 
 `--describe <file>` reads the work description from the file, calls the describe step, then ranks the filled query and merges the describe block into the answer (see [The describe step](#the-describe-step)). With `--describe` the query MUST state `privacy`; the default does not apply, so a caller that forgets it gets exit 2 and not a hosted call, and `privacy: secret` is refused outright (`describe-private`, exit 2). The description file must hold non-blank text. The same registry and config options apply: `--registry`, `--config`.
+
+`--describe-image <file>` sends a PNG or JPEG image of the work, such as a screenshot of a bug, with the description; repeat it for more images. It needs `--describe`, and does not apply to `tasks` or `check`; either misuse is `query-invalid` on the `describe-image` field, exit 2. Each image is read after the privacy and text gates and checked against the Jev image limits (see [Images](#images)) before any registry or config load; an image that breaks one is `query-invalid` on the `describe-image` field, exit 2, with the `JevError` code in the message, and no request is made.
 
 When Jev gave no answer and the task was needed (the query stated neither `task` nor `minimums`), the CLI exits 5 with `describe-failed`; when the task was not needed, the answer is built from the caller's own fields with a `capabilities-unasked` warning.
 
@@ -177,12 +182,12 @@ The CLI does not read the `availability` section unless `--availability` or `--a
 
 ## The describe step
 
-`describe(text, partialQuery, { registry?, config? })` fills a partial query from a prose work description. `model-router --describe <file> '<partial>'` runs it and then ranks. The checks run in this order:
+`describe(text, partialQuery, { registry?, config?, images? })` fills a partial query from a prose work description. `model-router --describe <file> '<partial>'` runs it and then ranks. The checks run in this order:
 
 1. **Privacy gate.** `privacy` absent is `query-invalid` on the `privacy` field; `privacy: secret` is `describe-private`. No request leaves the machine before this gate passes: hosted Jev never receives text from a secret call.
 2. **Text gate.** A blank description is `query-invalid`.
 3. **Profile check.** After the registry, router sections and config load and validate, the selected profile must be declared. The library selects `query.profile ?? "default"`; the CLI also reads non-empty `MODEL_ROUTER_PROFILE` when the query has no profile. An unknown name is `profile-unknown`, exit 2, and no request leaves the machine. This check also runs when there is nothing to ask.
-4. **Ask Jev.** The task question rides only when the partial query has neither `task` nor `minimums`: one choice over the declared tasks, each task's `description` as its criterion, so a task added to the registry is offered with no package change. One noul question per `router.questions` entry rides always, with the registry's own question text. The state is the work description and nothing else. The model is `describe.jevModel` from `config.json`. When nothing is to ask (the query states `task` or `minimums` and the registry declares no `router.questions`), the step makes no request and reads no key: `model` and `usage` are null and no warning is added.
+4. **Ask Jev.** The task question rides only when the partial query has neither `task` nor `minimums`: one choice over the declared tasks, each task's `description` as its criterion, so a task added to the registry is offered with no package change. One noul question per `router.questions` entry rides always, with the registry's own question text. The state is the work description and nothing else; with `images` (from `--describe-image` in the CLI), the state is `{ "description": <text>, "images": [<image>, ...] }` and the request carries the images as the Jev client sends them (see [Images](#images)). The model is `describe.jevModel` from `config.json`. When nothing is to ask (the query states `task` or `minimums` and the registry declares no `router.questions`), the step makes no request and reads no key: `model` and `usage` are null and no warning is added.
 5. **Gate the answers.** A task confidence at or above `describe.taskGate` is used; below it the guess is kept with a `task-uncertain` warning whose fix says to pass `task`. A capability answer at or above `describe.capabilityThreshold` adds the capability to `needs`. Capabilities are escalate-only: an answer never removes a capability the caller named.
 6. **Fill.** The returned query carries the caller's fields with the filled `task` and the extended `needs`. Every other field is the caller's. The CLI ranks this query and merges the describe block and the step's warnings into the answer.
 

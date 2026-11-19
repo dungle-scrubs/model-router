@@ -233,7 +233,9 @@ export async function describe(
 
   let response: JevResponse;
   try {
-    response = await askJev(text, questions, { model: config.describe.jevModel });
+    const images = options.images ?? [];
+    const state = images.length === 0 ? text : { description: text, images };
+    response = await askJev(state, questions, { model: config.describe.jevModel });
   } catch (error) {
     // The client throws only JevError; anything else is an internal fault
     // and is rethrown unchanged rather than relabelled.

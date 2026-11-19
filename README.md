@@ -161,6 +161,7 @@ The same registry, query and reading always give the same answer.
 model-router '<query>' [--registry <path>] [--config <path>] [--availability | --availability-file <path>]
 model-router -                                read the query from stdin
 model-router --describe <file> '<query>'      fill task and needs from a work description, then rank
+model-router --describe <file> --describe-image <png|jpg> '<query>'   the same, with images of the work
 model-router tasks [--registry <path>]        list the registry's tasks
 model-router check [--registry <path>] [--config <path>]   validate registry, config and profile coverage
 model-router-t3 --capabilities <file> ... [--searched <model> ...]  turn an answer on stdin into T3 Code delegate_task targets
@@ -225,7 +226,7 @@ The package ships JSON schemas for each document it reads or writes: `query.sche
 ### Security
 
 - Ranking reads only local files. The CLI runs `availability.command` only when you pass `--availability`, as an argv array with no shell, and stops it after `availability.timeoutSeconds`.
-- `--describe` sends the work description to the hosted Jev API at `api.typesafe.ai`, using the key in `TYPESAFE_API_KEY`. The query must state `privacy`, and `privacy: "secret"` is refused before any request leaves the machine (`describe-private`).
+- `--describe` sends the work description, and any `--describe-image` PNG or JPEG files, to the hosted Jev API at `api.typesafe.ai`, using the key in `TYPESAFE_API_KEY`. The query must state `privacy`, and `privacy: "secret"` is refused before any request leaves the machine (`describe-private`).
 - `config.json` holds no key and no registry path.
 
 [docs/reference.md](docs/reference.md) holds the full contract: every query rule, each ranking step, the describe step and Jev client, every warning, reason and error code, and the library API.

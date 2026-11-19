@@ -61,7 +61,7 @@ function readPng(bytes: Uint8Array, view: DataView, source: string): Header {
     if (offset + 12 + length > bytes.length) break;
     const type = chunkType(bytes, offset + 4);
     if (type === "acTL") throw formatError(source, "it is an animated PNG");
-    if (type === "IDAT") hasImageData = true;
+    if (type === "IDAT" && length > 0) hasImageData = true;
     if (type === "IEND") {
       if (!hasImageData) throw formatError(source, "the PNG has no image data");
       return { format: "png", height, width };
@@ -77,9 +77,10 @@ function isStartOfFrame(marker: number): boolean {
   return marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
 }
 
-/** True when an end-of-image marker (FF D9) sits at or after `from`. */
+/** True when an end-of-image marker (FF D9) sits after at least one byte
+ * of scan data, which starts at `from`. */
 function hasEndMarker(bytes: Uint8Array, from: number): boolean {
-  for (let index = bytes.length - 2; index >= from; index--) {
+  for (let index = bytes.length - 2; index > from; index--) {
     if (bytes[index] === 0xff && bytes[index + 1] === 0xd9) return true;
   }
   return false;
@@ -118,7 +119,7 @@ function readJpeg(bytes: Uint8Array, view: DataView, source: string): Header {
     if (marker === 0xda) {
       if (frame === undefined) break;
       if (!hasEndMarker(bytes, offset + length)) {
-        throw formatError(source, "the JPEG is cut off before its end marker");
+        throw formatError(source, "the JPEG has no scan data or is cut off before its end marker");
       }
       return frame;
     }
