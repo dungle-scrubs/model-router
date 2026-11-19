@@ -6,6 +6,8 @@ export type {
   JevAnswer,
   JevChoiceAnswer,
   JevChoiceQuestion,
+  JevErrorCode,
+  JevImageFormat,
   JevNoulAnswer,
   JevNoulQuestion,
   JevQuestion,
@@ -13,7 +15,7 @@ export type {
   JevScoreAnswer,
   JevScoreQuestion,
 } from "./jev.js";
-export { askJev, JevError } from "./jev.js";
+export { askJev, JevError, JevImage } from "./jev.js";
 export { listTasks, rank } from "./rank.js";
 export type {
   Answer,

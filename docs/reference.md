@@ -201,6 +201,37 @@ The describe block in the answer: `model` (what answered, `null` when Jev failed
 | `SERVICE_ERROR` | the endpoint returned a status the client does not retry |
 | `RATE_LIMITED` | every retry attempt came back retryable |
 | `BAD_RESPONSE` | a 200 body that does not match the questions sent: no answers object, no model or usage, or a missing or malformed answer for an asked question |
+| `IMAGE_UNREADABLE` | `JevImage.fromFile` could not read the file; the message names the path |
+| `IMAGE_FORMAT` | the image is not a still PNG or JPEG, is empty, or its header is damaged; an animated PNG is refused |
+| `IMAGE_FILE_SIZE` | the image file is over 16 MiB (16777216 bytes) |
+| `IMAGE_DIMENSIONS` | the image's width or height is outside 280 to 1568 pixels; the message names the side and its value |
+| `REQUEST_TOO_LARGE` | the multipart request body with its images is over 32 MiB (33554432 bytes); nothing is sent |
+
+### Images
+
+`askJev` sends PNG and JPEG images to Jev. Make a `JevImage` from a file or from bytes and place it anywhere in the state or in a question's instructions, as a whole value; questions refer to an image in the state by its path in backticks:
+
+```ts
+import { askJev, JevImage } from "@dungle-scrubs/model-router";
+
+const slip = await JevImage.fromFile("slip-0412.jpg"); // or JevImage.fromBytes(bytes)
+const { answers } = await askJev(
+  { slip, expected: { amount: "1,250.50", date: "2026-11-03" } },
+  {
+    amount: { type: "noul", instructions: "Does the payment slip in `slip` show the amount in `expected.amount`?" },
+    date: { type: "noul", instructions: "Does the payment slip in `slip` show the date in `expected.date`?" },
+  },
+);
+answers.amount; // { type: "noul", noul: 0.97 }
+```
+
+A `JevImage` is checked when it is made, against the limits TypeSafe documents at https://docs.typesafe.ai/images: a still PNG or JPEG read from its bytes, never from a file name; at most 16 MiB; each side 280 to 1568 pixels, both ends included. A broken limit throws `JevError` before any request (codes in the table above). The bytes are copied, so changing the caller's buffer afterwards changes nothing that is sent. `format`, `width`, `height` and `byteLength` report what was read. The API applies no EXIF orientation and never resizes, so rotate a photo upright and scale it into range before making the image.
+
+A request with an image goes out as `multipart/form-data`: the JSON request first, in a part named `request`, with each image object replaced by a fresh reference string and an `assets` map naming one file part per image, then one part per image holding its file bytes. The request carries the `TypeSafe-Danger-Zone-Images: true` header. The same image object placed twice is uploaded once; each placement still adds the image to what the model reads. A request whose body would exceed 32 MiB is `REQUEST_TOO_LARGE`. The API's own limits on the images after it re-encodes them, and on the request with every reference expanded, cannot be checked locally; a request the API refuses comes back as `SERVICE_ERROR` carrying the API's status and message. A request with no image is the plain JSON request, byte for byte, with no images header.
+
+Image input works on `jev-1.13.0`, the default model, and on `jev-1.14.0`. TypeSafe marks it experimental: the request format, the limits and the answers can change between releases. Images are billed as input tokens and counted in `usage.input_tokens`. A large image upload can take longer than the 15 s default attempt timeout; raise `timeoutMs` when it does.
+
+Criteria stay text in this client: an image as a Choice option, a Score level or a Noul definition is not supported. The Box question type, which Jev 1.14 added to locate something in an image, is not supported either; `JevQuestion` has no `box` member.
 
 ## The ranking
 
@@ -369,6 +400,7 @@ import {
   describe,
   dropExpired,
   JevError,
+  JevImage,
   listTasks,
   rank,
   RouterError,
@@ -418,6 +450,10 @@ const response = await askJev(
 );
 response.answers.urgent satisfies JevAnswer | undefined;
 response satisfies JevResponse;
+
+// An image from a file or from bytes, placed in the state (see "Images"):
+const photo = await JevImage.fromFile("photo.jpg");
+await askJev({ photo }, { blurry: { type: "noul", instructions: "Is `photo` too blurry to read?" } });
 
 // The library reads availability through the rank option. The caller
 // gathers entries (and runs dropExpired) before ranking; the engine
