@@ -161,7 +161,7 @@ The same registry, query and reading always give the same answer.
 model-router '<query>' [--registry <path>] [--config <path>] [--availability | --availability-file <path>]
 model-router -                                read the query from stdin
 model-router --describe <file> '<query>'      fill task and needs from a work description, then rank
-model-router --describe <file> --describe-image <png|jpg> '<query>'   the same, with images of the work
+model-router --describe <file> --describe-image <file> '<query>'   the same, with PNG or JPEG images of the work
 model-router tasks [--registry <path>]        list the registry's tasks
 model-router check [--registry <path>] [--config <path>]   validate registry, config and profile coverage
 model-router-t3 --capabilities <file> ... [--searched <model> ...]  turn an answer on stdin into T3 Code delegate_task targets

@@ -313,6 +313,24 @@ const PNG = Buffer.from(makePng(300, 300));
 const JPEG = Buffer.from(makeJpeg(300, 300));
 
 describe("JevImage checks", () => {
+  test.each([
+    ["with restart markers", "jev-image-300-restart.jpg"],
+    ["progressive, with restart markers", "jev-image-300-restart-progressive.jpg"],
+    ["with a fill byte before a restart marker", "jev-image-300-restart-fill.jpg"],
+  ])("accepts a real JPEG %s", (_name, file) => {
+    // Each fixture decodes under djpeg -strict.
+    const real = readFileSync(join(fixturesDir, file));
+    expect(JevImage.fromBytes(real)).toMatchObject({ format: "jpeg", height: 300, width: 300 });
+  });
+
+  test("a fill byte before a stuffed byte stays scan data", () => {
+    // SOI, APP0, SOF0 and SOS from the made-up JPEG, then scan bytes
+    // 12 FF FF 00 34 and EOI.
+    const head = JPEG.subarray(0, JPEG.length - 7);
+    const bytes = Buffer.concat([head, Buffer.from([0x12, 0xff, 0xff, 0x00, 0x34, 0xff, 0xd9])]);
+    expect(JevImage.fromBytes(bytes)).toMatchObject({ format: "jpeg" });
+  });
+
   test("accepts a real baseline JPEG", () => {
     const real = readFileSync(join(fixturesDir, "jev-image-300.jpg"));
     expect(JevImage.fromBytes(real)).toMatchObject({ format: "jpeg", height: 300, width: 300 });

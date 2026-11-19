@@ -78,10 +78,12 @@ function isStartOfFrame(marker: number): boolean {
   return marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
 }
 
-/** Skip a scan's entropy-coded data from `offset`: stuffed bytes (FF 00)
- * and restart markers (FF D0 to FF D7) belong to it, and any other marker
- * ends it. Returns where the next marker starts, or the end of the file,
- * and whether the scan held any data. */
+/** Skip a scan's entropy-coded data from `offset`. After an 0xFF, any
+ * further 0xFF bytes are fill (ITU-T T.81 B.1.1.2); the byte after the run
+ * decides: 0x00 is a stuffed data byte and a restart marker (D0 to D7)
+ * continues the scan, so both stay in it, and any other byte is a marker
+ * that ends it. Returns where that marker's run of 0xFF starts, or the end
+ * of the file, and whether the scan held any data. */
 function skipScan(
   bytes: Uint8Array,
   offset: number,
@@ -94,12 +96,14 @@ function skipScan(
       index++;
       continue;
     }
-    const next = bytes[index + 1];
+    let after = index + 1;
+    while (bytes[after] === 0xff) after++;
+    const next = bytes[after];
     if (next === 0x00) {
       hasData = true;
-      index += 2;
+      index = after + 1;
     } else if (next !== undefined && next >= 0xd0 && next <= 0xd7) {
-      index += 2;
+      index = after + 1;
     } else {
       break;
     }
