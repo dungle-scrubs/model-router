@@ -2,6 +2,9 @@ import { appendFileSync, copyFileSync, readFileSync, writeFileSync } from "node:
 import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import { runCli } from "../src/cli-run.js";
+import { describe as describeStep } from "../src/describe.js";
+import { RouterError } from "../src/error.js";
+import { JevImage } from "../src/jev.js";
 import {
   captureStream,
   expectValidAnswer,
@@ -684,4 +687,165 @@ describe("--describe warning order", () => {
         fetchSpy.mockRestore();
       });
     }));
+});
+
+describe("--describe-image", () => {
+  const IMAGE = fixturePath("jev-image-300.jpg");
+
+  test("sends the image with the description as a multipart request with the images header", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      await withDescriptionFile("fix the layout bug in the screenshot", async (file) => {
+        const fetchSpy = stubFetch(happyBody);
+        const result = await run([
+          "--describe",
+          file,
+          "--describe-image",
+          IMAGE,
+          "--registry",
+          FIXTURE,
+          '{"privacy":"normal"}',
+        ]);
+        expect(result.exitCode).toBe(0);
+        expect(JSON.parse(result.stdout()).query.task).toBe("task-a");
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+        const init = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+        const headers = init.headers as Record<string, string>;
+        expect(headers["TypeSafe-Danger-Zone-Images"]).toBe("true");
+        const form = await new Response(init.body as Uint8Array<ArrayBuffer>, {
+          headers: { "Content-Type": headers["Content-Type"] as string },
+        }).formData();
+        const request = JSON.parse(form.get("request") as string) as {
+          state: { description: string; images: string[] };
+          assets: Record<string, unknown>;
+        };
+        expect(request.state.description).toBe("fix the layout bug in the screenshot");
+        const sentQuestions = (
+          request as unknown as { questions: { task: { instructions: string } } }
+        ).questions;
+        expect(sentQuestions.task.instructions).toContain("`images` are pictures of that work");
+        expect(request.state.images).toHaveLength(1);
+        expect(Object.keys(request.assets)).toEqual(request.state.images);
+        const part = form.get("image-1") as File;
+        expect(new Uint8Array(await part.arrayBuffer())).toEqual(
+          new Uint8Array(readFileSync(IMAGE)),
+        );
+        fetchSpy.mockRestore();
+      });
+    }));
+
+  test("without --describe-image the describe state is the description text alone", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      await withDescriptionFile("implement the feature", async (file) => {
+        const fetchSpy = stubFetch(happyBody);
+        await run(["--describe", file, "--registry", FIXTURE, '{"privacy":"normal"}']);
+        const init = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+        expect(init.headers).toEqual({
+          Authorization: "Bearer k-123",
+          "Content-Type": "application/json",
+        });
+        expect(JSON.parse(init.body as string).state).toBe("implement the feature");
+        fetchSpy.mockRestore();
+      });
+    }));
+
+  test("--describe-image without --describe exits 2 and makes no request", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
+      const result = await run([
+        "--describe-image",
+        IMAGE,
+        "--registry",
+        FIXTURE,
+        '{"privacy":"normal"}',
+      ]);
+      expect(result.exitCode).toBe(2);
+      const error = await errorEnvelope(result.stderr);
+      expect(error.code).toBe("query-invalid");
+      expect(error.field).toBe("describe-image");
+      expect(fetchSpy).not.toHaveBeenCalled();
+      fetchSpy.mockRestore();
+    }));
+
+  test("an image that is not a PNG or JPEG exits 2 naming the image code and makes no request", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      await withDescriptionFile("some work", async (file) => {
+        const fetchSpy = vi.spyOn(globalThis, "fetch");
+        const result = await run([
+          "--describe",
+          file,
+          "--describe-image",
+          file,
+          "--registry",
+          FIXTURE,
+          '{"privacy":"normal"}',
+        ]);
+        expect(result.exitCode).toBe(2);
+        const error = await errorEnvelope(result.stderr);
+        expect(error.code).toBe("query-invalid");
+        expect(error.field).toBe("describe-image");
+        expect(error.message).toContain("IMAGE_FORMAT");
+        expect(fetchSpy).not.toHaveBeenCalled();
+        fetchSpy.mockRestore();
+      });
+    }));
+
+  test("a secret query is refused before the image is read", async () =>
+    withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+      await withDescriptionFile("some work", async (file) => {
+        const result = await run([
+          "--describe",
+          file,
+          "--describe-image",
+          "/nonexistent/image.jpg",
+          "--registry",
+          FIXTURE,
+          '{"privacy":"secret"}',
+        ]);
+        expect(result.exitCode).toBe(2);
+        expect((await errorEnvelope(result.stderr)).code).toBe("describe-private");
+      });
+    }));
+
+  test.each([
+    ["the task is needed", { privacy: "normal" }],
+    ["the task is already set", { privacy: "normal", task: "task-a" }],
+  ])(
+    "images too large together are query-invalid on images when %s, with no request",
+    async (_name, partial) =>
+      withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+        const fetchSpy = vi.spyOn(globalThis, "fetch");
+        const big = (): JevImage => {
+          const bytes = new Uint8Array(11 * 1024 * 1024);
+          bytes.set(readFileSync(IMAGE));
+          return JevImage.fromBytes(bytes);
+        };
+        let caught: unknown;
+        try {
+          await describeStep("some work", partial, {
+            registry: FIXTURE,
+            images: [big(), big(), big()],
+          });
+        } catch (error) {
+          caught = error;
+        }
+        if (!(caught instanceof RouterError))
+          throw new Error(`expected a RouterError, got ${String(caught)}`);
+        expect(caught.code).toBe("query-invalid");
+        expect(caught.field).toBe("images");
+        expect(caught.message).toContain("32 MiB");
+        expect(fetchSpy).not.toHaveBeenCalled();
+        fetchSpy.mockRestore();
+      }),
+  );
+
+  test.each(["tasks", "check"])(
+    "--describe-image does not apply to %s and exits 2",
+    async (sub) => {
+      const result = await run([sub, "--describe-image", IMAGE, "--registry", FIXTURE]);
+      expect(result.exitCode).toBe(2);
+      const error = await errorEnvelope(result.stderr);
+      expect(error.code).toBe("query-invalid");
+      expect(error.field).toBe("describe-image");
+    },
+  );
 });

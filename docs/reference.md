@@ -19,6 +19,9 @@ $ model-router check --registry registry.json
 
 $ model-router --describe work.txt --registry registry.json '{"privacy":"normal"}'
 {"availabilityNote":null,"contract":1,"describe":{...},"query":{"task":"task-a",...},"routes":[...]}
+
+$ model-router --describe work.txt --describe-image screenshot.png --registry registry.json '{"privacy":"normal"}'
+{"availabilityNote":null,"contract":1,"describe":{...},"query":{"task":"task-a",...},"routes":[...]}
 ```
 
 The query is the positional JSON argument, or `-` to read it from stdin. `--registry <path>` names the registry file; without it the loader's path order applies (`MODEL_REGISTRY_FILE`, then `$XDG_CONFIG_HOME/model-registry/registry.json`, then `~/.config/model-registry/registry.json`).
@@ -91,6 +94,8 @@ route stays below. Gap warnings never fail a query; exits remain 0 or 3.
 ### The describe flag
 
 `--describe <file>` reads the work description from the file, calls the describe step, then ranks the filled query and merges the describe block into the answer (see [The describe step](#the-describe-step)). With `--describe` the query MUST state `privacy`; the default does not apply, so a caller that forgets it gets exit 2 and not a hosted call, and `privacy: secret` is refused outright (`describe-private`, exit 2). The description file must hold non-blank text. The same registry and config options apply: `--registry`, `--config`.
+
+`--describe-image <file>` sends a PNG or JPEG image of the work, such as a screenshot of a bug, with the description; repeat it for more images. It needs `--describe`, and does not apply to `tasks` or `check`; either misuse is `query-invalid` on the `describe-image` field, exit 2. Each image is read after the privacy and text gates and checked against the Jev image limits (see [Images](#images)) before any registry or config load; an image that breaks one is `query-invalid` on the `describe-image` field, exit 2, with the `JevError` code in the message, and no request is made. Images that each pass but together make the request too large (`REQUEST_TOO_LARGE`) are `query-invalid` on the `images` field, exit 2, also with no request.
 
 When Jev gave no answer and the task was needed (the query stated neither `task` nor `minimums`), the CLI exits 5 with `describe-failed`; when the task was not needed, the answer is built from the caller's own fields with a `capabilities-unasked` warning.
 
@@ -177,12 +182,12 @@ The CLI does not read the `availability` section unless `--availability` or `--a
 
 ## The describe step
 
-`describe(text, partialQuery, { registry?, config? })` fills a partial query from a prose work description. `model-router --describe <file> '<partial>'` runs it and then ranks. The checks run in this order:
+`describe(text, partialQuery, { registry?, config?, images? })` fills a partial query from a prose work description. `model-router --describe <file> '<partial>'` runs it and then ranks. The checks run in this order:
 
 1. **Privacy gate.** `privacy` absent is `query-invalid` on the `privacy` field; `privacy: secret` is `describe-private`. No request leaves the machine before this gate passes: hosted Jev never receives text from a secret call.
 2. **Text gate.** A blank description is `query-invalid`.
 3. **Profile check.** After the registry, router sections and config load and validate, the selected profile must be declared. The library selects `query.profile ?? "default"`; the CLI also reads non-empty `MODEL_ROUTER_PROFILE` when the query has no profile. An unknown name is `profile-unknown`, exit 2, and no request leaves the machine. This check also runs when there is nothing to ask.
-4. **Ask Jev.** The task question rides only when the partial query has neither `task` nor `minimums`: one choice over the declared tasks, each task's `description` as its criterion, so a task added to the registry is offered with no package change. One noul question per `router.questions` entry rides always, with the registry's own question text. The state is the work description and nothing else. The model is `describe.jevModel` from `config.json`. When nothing is to ask (the query states `task` or `minimums` and the registry declares no `router.questions`), the step makes no request and reads no key: `model` and `usage` are null and no warning is added.
+4. **Ask Jev.** The task question rides only when the partial query has neither `task` nor `minimums`: one choice over the declared tasks, each task's `description` as its criterion, so a task added to the registry is offered with no package change. One noul question per `router.questions` entry rides always, with the registry's own question text. The state is the work description and nothing else; with `images` (from `--describe-image` in the CLI), the state is `{ "description": <text>, "images": [<image>, ...] }` the task question says the description is in `description` and the pictures in `images`, and the request carries the images as the Jev client sends them (see [Images](#images)). Images too large together are `query-invalid` on the `images` field, never `describe-failed`: no request is made and a retry cannot help. The model is `describe.jevModel` from `config.json`. When nothing is to ask (the query states `task` or `minimums` and the registry declares no `router.questions`), the step makes no request and reads no key: `model` and `usage` are null and no warning is added.
 5. **Gate the answers.** A task confidence at or above `describe.taskGate` is used; below it the guess is kept with a `task-uncertain` warning whose fix says to pass `task`. A capability answer at or above `describe.capabilityThreshold` adds the capability to `needs`. Capabilities are escalate-only: an answer never removes a capability the caller named.
 6. **Fill.** The returned query carries the caller's fields with the filled `task` and the extended `needs`. Every other field is the caller's. The CLI ranks this query and merges the describe block and the step's warnings into the answer.
 
@@ -201,6 +206,37 @@ The describe block in the answer: `model` (what answered, `null` when Jev failed
 | `SERVICE_ERROR` | the endpoint returned a status the client does not retry |
 | `RATE_LIMITED` | every retry attempt came back retryable |
 | `BAD_RESPONSE` | a 200 body that does not match the questions sent: no answers object, no model or usage, or a missing or malformed answer for an asked question |
+| `IMAGE_UNREADABLE` | `JevImage.fromFile` could not read the path, or the path is not a regular file; the message names the path |
+| `IMAGE_FORMAT` | the image is not a still PNG or JPEG, is empty, is animated, or its framing is damaged: a PNG chunk or JPEG segment that does not fit in the file, no image data, or a file cut off before its end |
+| `IMAGE_FILE_SIZE` | the image file is over 16 MiB (16777216 bytes) |
+| `IMAGE_DIMENSIONS` | the image's width or height is outside 280 to 1568 pixels; the message names the side and its value |
+| `REQUEST_TOO_LARGE` | the multipart request body with its images is over 32 MiB (33554432 bytes), or its image references total over 65536 bytes (more than 1424 distinct images); nothing is sent |
+
+### Images
+
+`askJev` sends PNG and JPEG images to Jev. Make a `JevImage` from a file or from bytes and place it anywhere in the state or in a question's instructions, as a whole value; questions refer to an image in the state by its path in backticks:
+
+```ts
+import { askJev, JevImage } from "@dungle-scrubs/model-router";
+
+const slip = await JevImage.fromFile("slip-0412.jpg"); // or JevImage.fromBytes(bytes)
+const { answers } = await askJev(
+  { slip, expected: { amount: "1,250.50", date: "2026-11-03" } },
+  {
+    amount: { type: "noul", instructions: "Does the payment slip in `slip` show the amount in `expected.amount`?" },
+    date: { type: "noul", instructions: "Does the payment slip in `slip` show the date in `expected.date`?" },
+  },
+);
+answers.amount; // { type: "noul", noul: 0.97 }
+```
+
+A `JevImage` is checked when it is made, against the limits TypeSafe documents at https://docs.typesafe.ai/images: a still PNG or JPEG read from its bytes, never from a file name; at most 16 MiB; each side 280 to 1568 pixels, both ends included. The client checks the file's framing (PNG chunks, JPEG segments, image data present, the end of the file reached), not its compressed pixels; the API rejects a file damaged inside its image data. A broken limit throws `JevError` before any request (codes in the table above). The bytes are copied, so changing the caller's buffer afterwards changes nothing that is sent. Place the object itself: turning a `JevImage` into text, such as `` `photo ${slip}` ``, throws a `TypeError`, because the text would reach Jev without the image. `format`, `width`, `height` and `byteLength` report what was read. The API applies no EXIF orientation and never resizes, so rotate a photo upright and scale it into range before making the image.
+
+A request with an image goes out as `multipart/form-data`: the JSON request first, in a part named `request`, with each image object replaced by a fresh reference string and an `assets` map naming one file part per image, then one part per image holding its file bytes. The request carries the `TypeSafe-Danger-Zone-Images: true` header. The same image object placed twice is uploaded once; each placement still adds the image to what the model reads. A request whose body would exceed 32 MiB is `REQUEST_TOO_LARGE`. The API's own limits on the images after it re-encodes them, and on the request with every reference expanded, cannot be checked locally; a request the API refuses comes back as `SERVICE_ERROR` carrying the API's status and message. A request with no image is the plain JSON request, byte for byte, with no images header.
+
+Image input works on `jev-1.13.0`, the default model, and on `jev-1.14.0`. TypeSafe marks it experimental: the request format, the limits and the answers can change between releases. Images are billed as input tokens and counted in `usage.input_tokens`. A large image upload can take longer than the 15 s default attempt timeout; raise `timeoutMs` when it does.
+
+Criteria stay text in this client: an image as a Choice option, a Score level or a Noul definition is not supported. The Box question type, which Jev 1.14 added to locate something in an image, is not supported either; `JevQuestion` has no `box` member.
 
 ## The ranking
 
@@ -369,6 +405,7 @@ import {
   describe,
   dropExpired,
   JevError,
+  JevImage,
   listTasks,
   rank,
   RouterError,
@@ -418,6 +455,10 @@ const response = await askJev(
 );
 response.answers.urgent satisfies JevAnswer | undefined;
 response satisfies JevResponse;
+
+// An image from a file or from bytes, placed in the state (see "Images"):
+const photo = await JevImage.fromFile("photo.jpg");
+await askJev({ photo }, { blurry: { type: "noul", instructions: "Is `photo` too blurry to read?" } });
 
 // The library reads availability through the rank option. The caller
 // gathers entries (and runs dropExpired) before ranking; the engine

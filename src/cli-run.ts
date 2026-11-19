@@ -6,6 +6,7 @@ import { type LoadedConfig, loadConfig } from "./config.js";
 import { checkProfileCoverage } from "./coverage.js";
 import { checkDescribeText, describe as describeStep, parseDescribeQuery } from "./describe.js";
 import { RouterError } from "./error.js";
+import { JevError, JevImage } from "./jev.js";
 import { parseQuery } from "./query.js";
 import { listTasks, rank, resolveRegistry } from "./rank.js";
 import { validateRouterSections } from "./sections.js";
@@ -208,11 +209,37 @@ function resolveDescribeOption(describeValues: readonly string[]): string | unde
 }
 
 function addDescribeOption(command: Command): Command {
-  return command.option(
-    "--describe <file>",
-    "read the work description from <file> and fill the query's task and needs with a Jev call",
-    (value: string, previous: string[] | undefined) => [...(previous ?? []), value],
-  );
+  return command
+    .option(
+      "--describe <file>",
+      "read the work description from <file> and fill the query's task and needs with a Jev call",
+      (value: string, previous: string[] | undefined) => [...(previous ?? []), value],
+    )
+    .option(
+      "--describe-image <file>",
+      "send a PNG or JPEG image of the work with the --describe call; repeat for more images",
+      (value: string, previous: string[] | undefined) => [...(previous ?? []), value],
+    );
+}
+
+/** Read the --describe-image files. Each image is checked against the Jev
+ * image limits here, so a bad image is a usage error (exit 2) before any
+ * load or request, not a failed describe call. */
+async function readDescribeImages(paths: readonly string[]): Promise<JevImage[]> {
+  const images: JevImage[] = [];
+  for (const path of paths) {
+    try {
+      images.push(await JevImage.fromFile(path));
+    } catch (error) {
+      if (!(error instanceof JevError)) throw error;
+      throw queryInvalid(
+        "describe-image",
+        `the --describe-image file "${path}" is not usable (${error.code}): ${error.message}`,
+        "Give --describe-image a still PNG or JPEG of at most 16 MiB whose sides are each 280 to 1568 pixels.",
+      );
+    }
+  }
+  return images;
 }
 
 function readDescribeFile(path: string): string {
@@ -316,6 +343,7 @@ export async function runCli(argv: readonly string[], io: Partial<CliIo> = {}): 
       registry?: string[];
       config?: string[];
       describe?: string[];
+      describeImage?: string[];
       availability?: unknown;
       availabilityFile?: unknown;
     };
@@ -338,6 +366,13 @@ export async function runCli(argv: readonly string[], io: Partial<CliIo> = {}): 
         "describe",
         "the --describe option does not apply to the tasks subcommand.",
         "Run model-router '<query>' --describe <file> to use --describe.",
+      );
+    }
+    if ((options.describeImage ?? []).length > 0) {
+      throw queryInvalid(
+        "describe-image",
+        "the --describe-image option does not apply to the tasks subcommand.",
+        "Run model-router '<query>' --describe <file> --describe-image <image> to use --describe-image.",
       );
     }
     if (options.availability === true || options.availabilityFile !== undefined) {
@@ -377,6 +412,7 @@ export async function runCli(argv: readonly string[], io: Partial<CliIo> = {}): 
       registry?: string[];
       config?: string[];
       describe?: string[];
+      describeImage?: string[];
       availability?: unknown;
       availabilityFile?: unknown;
     };
@@ -392,6 +428,13 @@ export async function runCli(argv: readonly string[], io: Partial<CliIo> = {}): 
         "describe",
         "the --describe option does not apply to the check subcommand.",
         "Run model-router '<query>' --describe <file> to use --describe.",
+      );
+    }
+    if ((options.describeImage ?? []).length > 0) {
+      throw queryInvalid(
+        "describe-image",
+        "the --describe-image option does not apply to the check subcommand.",
+        "Run model-router '<query>' --describe <file> --describe-image <image> to use --describe-image.",
       );
     }
     if (options.availability === true || options.availabilityFile !== undefined) {
@@ -436,6 +479,7 @@ export async function runCli(argv: readonly string[], io: Partial<CliIo> = {}): 
         registry?: string[];
         config?: string[];
         describe?: string[];
+        describeImage?: string[];
         availability?: unknown;
         availabilityFile?: unknown;
       },
@@ -459,10 +503,20 @@ export async function runCli(argv: readonly string[], io: Partial<CliIo> = {}): 
       // gates does the CLI load the registry and config.
       let describePartial: Query | undefined;
       let describeText: string | undefined;
+      const describeImagePaths = options.describeImage ?? [];
+      if (describeImagePaths.length > 0 && describeFile === undefined) {
+        throw queryInvalid(
+          "describe-image",
+          "the --describe-image option needs --describe: the images go with a work description.",
+          "Add --describe <file> with the work description, or drop --describe-image.",
+        );
+      }
+      let describeImages: JevImage[] = [];
       if (describeFile !== undefined) {
         describePartial = parseDescribeQuery(raw);
         describeText = readDescribeFile(describeFile);
         checkDescribeText(describeText);
+        describeImages = await readDescribeImages(describeImagePaths);
       }
       // Load config once. Describe, availability and rank use the same
       // validated settings, not a path that rank would read again.
@@ -497,7 +551,7 @@ export async function runCli(argv: readonly string[], io: Partial<CliIo> = {}): 
         const described = await describeStep(
           describeText,
           applyCliProfile(describePartial),
-          rankOptions,
+          describeImages.length === 0 ? rankOptions : { ...rankOptions, images: describeImages },
         );
         const answer = rank(described.query, rankOptions);
         const merged = assembleAnswer(answer, availabilityLoad, described);

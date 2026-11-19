@@ -5,14 +5,22 @@
  * The describe step builds its questions and gates the answers; this module
  * carries the request and owns the response contract: every 200 body is
  * validated against the questions that were sent before it is returned. It
- * is exported as `askJev` with `JevError` and the question, answer and
- * response types; the key and retry helpers stay private.
+ * is exported as `askJev` with `JevError`, `JevImage` and the question,
+ * answer and response types; the key and retry helpers stay private.
  *
  * The client is raw fetch against POST /v1/systemone, not the official SDK:
- * the request is three fields, and the retry schedule and the key handling
- * are policy the router keeps beside its gates. `TYPESAFE_API_KEY` is read
+ * the request is three fields, plus an `assets` map and file parts when it
+ * carries images, and the retry schedule and the key handling are policy
+ * the router keeps beside its gates. `TYPESAFE_API_KEY` is read
  * from the environment and never printed.
  */
+
+import { randomUUID } from "node:crypto";
+import { JevError } from "./jev-error.js";
+import { imageBytes, JevImage } from "./jev-image.js";
+
+export { JevError, type JevErrorCode } from "./jev-error.js";
+export { JevImage, type JevImageFormat } from "./jev-image.js";
 
 const ENDPOINT = "https://api.typesafe.ai/v1/systemone";
 const KEY_VARIABLE = "TYPESAFE_API_KEY";
@@ -38,27 +46,6 @@ const MAX_TIMEOUT_MS = 2147483647;
  * retries at once with RATE_LIMITED: an early retry into the same 429 is
  * worse than giving up. */
 const RETRY_DELAY_CAP_MS = 30000;
-
-export type JevErrorCode =
-  | "MISSING_KEY"
-  | "RATE_LIMITED"
-  | "SERVICE_ERROR"
-  | "UNREACHABLE"
-  | "BAD_RESPONSE";
-
-/** The one error the Jev client throws. `code` is stable; `status` carries
- * the HTTP status when one arrived, else undefined. */
-export class JevError extends Error {
-  readonly code: JevErrorCode;
-  readonly status: number | undefined;
-
-  constructor(code: JevErrorCode, message: string, status: number | undefined = undefined) {
-    super(message);
-    this.name = "JevError";
-    this.code = code;
-    this.status = status;
-  }
-}
 
 /** A Choice question: one option from a named set, with a rubric per option. */
 export type JevChoiceQuestion = {
@@ -349,11 +336,135 @@ function checkOptions(options: AskJevOptions): void {
   }
 }
 
+/** The header that turns on image input for one request. */
+const IMAGES_HEADER = "TypeSafe-Danger-Zone-Images";
+
+/** The largest request body the API accepts, in bytes, framing included. */
+const MAX_REQUEST_BYTES = 32 * 1024 * 1024;
+
+/** The most UTF-8 bytes all asset references in one request may hold
+ * together. Each reference this client makes is 46 bytes, so this caps a
+ * request at 1424 distinct images. */
+const MAX_REFERENCE_BYTES = 65536;
+
+type WireRequest = {
+  readonly body: string | Uint8Array<ArrayBuffer>;
+  readonly headers: Readonly<Record<string, string>>;
+};
+
+/** Build the request. With no image it is the JSON body it has always
+ * been. With images, each image object becomes a fresh reference string in
+ * the JSON, the JSON gains an `assets` map naming one file part per image,
+ * and the body is multipart/form-data with the JSON first, as the API
+ * documents. One image object placed twice is uploaded once under one
+ * reference. */
+function buildRequest({
+  key,
+  model,
+  questions,
+  state,
+}: {
+  readonly key: string;
+  readonly model: string;
+  readonly questions: Readonly<Record<string, JevQuestion>>;
+  readonly state: unknown;
+}): WireRequest {
+  const images = new Map<JevImage, string>();
+  // A replacer that returns every other value unchanged leaves the output
+  // byte-for-byte what JSON.stringify gives without one.
+  const json = JSON.stringify({ state, model, questions }, (_name, value: unknown) => {
+    if (!(value instanceof JevImage)) return value;
+    let reference = images.get(value);
+    if (reference === undefined) {
+      reference = `jev-image-${randomUUID()}`;
+      images.set(value, reference);
+    }
+    return reference;
+  });
+  if (images.size === 0) {
+    return {
+      body: json,
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    };
+  }
+
+  const encoder = new TextEncoder();
+  const referenceBytes = [...images.values()].reduce(
+    (total, reference) => total + encoder.encode(reference).byteLength,
+    0,
+  );
+  if (referenceBytes > MAX_REFERENCE_BYTES) {
+    throw new JevError(
+      "REQUEST_TOO_LARGE",
+      `the request places ${images.size} distinct images, whose references total ${referenceBytes} bytes, above the ${MAX_REFERENCE_BYTES}-byte limit on all references in one request. Split the images across requests.`,
+    );
+  }
+  const parts = [...images].map(([image, reference], index) => ({
+    image,
+    name: `image-${index + 1}`,
+    reference,
+  }));
+  const assets = Object.fromEntries(
+    parts.map(({ name, reference }) => [reference, { part: name, type: "image" }]),
+  );
+  const payload = JSON.stringify({ ...(JSON.parse(json) as object), assets });
+
+  const boundary = `model-router-${randomUUID()}`;
+  const chunks: Uint8Array[] = [];
+  const addPart = (head: string, content: Uint8Array): void => {
+    chunks.push(
+      encoder.encode(`--${boundary}\r\n${head}\r\n\r\n`),
+      content,
+      encoder.encode("\r\n"),
+    );
+  };
+  addPart(
+    'Content-Disposition: form-data; name="request"\r\nContent-Type: application/json',
+    encoder.encode(payload),
+  );
+  for (const { image, name } of parts) {
+    const extension = image.format === "png" ? "png" : "jpg";
+    addPart(
+      `Content-Disposition: form-data; name="${name}"; filename="${name}.${extension}"\r\nContent-Type: image/${image.format}`,
+      imageBytes(image),
+    );
+  }
+  chunks.push(encoder.encode(`--${boundary}--\r\n`));
+  // Sized before anything is allocated, so an oversized request is refused
+  // without building its body.
+  const size = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+  if (size > MAX_REQUEST_BYTES) {
+    throw new JevError(
+      "REQUEST_TOO_LARGE",
+      `the request with ${parts.length} images is ${size} bytes, above the ${MAX_REQUEST_BYTES}-byte (32 MiB) request body limit. Send fewer or smaller images, or split the questions across requests.`,
+    );
+  }
+  const body = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return {
+    body,
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": `multipart/form-data; boundary=${boundary}`,
+      [IMAGES_HEADER]: "true",
+    },
+  };
+}
+
 /**
  * Ask Jev one state and a map of questions. Every question sees the same
  * state and none sees another's answer, so asking more costs tokens and
  * almost no latency. Retries 429 and 529 with backoff; every other failure
  * throws.
+ *
+ * A `JevImage` placed anywhere in the state or in a question's instructions
+ * is sent as an image, with the images header; a request without one is
+ * the plain JSON request. Image input is experimental at TypeSafe. Criteria
+ * stay text in this client, and Box questions are not supported.
  */
 export async function askJev(
   state: unknown,
@@ -367,10 +478,11 @@ export async function askJev(
   const maxAttempts = options.maxAttempts ?? 4;
   const backoffMs = options.backoffMs ?? 500;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const body = JSON.stringify({
-    state,
+  const { body, headers } = buildRequest({
+    key,
     model: options.model ?? DEFAULT_JEV_MODEL,
     questions,
+    state,
   });
 
   let lastStatus = 0;
@@ -381,7 +493,7 @@ export async function askJev(
     try {
       response = await call(ENDPOINT, {
         method: "POST",
-        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+        headers,
         body,
         signal,
       });

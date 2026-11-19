@@ -156,7 +156,7 @@ describe("reference problem codes", () => {
   });
 
   test("documents every JevError code the Jev client defines", () => {
-    const source = readFileSync(join(repoRoot, "src", "jev.ts"), "utf8");
+    const source = readFileSync(join(repoRoot, "src", "jev-error.ts"), "utf8");
     const readme = readFileSync(join(repoRoot, "docs", "reference.md"), "utf8");
     const emitted = typeCodesInSource(source, "JevErrorCode");
     expect(emitted.length).toBeGreaterThanOrEqual(5);

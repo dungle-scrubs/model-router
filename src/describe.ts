@@ -32,6 +32,11 @@ const CAPABILITY_PREFIX = "needs_";
 const TASK_INSTRUCTIONS =
   "The state is a description of one piece of work that will be handed to a worker model. Which task type is it? Pick the type whose description covers the work actually being asked for.";
 
+/** The task question when images ride with the description: the state is
+ * then an object, so the question says where each part is. */
+const TASK_INSTRUCTIONS_WITH_IMAGES =
+  "The state's `description` describes one piece of work that will be handed to a worker model, and `images` are pictures of that work. Which task type is it? Pick the type whose description covers the work actually being asked for.";
+
 function invalid(field: string, message: string, fix: string): RouterError {
   return new RouterError({ code: "query-invalid", field, fix, message, problems: [] });
 }
@@ -183,6 +188,7 @@ export async function describe(
   const config = loadedConfig.config;
   selectProfile(loaded, partial.profile ?? "default");
   const taskNeeded = partial.task === undefined && partial.minimums === undefined;
+  const images = options.images ?? [];
 
   // Build the question set: the task choice over the declared tasks, plus
   // one noul per router.questions entry.
@@ -201,7 +207,7 @@ export async function describe(
     }
     questions[TASK_QUESTION_ID] = {
       type: "choice",
-      instructions: TASK_INSTRUCTIONS,
+      instructions: images.length === 0 ? TASK_INSTRUCTIONS : TASK_INSTRUCTIONS_WITH_IMAGES,
       criteria,
     };
   }
@@ -233,11 +239,22 @@ export async function describe(
 
   let response: JevResponse;
   try {
-    response = await askJev(text, questions, { model: config.describe.jevModel });
+    const state = images.length === 0 ? text : { description: text, images };
+    response = await askJev(state, questions, { model: config.describe.jevModel });
   } catch (error) {
     // The client throws only JevError; anything else is an internal fault
     // and is rethrown unchanged rather than relabelled.
     if (!(error instanceof JevError)) throw error;
+    // Images that each pass their own checks can still make the request too
+    // large together. That is the caller's input, refused before any
+    // request, and retrying cannot fix it: not a Jev failure.
+    if (error.code === "REQUEST_TOO_LARGE") {
+      throw invalid(
+        "images",
+        `the describe images are too large together: ${error.message}`,
+        "Send fewer or smaller images with the work description.",
+      );
+    }
     if (taskNeeded) {
       throw describeFailed(error.code, error.message);
     }
