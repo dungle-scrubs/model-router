@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/dungle-scrubs/model-router/compare/v0.2.1...v0.3.0) (2026-11-19)
+
+
+### Features
+
+* send PNG and JPEG images to Jev ([#21](https://github.com/dungle-scrubs/model-router/issues/21)) ([ecd1a91](https://github.com/dungle-scrubs/model-router/commit/ecd1a91c0b342c0a305ffaec55d6637530f03aed))
+* translate answers into T3 Code delegate_task targets ([#18](https://github.com/dungle-scrubs/model-router/issues/18)) ([f859245](https://github.com/dungle-scrubs/model-router/commit/f8592457e07d868f42c8bcb20be591f588b6baef))
+
 ## [0.2.1](https://github.com/dungle-scrubs/model-router/compare/v0.2.0...v0.2.1) (2026-10-05)
 
 
