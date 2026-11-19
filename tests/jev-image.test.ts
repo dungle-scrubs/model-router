@@ -284,8 +284,11 @@ describe("a request with images", () => {
   test("more distinct images than the 65536-byte reference limit allows is REQUEST_TOO_LARGE", () =>
     withKey(async () => {
       // Each reference is 46 bytes: 1424 fit, 1425 do not.
+      // One encoded PNG, made into distinct image objects: each object is
+      // its own asset.
+      const bytes = makePng(280, 280);
       const many = (count: number): JevImage[] =>
-        Array.from({ length: count }, () => JevImage.fromBytes(makePng(280, 280)));
+        Array.from({ length: count }, () => JevImage.fromBytes(bytes));
       const { fetch } = recorder();
       await askJev({ images: many(1424) }, NOUL, { fetch });
       expect(fetch).toHaveBeenCalledTimes(1);
