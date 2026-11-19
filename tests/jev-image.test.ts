@@ -1,10 +1,10 @@
-import { mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { crc32, deflateSync } from "node:zlib";
 import { afterAll, describe, expect, test, vi } from "vitest";
 import { askJev, JevError, JevImage, type JevQuestion } from "../src/jev.js";
-import { withEnv } from "./helpers.js";
+import { fixturesDir, withEnv } from "./helpers.js";
 
 const ENDPOINT = "https://api.typesafe.ai/v1/systemone";
 const MiB = 1024 * 1024;
@@ -40,9 +40,11 @@ function makePng(width: number, height: number, animated = false): Uint8Array {
   ]);
 }
 
-/** The header segments of a made-up baseline JPEG: SOI, an APP0 segment,
- * a fill byte and a SOF0 frame header with the given size, then EOI. The
- * client reads only the headers, so no scan data is needed. */
+/** The segment framing of a made-up baseline JPEG: SOI, an APP0 segment,
+ * a fill byte, a SOF0 frame header with the given size, a scan header,
+ * placeholder scan bytes and EOI. The client checks only the framing, so the
+ * scan bytes need not decode; tests/fixtures/jev-image-300.jpg is a real
+ * one. */
 function makeJpeg(width: number, height: number, frameMarker = 0xc0): Uint8Array {
   const app0 = Buffer.from([
     0xff,
@@ -73,6 +75,8 @@ function makeJpeg(width: number, height: number, frameMarker = 0xc0): Uint8Array
     app0,
     Buffer.from([0xff]),
     sof,
+    Buffer.from([0xff, 0xda, 0x00, 0x0c, 3, 1, 0, 2, 0x11, 3, 0x11, 0, 0x3f, 0]),
+    Buffer.from([0x12, 0x34, 0xff, 0x00, 0x56]),
     Buffer.from([0xff, 0xd9]),
   ]);
 }
@@ -94,12 +98,15 @@ const ok = (answers: unknown): Response =>
     { status: 200, headers: { "Content-Type": "application/json" } },
   );
 
-type Sent = { headers: Record<string, string>; body: string | Uint8Array };
+type Sent = {
+  readonly body: string | Uint8Array;
+  readonly headers: Readonly<Record<string, string>>;
+};
 
 /** A fetch that records each request and answers the one noul question. */
 function recorder(response: () => Response = () => ok({ amount: { type: "noul", noul: 0.9 } })): {
-  fetch: typeof globalThis.fetch;
-  sent: Sent[];
+  readonly fetch: typeof globalThis.fetch;
+  readonly sent: Sent[];
 } {
   const sent: Sent[] = [];
   const fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
@@ -149,7 +156,8 @@ async function rejected(promise: Promise<unknown>): Promise<JevError> {
   throw new Error("expected a rejection");
 }
 
-const withKey = (fn: () => Promise<void>) => withEnv({ TYPESAFE_API_KEY: "test-key" }, fn);
+const withKey = (fn: () => Promise<void>): Promise<void> =>
+  withEnv({ TYPESAFE_API_KEY: "test-key" }, fn);
 
 describe("a request with no image", () => {
   test("is byte-for-byte the JSON request the client sent before images", () =>
@@ -272,6 +280,20 @@ describe("a request with images", () => {
       expect(new Uint8Array(await file.arrayBuffer())).toEqual(original);
     }));
 
+  test("more distinct images than the 65536-byte reference limit allows is REQUEST_TOO_LARGE", () =>
+    withKey(async () => {
+      // Each reference is 46 bytes: 1424 fit, 1425 do not.
+      const many = (count: number): JevImage[] =>
+        Array.from({ length: count }, () => JevImage.fromBytes(makePng(280, 280)));
+      const { fetch } = recorder();
+      await askJev({ images: many(1424) }, NOUL, { fetch });
+      expect(fetch).toHaveBeenCalledTimes(1);
+      const error = await rejected(askJev({ images: many(1425) }, NOUL, { fetch }));
+      expect(error.code).toBe("REQUEST_TOO_LARGE");
+      expect(error.message).toContain("references total 65550 bytes");
+      expect(fetch).toHaveBeenCalledTimes(1);
+    }));
+
   test("a request body over 32 MiB is REQUEST_TOO_LARGE and nothing is sent", () =>
     withKey(async () => {
       const images = [1, 2, 3].map(() => JevImage.fromBytes(padded(makeJpeg(400, 400), 11 * MiB)));
@@ -283,7 +305,21 @@ describe("a request with images", () => {
     }));
 });
 
+const PNG = Buffer.from(makePng(300, 300));
+const JPEG = Buffer.from(makeJpeg(300, 300));
+
 describe("JevImage checks", () => {
+  test("accepts a real baseline JPEG", () => {
+    const real = readFileSync(join(fixturesDir, "jev-image-300.jpg"));
+    expect(JevImage.fromBytes(real)).toMatchObject({ format: "jpeg", height: 300, width: 300 });
+  });
+
+  test("an image turned into text throws instead of sending [object Object]", () => {
+    const slip = JevImage.fromBytes(JPEG);
+    expect(() => `photo ${slip}`).toThrow(TypeError);
+    expect(() => String(slip)).toThrow(/place the JevImage object itself/);
+  });
+
   test("reads the format and size from PNG and JPEG bytes", () => {
     expect(JevImage.fromBytes(makePng(281, 1567))).toMatchObject({
       format: "png",
@@ -312,6 +348,38 @@ describe("JevImage checks", () => {
       "a JPEG with no frame header",
       Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
       "no readable frame header",
+    ],
+    [
+      "a PNG with no image data",
+      Buffer.concat([PNG.subarray(0, 33), PNG.subarray(-12)]),
+      "no image data",
+    ],
+    ["a PNG cut off inside its image data", PNG.subarray(0, 51), "cut off before its end chunk"],
+    [
+      "a PNG cut off before its end chunk",
+      PNG.subarray(0, PNG.length - 12),
+      "cut off before its end chunk",
+    ],
+    [
+      "a JPEG whose frame header is too short to hold a size",
+      Buffer.from([
+        0xff, 0xd8, 0xff, 0xc0, 0x00, 0x02, 0x08, 0x01, 0x2c, 0x01, 0x90, 0x03, 0xff, 0xd9,
+      ]),
+      "frame header is damaged",
+    ],
+    ["a JPEG cut off inside a segment", JPEG.subarray(0, 10), "segment is damaged or cut off"],
+    [
+      "a JPEG with no scan",
+      Buffer.concat([
+        JPEG.subarray(0, JPEG.indexOf(Buffer.from([0xff, 0xda]))),
+        Buffer.from([0xff, 0xd9]),
+      ]),
+      "no image data",
+    ],
+    [
+      "a JPEG cut off before its end marker",
+      JPEG.subarray(0, JPEG.length - 2),
+      "cut off before its end marker",
     ],
   ])("%s is IMAGE_FORMAT", (_name, bytes, reason) => {
     const error = thrown(() => JevImage.fromBytes(bytes));
@@ -368,6 +436,15 @@ describe("JevImage.fromFile", () => {
     truncateSync(path, 16 * MiB + 1);
     const error = await rejected(JevImage.fromFile(path));
     expect(error.code).toBe("IMAGE_FILE_SIZE");
+  });
+
+  test.each([
+    ["a directory", () => dir],
+    ["a device", () => "/dev/null"],
+  ])("%s is IMAGE_UNREADABLE as not a regular file", async (_name, path) => {
+    const error = await rejected(JevImage.fromFile(path()));
+    expect(error.code).toBe("IMAGE_UNREADABLE");
+    expect(error.message).toContain("not a regular file");
   });
 
   test("a file in another format is IMAGE_FORMAT naming the path", async () => {

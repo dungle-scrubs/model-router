@@ -201,11 +201,11 @@ The describe block in the answer: `model` (what answered, `null` when Jev failed
 | `SERVICE_ERROR` | the endpoint returned a status the client does not retry |
 | `RATE_LIMITED` | every retry attempt came back retryable |
 | `BAD_RESPONSE` | a 200 body that does not match the questions sent: no answers object, no model or usage, or a missing or malformed answer for an asked question |
-| `IMAGE_UNREADABLE` | `JevImage.fromFile` could not read the file; the message names the path |
-| `IMAGE_FORMAT` | the image is not a still PNG or JPEG, is empty, or its header is damaged; an animated PNG is refused |
+| `IMAGE_UNREADABLE` | `JevImage.fromFile` could not read the path, or the path is not a regular file; the message names the path |
+| `IMAGE_FORMAT` | the image is not a still PNG or JPEG, is empty, is animated, or its framing is damaged: a PNG chunk or JPEG segment that does not fit in the file, no image data, or a file cut off before its end |
 | `IMAGE_FILE_SIZE` | the image file is over 16 MiB (16777216 bytes) |
 | `IMAGE_DIMENSIONS` | the image's width or height is outside 280 to 1568 pixels; the message names the side and its value |
-| `REQUEST_TOO_LARGE` | the multipart request body with its images is over 32 MiB (33554432 bytes); nothing is sent |
+| `REQUEST_TOO_LARGE` | the multipart request body with its images is over 32 MiB (33554432 bytes), or its image references total over 65536 bytes (more than 1424 distinct images); nothing is sent |
 
 ### Images
 
@@ -225,7 +225,7 @@ const { answers } = await askJev(
 answers.amount; // { type: "noul", noul: 0.97 }
 ```
 
-A `JevImage` is checked when it is made, against the limits TypeSafe documents at https://docs.typesafe.ai/images: a still PNG or JPEG read from its bytes, never from a file name; at most 16 MiB; each side 280 to 1568 pixels, both ends included. A broken limit throws `JevError` before any request (codes in the table above). The bytes are copied, so changing the caller's buffer afterwards changes nothing that is sent. `format`, `width`, `height` and `byteLength` report what was read. The API applies no EXIF orientation and never resizes, so rotate a photo upright and scale it into range before making the image.
+A `JevImage` is checked when it is made, against the limits TypeSafe documents at https://docs.typesafe.ai/images: a still PNG or JPEG read from its bytes, never from a file name; at most 16 MiB; each side 280 to 1568 pixels, both ends included. The client checks the file's framing (PNG chunks, JPEG segments, image data present, the end of the file reached), not its compressed pixels; the API rejects a file damaged inside its image data. A broken limit throws `JevError` before any request (codes in the table above). The bytes are copied, so changing the caller's buffer afterwards changes nothing that is sent. Place the object itself: turning a `JevImage` into text, such as `` `photo ${slip}` ``, throws a `TypeError`, because the text would reach Jev without the image. `format`, `width`, `height` and `byteLength` report what was read. The API applies no EXIF orientation and never resizes, so rotate a photo upright and scale it into range before making the image.
 
 A request with an image goes out as `multipart/form-data`: the JSON request first, in a part named `request`, with each image object replaced by a fresh reference string and an `assets` map naming one file part per image, then one part per image holding its file bytes. The request carries the `TypeSafe-Danger-Zone-Images: true` header. The same image object placed twice is uploaded once; each placement still adds the image to what the model reads. A request whose body would exceed 32 MiB is `REQUEST_TOO_LARGE`. The API's own limits on the images after it re-encodes them, and on the request with every reference expanded, cannot be checked locally; a request the API refuses comes back as `SERVICE_ERROR` carrying the API's status and message. A request with no image is the plain JSON request, byte for byte, with no images header.
 

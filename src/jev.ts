@@ -342,6 +342,11 @@ const IMAGES_HEADER = "TypeSafe-Danger-Zone-Images";
 /** The largest request body the API accepts, in bytes, framing included. */
 const MAX_REQUEST_BYTES = 32 * 1024 * 1024;
 
+/** The most UTF-8 bytes all asset references in one request may hold
+ * together. Each reference this client makes is 46 bytes, so this caps a
+ * request at 1424 distinct images. */
+const MAX_REFERENCE_BYTES = 65536;
+
 type WireRequest = {
   readonly body: string | Uint8Array<ArrayBuffer>;
   readonly headers: Readonly<Record<string, string>>;
@@ -353,12 +358,17 @@ type WireRequest = {
  * and the body is multipart/form-data with the JSON first, as the API
  * documents. One image object placed twice is uploaded once under one
  * reference. */
-function buildRequest(
-  state: unknown,
-  model: string,
-  questions: Readonly<Record<string, JevQuestion>>,
-  key: string,
-): WireRequest {
+function buildRequest({
+  key,
+  model,
+  questions,
+  state,
+}: {
+  readonly key: string;
+  readonly model: string;
+  readonly questions: Readonly<Record<string, JevQuestion>>;
+  readonly state: unknown;
+}): WireRequest {
   const images = new Map<JevImage, string>();
   // A replacer that returns every other value unchanged leaves the output
   // byte-for-byte what JSON.stringify gives without one.
@@ -378,17 +388,27 @@ function buildRequest(
     };
   }
 
+  const encoder = new TextEncoder();
+  const referenceBytes = [...images.values()].reduce(
+    (total, reference) => total + encoder.encode(reference).byteLength,
+    0,
+  );
+  if (referenceBytes > MAX_REFERENCE_BYTES) {
+    throw new JevError(
+      "REQUEST_TOO_LARGE",
+      `the request places ${images.size} distinct images, whose references total ${referenceBytes} bytes, above the ${MAX_REFERENCE_BYTES}-byte limit on all references in one request. Split the images across requests.`,
+    );
+  }
   const parts = [...images].map(([image, reference], index) => ({
     image,
-    reference,
     name: `image-${index + 1}`,
+    reference,
   }));
   const assets = Object.fromEntries(
-    parts.map(({ reference, name }) => [reference, { type: "image", part: name }]),
+    parts.map(({ name, reference }) => [reference, { part: name, type: "image" }]),
   );
   const payload = JSON.stringify({ ...(JSON.parse(json) as object), assets });
 
-  const encoder = new TextEncoder();
   const boundary = `model-router-${randomUUID()}`;
   const chunks: Uint8Array[] = [];
   const addPart = (head: string, content: Uint8Array): void => {
@@ -410,17 +430,20 @@ function buildRequest(
     );
   }
   chunks.push(encoder.encode(`--${boundary}--\r\n`));
-  const body = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.byteLength, 0));
+  // Sized before anything is allocated, so an oversized request is refused
+  // without building its body.
+  const size = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+  if (size > MAX_REQUEST_BYTES) {
+    throw new JevError(
+      "REQUEST_TOO_LARGE",
+      `the request with ${parts.length} images is ${size} bytes, above the ${MAX_REQUEST_BYTES}-byte (32 MiB) request body limit. Send fewer or smaller images, or split the questions across requests.`,
+    );
+  }
+  const body = new Uint8Array(size);
   let offset = 0;
   for (const chunk of chunks) {
     body.set(chunk, offset);
     offset += chunk.byteLength;
-  }
-  if (body.byteLength > MAX_REQUEST_BYTES) {
-    throw new JevError(
-      "REQUEST_TOO_LARGE",
-      `the request with ${parts.length} image(s) is ${body.byteLength} bytes, above the ${MAX_REQUEST_BYTES}-byte (32 MiB) request body limit. Send fewer or smaller images, or split the questions across requests.`,
-    );
   }
   return {
     body,
@@ -455,7 +478,12 @@ export async function askJev(
   const maxAttempts = options.maxAttempts ?? 4;
   const backoffMs = options.backoffMs ?? 500;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const { body, headers } = buildRequest(state, options.model ?? DEFAULT_JEV_MODEL, questions, key);
+  const { body, headers } = buildRequest({
+    key,
+    model: options.model ?? DEFAULT_JEV_MODEL,
+    questions,
+    state,
+  });
 
   let lastStatus = 0;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {

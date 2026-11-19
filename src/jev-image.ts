@@ -12,7 +12,7 @@
  * input is experimental there, so the figures can change between releases.
  */
 
-import { readFile, stat } from "node:fs/promises";
+import { type FileHandle, open } from "node:fs/promises";
 import { JevError } from "./jev-error.js";
 
 /** The largest image file the API accepts, in bytes. Both ends inclusive. */
@@ -30,7 +30,7 @@ const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
  * no field for them. */
 const IMAGE_BYTES = new WeakMap<JevImage, Uint8Array>();
 
-type Header = { readonly format: JevImageFormat; readonly width: number; readonly height: number };
+type Header = { readonly format: JevImageFormat; readonly height: number; readonly width: number };
 
 function formatError(source: string, reason: string): JevError {
   return new JevError(
@@ -43,23 +43,32 @@ function chunkType(bytes: Uint8Array, offset: number): string {
   return String.fromCharCode(...bytes.subarray(offset, offset + 4));
 }
 
-/** Read a PNG's size from its IHDR chunk, and refuse an animated PNG: an
- * `acTL` chunk before the first `IDAT` marks one. */
+/** Walk a PNG's chunks to IEND: read the size from IHDR, require image
+ * data before IEND and every chunk to fit in the file, and refuse an
+ * animated PNG, which an `acTL` chunk marks. Only the chunk framing is
+ * checked, not the compressed pixels: a file damaged inside its image data
+ * still reaches the API, which rejects it. */
 function readPng(bytes: Uint8Array, view: DataView, source: string): Header {
-  if (bytes.length < 33 || chunkType(bytes, 12) !== "IHDR") {
+  if (bytes.length < 33 || view.getUint32(8) !== 13 || chunkType(bytes, 12) !== "IHDR") {
     throw formatError(source, "the PNG header is damaged or incomplete");
   }
-  const width = view.getUint32(16);
   const height = view.getUint32(20);
+  const width = view.getUint32(16);
+  let hasImageData = false;
   let offset = 8;
-  while (offset + 8 <= bytes.length) {
+  while (offset + 12 <= bytes.length) {
     const length = view.getUint32(offset);
+    if (offset + 12 + length > bytes.length) break;
     const type = chunkType(bytes, offset + 4);
     if (type === "acTL") throw formatError(source, "it is an animated PNG");
-    if (type === "IDAT" || type === "IEND") return { format: "png", width, height };
+    if (type === "IDAT") hasImageData = true;
+    if (type === "IEND") {
+      if (!hasImageData) throw formatError(source, "the PNG has no image data");
+      return { format: "png", height, width };
+    }
     offset += 12 + length;
   }
-  throw formatError(source, "the PNG has no image data");
+  throw formatError(source, "the PNG is cut off before its end chunk");
 }
 
 /** Start-of-frame markers carry the size: every SOFn except DHT (C4), JPG
@@ -68,12 +77,22 @@ function isStartOfFrame(marker: number): boolean {
   return marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
 }
 
-/** Walk a JPEG's marker segments to the first start-of-frame and read the
- * size from it. */
+/** True when an end-of-image marker (FF D9) sits at or after `from`. */
+function hasEndMarker(bytes: Uint8Array, from: number): boolean {
+  for (let index = bytes.length - 2; index >= from; index--) {
+    if (bytes[index] === 0xff && bytes[index + 1] === 0xd9) return true;
+  }
+  return false;
+}
+
+/** Walk a JPEG's marker segments: read the size from the frame header,
+ * require every segment to fit in the file, a scan after the frame header,
+ * and an end-of-image marker after the scan. Only the segment framing is
+ * checked, not the compressed pixels. */
 function readJpeg(bytes: Uint8Array, view: DataView, source: string): Header {
+  let frame: Header | undefined;
   let offset = 2;
-  while (offset < bytes.length) {
-    if (bytes[offset] !== 0xff) break;
+  while (offset < bytes.length && bytes[offset] === 0xff) {
     // Fill bytes: any number of 0xFF may precede a marker.
     while (bytes[offset] === 0xff) offset++;
     const marker = bytes[offset];
@@ -81,21 +100,34 @@ function readJpeg(bytes: Uint8Array, view: DataView, source: string): Header {
     if (marker === undefined) break;
     // Standalone markers carry no length.
     if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
-    // The scan or the end before any frame header: nothing gives the size.
-    if (marker === 0xda || marker === 0xd9 || offset + 2 > bytes.length) break;
+    if (marker === 0xd9) break;
+    if (offset + 2 > bytes.length) break;
     const length = view.getUint16(offset);
-    if (length < 2) break;
+    if (length < 2 || offset + length > bytes.length) {
+      throw formatError(source, "a JPEG segment is damaged or cut off");
+    }
     if (isStartOfFrame(marker)) {
-      if (offset + 7 > bytes.length) break;
-      return {
+      // Precision, height, width and component count follow the length.
+      if (length < 8) throw formatError(source, "the JPEG frame header is damaged");
+      frame = {
         format: "jpeg",
         height: view.getUint16(offset + 3),
         width: view.getUint16(offset + 5),
       };
     }
+    if (marker === 0xda) {
+      if (frame === undefined) break;
+      if (!hasEndMarker(bytes, offset + length)) {
+        throw formatError(source, "the JPEG is cut off before its end marker");
+      }
+      return frame;
+    }
     offset += length;
   }
-  throw formatError(source, "the JPEG has no readable frame header");
+  throw formatError(
+    source,
+    frame === undefined ? "the JPEG has no readable frame header" : "the JPEG has no image data",
+  );
 }
 
 function readHeader(bytes: Uint8Array, source: string): Header {
@@ -146,32 +178,51 @@ export class JevImage {
    * (over 16 MiB) or `IMAGE_DIMENSIONS` (a side outside 280 to 1568
    * pixels). */
   static fromBytes(data: Uint8Array | ArrayBuffer): JevImage {
-    return JevImage.#check(
-      data instanceof ArrayBuffer
-        ? new Uint8Array(data).slice()
-        : Uint8Array.prototype.slice.call(data),
-      "given as bytes",
-    );
+    const source = "given as bytes";
+    // Refused before the copy, so an oversized buffer is never duplicated.
+    if (data.byteLength > MAX_IMAGE_BYTES) throw fileSizeError(source, data.byteLength);
+    const view = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
+    return JevImage.#check(Uint8Array.prototype.slice.call(view), source);
   }
 
-  /** Read an image file and check it as `fromBytes` does. A file that
-   * cannot be read is `IMAGE_UNREADABLE`; a file over 16 MiB is refused
-   * before it is read. */
+  /** Read an image file and check it as `fromBytes` does. A path that
+   * cannot be read, or is not a regular file, is `IMAGE_UNREADABLE`; a file
+   * over 16 MiB is refused before it is read. The size check and the read
+   * use one open handle, so they see the same file. */
   static async fromFile(path: string): Promise<JevImage> {
     const source = `at ${path}`;
     let bytes: Uint8Array;
+    let handle: FileHandle | undefined;
     try {
-      const { size } = await stat(path);
-      if (size > MAX_IMAGE_BYTES) throw fileSizeError(source, size);
-      bytes = await readFile(path);
+      handle = await open(path, "r");
+      const stats = await handle.stat();
+      if (!stats.isFile()) {
+        throw new JevError("IMAGE_UNREADABLE", `the image ${source} is not a regular file`);
+      }
+      if (stats.size > MAX_IMAGE_BYTES) throw fileSizeError(source, stats.size);
+      bytes = await handle.readFile();
     } catch (error) {
       if (error instanceof JevError) throw error;
       throw new JevError(
         "IMAGE_UNREADABLE",
         `the image ${source} could not be read: ${error instanceof Error ? error.message : String(error)}`,
       );
+    } finally {
+      await handle?.close();
     }
     return JevImage.#check(bytes, source);
+  }
+
+  /** An image turned into text would reach Jev as "[object Object]" in a
+   * plain JSON request, with no image attached. Refuse it instead. */
+  [Symbol.toPrimitive](): never {
+    throw new TypeError(
+      "a JevImage cannot be turned into text; place the JevImage object itself in the state or the instructions",
+    );
+  }
+
+  toString(): never {
+    return this[Symbol.toPrimitive]();
   }
 
   static #check(bytes: Uint8Array, source: string): JevImage {
