@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -374,7 +375,7 @@ describe("JevImage checks", () => {
         JPEG.subarray(0, JPEG.indexOf(Buffer.from([0xff, 0xda]))),
         Buffer.from([0xff, 0xd9]),
       ]),
-      "no image data",
+      "no scan data",
     ],
     [
       "a JPEG cut off before its end marker",
@@ -394,6 +395,19 @@ describe("JevImage checks", () => {
       "a JPEG whose scan header runs straight into its end marker",
       Buffer.concat([JPEG.subarray(0, JPEG.length - 7), Buffer.from([0xff, 0xd9])]),
       "no scan data",
+    ],
+    [
+      "a JPEG whose end marker sits inside a segment cut off after the scan",
+      Buffer.concat([
+        JPEG.subarray(0, JPEG.length - 7),
+        Buffer.from([0x12, 0x34, 0xff, 0xe1, 0xff, 0xff, 0xff, 0xd9]),
+      ]),
+      "segment is damaged or cut off",
+    ],
+    [
+      "a JPEG with junk where a marker belongs",
+      Buffer.concat([JPEG.subarray(0, 20), Buffer.from([0x00]), JPEG.subarray(20)]),
+      "marker is damaged",
     ],
   ])("%s is IMAGE_FORMAT", (_name, bytes, reason) => {
     const error = thrown(() => JevImage.fromBytes(bytes));
@@ -455,6 +469,14 @@ describe("JevImage.fromFile", () => {
   test.each([
     ["a directory", () => dir],
     ["a device", () => "/dev/null"],
+    [
+      "a FIFO with no writer",
+      () => {
+        const fifo = join(dir, "pipe.jpg");
+        execFileSync("mkfifo", [fifo]);
+        return fifo;
+      },
+    ],
   ])("%s is IMAGE_UNREADABLE as not a regular file", async (_name, path) => {
     const error = await rejected(JevImage.fromFile(path()));
     expect(error.code).toBe("IMAGE_UNREADABLE");

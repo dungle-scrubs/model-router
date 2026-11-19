@@ -12,6 +12,7 @@
  * input is experimental there, so the figures can change between releases.
  */
 
+import { constants } from "node:fs";
 import { type FileHandle, open } from "node:fs/promises";
 import { JevError } from "./jev-error.js";
 
@@ -77,23 +78,46 @@ function isStartOfFrame(marker: number): boolean {
   return marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
 }
 
-/** True when an end-of-image marker (FF D9) sits after at least one byte
- * of scan data, which starts at `from`. */
-function hasEndMarker(bytes: Uint8Array, from: number): boolean {
-  for (let index = bytes.length - 2; index > from; index--) {
-    if (bytes[index] === 0xff && bytes[index + 1] === 0xd9) return true;
+/** Skip a scan's entropy-coded data from `offset`: stuffed bytes (FF 00)
+ * and restart markers (FF D0 to FF D7) belong to it, and any other marker
+ * ends it. Returns where the next marker starts, or the end of the file,
+ * and whether the scan held any data. */
+function skipScan(
+  bytes: Uint8Array,
+  offset: number,
+): { readonly end: number; readonly hasData: boolean } {
+  let index = offset;
+  let hasData = false;
+  while (index < bytes.length) {
+    if (bytes[index] !== 0xff) {
+      hasData = true;
+      index++;
+      continue;
+    }
+    const next = bytes[index + 1];
+    if (next === 0x00) {
+      hasData = true;
+      index += 2;
+    } else if (next !== undefined && next >= 0xd0 && next <= 0xd7) {
+      index += 2;
+    } else {
+      break;
+    }
   }
-  return false;
+  return { end: index, hasData };
 }
 
-/** Walk a JPEG's marker segments: read the size from the frame header,
- * require every segment to fit in the file, a scan after the frame header,
- * and an end-of-image marker after the scan. Only the segment framing is
- * checked, not the compressed pixels. */
+/** Walk a JPEG's markers from start to end-of-image: read the size from the
+ * frame header, require every segment to fit in the file, and require scan
+ * data after the frame header and before the end marker. Only the framing
+ * is checked, not the compressed pixels. Bytes after the end marker are
+ * ignored. */
 function readJpeg(bytes: Uint8Array, view: DataView, source: string): Header {
   let frame: Header | undefined;
+  let hasScanData = false;
   let offset = 2;
-  while (offset < bytes.length && bytes[offset] === 0xff) {
+  while (offset < bytes.length) {
+    if (bytes[offset] !== 0xff) throw formatError(source, "a JPEG marker is damaged");
     // Fill bytes: any number of 0xFF may precede a marker.
     while (bytes[offset] === 0xff) offset++;
     const marker = bytes[offset];
@@ -101,7 +125,11 @@ function readJpeg(bytes: Uint8Array, view: DataView, source: string): Header {
     if (marker === undefined) break;
     // Standalone markers carry no length.
     if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
-    if (marker === 0xd9) break;
+    if (marker === 0xd9) {
+      if (frame === undefined) throw formatError(source, "the JPEG has no readable frame header");
+      if (!hasScanData) throw formatError(source, "the JPEG has no scan data");
+      return frame;
+    }
     if (offset + 2 > bytes.length) break;
     const length = view.getUint16(offset);
     if (length < 2 || offset + length > bytes.length) {
@@ -116,19 +144,15 @@ function readJpeg(bytes: Uint8Array, view: DataView, source: string): Header {
         width: view.getUint16(offset + 5),
       };
     }
-    if (marker === 0xda) {
-      if (frame === undefined) break;
-      if (!hasEndMarker(bytes, offset + length)) {
-        throw formatError(source, "the JPEG has no scan data or is cut off before its end marker");
-      }
-      return frame;
-    }
     offset += length;
+    if (marker === 0xda) {
+      if (frame === undefined) throw formatError(source, "the JPEG has no readable frame header");
+      const scan = skipScan(bytes, offset);
+      hasScanData ||= scan.hasData;
+      offset = scan.end;
+    }
   }
-  throw formatError(
-    source,
-    frame === undefined ? "the JPEG has no readable frame header" : "the JPEG has no image data",
-  );
+  throw formatError(source, "the JPEG is cut off before its end marker");
 }
 
 function readHeader(bytes: Uint8Array, source: string): Header {
@@ -195,7 +219,9 @@ export class JevImage {
     let bytes: Uint8Array;
     let handle: FileHandle | undefined;
     try {
-      handle = await open(path, "r");
+      // Non-blocking, so a FIFO with no writer cannot hang the open; the
+      // regular-file check below refuses it.
+      handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
       const stats = await handle.stat();
       if (!stats.isFile()) {
         throw new JevError("IMAGE_UNREADABLE", `the image ${source} is not a regular file`);
