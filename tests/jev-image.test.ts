@@ -487,8 +487,15 @@ describe("JevImage.fromFile", () => {
     expect(error.code).toBe("IMAGE_FILE_SIZE");
   });
 
-  test.each([
-    ["a directory", () => dir],
+  test("a directory is IMAGE_UNREADABLE as not a regular file", async () => {
+    const error = await rejected(JevImage.fromFile(dir));
+    expect(error.code).toBe("IMAGE_UNREADABLE");
+    expect(error.message).toContain("not a regular file");
+  });
+
+  // Devices and FIFOs as paths are POSIX: Windows has no /dev/null and no
+  // mkfifo.
+  test.skipIf(process.platform === "win32").each([
     ["a device", () => "/dev/null"],
     [
       "a FIFO with no writer",
