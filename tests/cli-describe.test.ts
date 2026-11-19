@@ -2,6 +2,9 @@ import { appendFileSync, copyFileSync, readFileSync, writeFileSync } from "node:
 import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import { runCli } from "../src/cli-run.js";
+import { describe as describeStep } from "../src/describe.js";
+import { RouterError } from "../src/error.js";
+import { JevImage } from "../src/jev.js";
 import {
   captureStream,
   expectValidAnswer,
@@ -716,6 +719,10 @@ describe("--describe-image", () => {
           assets: Record<string, unknown>;
         };
         expect(request.state.description).toBe("fix the layout bug in the screenshot");
+        const sentQuestions = (
+          request as unknown as { questions: { task: { instructions: string } } }
+        ).questions;
+        expect(sentQuestions.task.instructions).toContain("`images` are pictures of that work");
         expect(request.state.images).toHaveLength(1);
         expect(Object.keys(request.assets)).toEqual(request.state.images);
         const part = form.get("image-1") as File;
@@ -798,6 +805,38 @@ describe("--describe-image", () => {
         expect((await errorEnvelope(result.stderr)).code).toBe("describe-private");
       });
     }));
+
+  test.each([
+    ["the task is needed", { privacy: "normal" }],
+    ["the task is already set", { privacy: "normal", task: "task-a" }],
+  ])(
+    "images too large together are query-invalid on images when %s, with no request",
+    async (_name, partial) =>
+      withEnv({ TYPESAFE_API_KEY: "k-123" }, async () => {
+        const fetchSpy = vi.spyOn(globalThis, "fetch");
+        const big = (): JevImage => {
+          const bytes = new Uint8Array(11 * 1024 * 1024);
+          bytes.set(readFileSync(IMAGE));
+          return JevImage.fromBytes(bytes);
+        };
+        let caught: unknown;
+        try {
+          await describeStep("some work", partial, {
+            registry: FIXTURE,
+            images: [big(), big(), big()],
+          });
+        } catch (error) {
+          caught = error;
+        }
+        if (!(caught instanceof RouterError))
+          throw new Error(`expected a RouterError, got ${String(caught)}`);
+        expect(caught.code).toBe("query-invalid");
+        expect(caught.field).toBe("images");
+        expect(caught.message).toContain("32 MiB");
+        expect(fetchSpy).not.toHaveBeenCalled();
+        fetchSpy.mockRestore();
+      }),
+  );
 
   test.each(["tasks", "check"])(
     "--describe-image does not apply to %s and exits 2",
